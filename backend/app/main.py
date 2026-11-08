@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import __version__
-from app.actor.actors import actor_from_env
+from app.actor.actors import actor_from_env, actor_timeout_from_env
 from app.actor.prompt import PROMPT_VERSION, check_all_prompts
 from app.api import router
 from app.content.loader import ContentError, load_bundle
@@ -41,7 +41,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise ContentError(problems)
     actor = actor_from_env()
     store = Store(os.environ.get(DB_PATH_ENV, "simulator.db"))
-    app.state.sessions = SessionService(store, content, actor=actor)
+    app.state.sessions = SessionService(
+        store, content, actor=actor, actor_deadline_s=actor_timeout_from_env()
+    )
     yield
     store.close()
 

@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
-from app.actor.actors import Actor, ActorError, ScriptedActor, Turn
+from app.actor.actors import DEFAULT_TIMEOUT_S, Actor, ActorError, ScriptedActor, Turn
 from app.actor.prompt import PROMPT_VERSION, CustomerPrompt, build_customer_prompt
 from app.content.catalog import DocumentKind
 from app.content.loader import ContentBundle
@@ -92,6 +92,12 @@ class TurnOut(BaseModel):
 EVIDENCE_SOURCES = {EventType.LOOKUP, EventType.DOCUMENT_OPENED}
 
 
+class _TurnLock:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.users = 0
+
+
 class SessionService:
     def __init__(
         self,
@@ -99,24 +105,38 @@ class SessionService:
         content: ContentBundle,
         clock: Clock = utc_now,
         actor: Actor | None = None,
+        actor_deadline_s: float = DEFAULT_TIMEOUT_S,
     ) -> None:
         self.store = store
         self.content = content
         self.clock = clock
         self.actor: Actor = actor or ScriptedActor()
-        self._turn_locks: dict[str, threading.Lock] = {}
+        self.actor_deadline_s = actor_deadline_s
+        self._turn_locks: dict[str, _TurnLock] = {}
         self._turn_locks_guard = threading.Lock()
 
     @contextmanager
     def turn_lock(self, session_id: str) -> Iterator[None]:
-        """One customer turn at a time per session. Hold and end take the same lock, so they
-        wait for a reply in flight instead of racing it: a reply never lands after the
-        customer was put on hold or the call ended. In-process only, which fits the
+        """One customer turn at a time per session. Hold and end don't take it: they change
+        state at once, and a reply still being generated is checked against that state before
+        it is saved, so it is dropped instead of landing after a hold or the end of the call.
+
+        A session's entry lives only while a request holds or waits on it, so the registry
+        stays as small as the number of turns in flight. In-process only, which fits the
         single-process SQLite MVP."""
         with self._turn_locks_guard:
-            lock = self._turn_locks.setdefault(session_id, threading.Lock())
-        with lock:
-            yield
+            entry = self._turn_locks.get(session_id)
+            if entry is None:
+                entry = self._turn_locks[session_id] = _TurnLock()
+            entry.users += 1
+        try:
+            with entry.lock:
+                yield
+        finally:
+            with self._turn_locks_guard:
+                entry.users -= 1
+                if entry.users == 0:
+                    del self._turn_locks[session_id]
 
     # Lifecycle
 
@@ -163,7 +183,10 @@ class SessionService:
         return row
 
     def end(self, session_id: str, reason: str = "learner_ended") -> SessionRow:
-        with self.turn_lock(session_id):
+        """Takes effect at once, even while the customer model is still answering; that late
+        reply is then dropped. The event and the status change commit together, so a reply
+        being checked never sees a half-ended call."""
+        with self.store.transaction():
             row = self.require_active(session_id)
             now = self.clock()
             self.store.append_event(
@@ -304,10 +327,7 @@ class SessionService:
                 return TurnOut(learner=learner, customer=None)
             prompt = self.customer_prompt(row)
             history = [Turn(u.speaker, u.heard_text) for u in transcript if u.delivered]
-            try:
-                text = self.actor.reply(prompt, history, row.seed)
-            except ActorError as exc:
-                raise ActorUnavailable(str(exc)) from exc
+            text = self._reply_within_deadline(prompt, history, row.seed)
             with self.store.transaction():
                 if not self._still_current(session_id, learner):
                     return TurnOut(learner=learner, customer=None)
@@ -322,11 +342,38 @@ class SessionService:
                 )
             return TurnOut(learner=learner, customer=customer)
 
+    def _reply_within_deadline(self, prompt: CustomerPrompt, history: list[Turn], seed: int) -> str:
+        """The actor's reply, or ActorUnavailable once the deadline passes. The call runs on
+        its own thread so a hung model can't hold the turn lock past the deadline; a reply
+        that arrives later is discarded."""
+        result: dict[str, str | ActorError] = {}
+
+        def call() -> None:
+            try:
+                result["text"] = self.actor.reply(prompt, history, seed)
+            except ActorError as exc:
+                result["error"] = exc
+            except Exception as exc:  # an actor bug still has to end the turn cleanly
+                result["error"] = ActorError(f"{self.actor.name} failed: {exc}")
+
+        worker = threading.Thread(target=call, name="customer-reply", daemon=True)
+        worker.start()
+        worker.join(self.actor_deadline_s)
+        if worker.is_alive():
+            raise ActorUnavailable(
+                f"the customer model didn't answer within {self.actor_deadline_s:g}s"
+            )
+        error = result.get("error")
+        if isinstance(error, ActorError):
+            raise ActorUnavailable(str(error)) from error
+        return str(result["text"])
+
     def _still_current(self, session_id: str, learner: Utterance) -> bool:
         """Whether a reply to ``learner`` may still be said: the call is active, the customer
         is not on hold, and no learner line came after this one."""
         row = self.get(session_id)
-        if row.status is not SessionStatus.ACTIVE or self.state(session_id).on_hold:
+        state = self.state(session_id)
+        if row.status is not SessionStatus.ACTIVE or state.call_ended_seq or state.on_hold:
             return False
         latest = next(
             (
@@ -390,7 +437,8 @@ class SessionService:
         return self.log(session_id, EventType.FOLLOWUP_CREATED, body.model_dump(mode="json"))
 
     def hold(self, session_id: str, on: bool) -> Event:
-        with self.turn_lock(session_id):
+        """Takes effect at once; a reply still being generated is dropped (see turn_lock)."""
+        with self.store.transaction():
             state = self.state(session_id)
             if state.on_hold == on:
                 raise Conflict("already on hold" if on else "not on hold")

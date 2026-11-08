@@ -10,6 +10,8 @@ Configuration:
   set, else ``scripted``.
 - ``SIM_ACTOR_MODEL``: the Gemini model id. Required for ``gemini`` and never defaulted, so a
   session always records the exact model it ran.
+- ``SIM_ACTOR_TIMEOUT_S``: how long one reply may take (default 30). The session service stops
+  waiting at this deadline, and the Gemini client's own HTTP timeout matches it.
 """
 
 import os
@@ -25,6 +27,8 @@ from app.engine.events import Speaker
 ACTOR_ENV = "SIM_ACTOR"
 MODEL_ENV = "SIM_ACTOR_MODEL"
 KEY_ENV = "GEMINI_API_KEY"
+TIMEOUT_ENV = "SIM_ACTOR_TIMEOUT_S"
+DEFAULT_TIMEOUT_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -53,11 +57,16 @@ class Actor(Protocol):
 
 
 class GeminiActor:
-    def __init__(self, model: str, api_key: str, client: Any = None) -> None:
+    def __init__(
+        self, model: str, api_key: str, client: Any = None, timeout_s: float = DEFAULT_TIMEOUT_S
+    ) -> None:
         if client is None:
             from google import genai
+            from google.genai import types
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(
+                api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout_s * 1000))
+            )
         self.model = model
         self._client = client
 
@@ -183,4 +192,18 @@ def actor_from_env(env: dict[str, str] | None = None) -> Actor:
     model = env.get(MODEL_ENV, "")
     if not key or not model:
         raise ActorConfigError(f"the gemini actor needs {KEY_ENV} and {MODEL_ENV}")
-    return GeminiActor(model=model, api_key=key)
+    return GeminiActor(model=model, api_key=key, timeout_s=actor_timeout_from_env(env))
+
+
+def actor_timeout_from_env(env: dict[str, str] | None = None) -> float:
+    env = dict(os.environ) if env is None else env
+    raw = env.get(TIMEOUT_ENV, "")
+    if not raw:
+        return DEFAULT_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 0.0
+    if not 0 < value <= 600:
+        raise ActorConfigError(f"{TIMEOUT_ENV} must be seconds between 0 and 600, not {raw!r}")
+    return value

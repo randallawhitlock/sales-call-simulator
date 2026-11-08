@@ -16,6 +16,7 @@ from app.actor.actors import (
     ScriptedActor,
     Turn,
     actor_from_env,
+    actor_timeout_from_env,
 )
 from app.actor.prompt import (
     PROMPT_VERSION,
@@ -398,7 +399,8 @@ def test_a_reply_overtaken_by_a_newer_line_is_dropped(client: TestClient) -> Non
 
 
 @pytest.mark.parametrize("action", ["hold", "end"])
-def test_hold_and_end_wait_for_a_reply_in_flight(client: TestClient, action: str) -> None:
+def test_hold_and_end_cut_off_a_reply_in_flight(client: TestClient, action: str) -> None:
+    """Neither waits for the model; the reply being generated is dropped instead."""
     call = Call(client, CASE_A).start()
     actor, (t1, first) = blocked_turn(call)
     act = (
@@ -406,17 +408,62 @@ def test_hold_and_end_wait_for_a_reply_in_flight(client: TestClient, action: str
         if action == "hold"
         else (lambda: call.service.end(call.sid))
     )
-    t2, _ = in_thread(act)
-    t2.join(0.3)
-    assert t2.is_alive(), f"{action} waits for the reply"
+    t2, done = in_thread(act)
+    t2.join(2)
+    assert not t2.is_alive(), f"{action} doesn't wait for the model"
+    assert "error" not in done
     actor.release.set()
     t1.join(5)
-    t2.join(5)
-    assert first["value"].customer is not None
-    events = call.service.events(call.sid)
-    reply_seq = next(e.seq for e in events if e.utt_id == first["value"].customer.utt_id)
-    marker = EventType.HOLD_STARTED if action == "hold" else EventType.CALL_ENDED
-    assert reply_seq < next(e.seq for e in events if e.type is marker)
+    assert first["value"].customer is None
+    assert speakers(call) == ["learner"]
+    if action == "end":
+        assert call.service.get(call.sid).status.value == "ended"
+
+
+def test_a_hung_model_times_out_and_the_turn_can_be_retried(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    actor = BlockingActor()
+    call.service.actor = actor
+    call.service.actor_deadline_s = 0.2
+    body = {"client_utt_id": "turn-hung-00001", "text": "What medications do you take?"}
+    failed = call.post("/turns", body, expect=502)
+    assert "didn't answer within 0.2s" in failed["detail"]
+    assert actor.entered.is_set()
+    actor.release.set()  # the late reply is discarded, not saved
+    assert speakers(call) == ["learner"]
+    call.service.actor = ScriptedActor()
+    assert "apixaban" in call.post("/turns", body)["customer"]["text"]
+    assert speakers(call) == ["learner", "customer"]
+
+
+def test_an_actor_bug_ends_the_turn_cleanly(client: TestClient) -> None:
+    class Broken(ScriptedActor):
+        def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
+            raise KeyError("oops")
+
+    call = Call(client, CASE_A).start()
+    call.service.actor = Broken()
+    assert "failed" in call.turn("Hello?", expect=502)["detail"]
+    assert call.service._turn_locks == {}
+
+
+def test_turn_locks_live_only_while_a_turn_is_in_flight(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    call.turn("Hello?")
+    assert call.service._turn_locks == {}
+    actor, (t1, _) = blocked_turn(call)
+    assert set(call.service._turn_locks) == {call.sid}
+    actor.release.set()
+    t1.join(5)
+    assert call.service._turn_locks == {}
+
+
+def test_actor_timeout_from_env() -> None:
+    assert actor_timeout_from_env({}) == 30.0
+    assert actor_timeout_from_env({"SIM_ACTOR_TIMEOUT_S": "12.5"}) == 12.5
+    for bad in ("0", "-1", "abc", "601"):
+        with pytest.raises(ActorConfigError, match="SIM_ACTOR_TIMEOUT_S"):
+            actor_timeout_from_env({"SIM_ACTOR_TIMEOUT_S": bad})
 
 
 def test_a_reply_after_a_hold_that_slipped_in_is_dropped(client: TestClient) -> None:
