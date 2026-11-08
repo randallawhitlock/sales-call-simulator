@@ -6,6 +6,8 @@ shows up. The answer key and findings must refuse until the call ends, then cont
 canaries, which proves the sweep can see them.
 """
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -87,7 +89,7 @@ def test_no_truth_reaches_the_learner(client: TestClient, scenario_id: str) -> N
 
 
 def test_session_view_hides_persona_rolls(client: TestClient) -> None:
-    call = Call(client, "case-a-must-keep-specialist")
+    call = Call(client, "scenario-101")
     row = call.service.get(call.sid)
     body = call.get("")
     assert "mood" not in body and "voice" not in body and "seed" not in body
@@ -101,3 +103,4 @@ def test_scenario_cards_do_not_name_the_lesson(client: TestClient) -> None:
     for card in cards:
         assert set(card) == {"scenario_id", "learner_title"}
         assert card["learner_title"] not in titles
+        assert re.fullmatch(r"scenario-\d{3}", card["scenario_id"]), card["scenario_id"]

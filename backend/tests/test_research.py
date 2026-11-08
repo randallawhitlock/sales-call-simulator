@@ -104,6 +104,7 @@ def test_compare_arithmetic() -> None:
     assert not hmo.pharmacy_preferred
     assert [ln.copay_per_fill for ln in hmo.lines] == [Decimal("47.00"), Decimal("24.00")]
     assert hmo.total == Decimal("564.00") + Decimal("96.00")
+    assert ppo.estimate_complete and hmo.estimate_complete
     assert [r.plan.plan_id for r in result.plans] == ["TRN-2002-001", "TRN-1001-002"]
 
 
@@ -112,8 +113,36 @@ def test_compare_flags_uncovered_drugs_and_out_of_network_pharmacies() -> None:
     (row,) = research.compare(CATALOG, ["TRN-3003-002"], drugs, "cedar-street-rx").plans
     assert not row.pharmacy_in_network
     assert row.lines[0].annual_cost is None
+    assert not row.estimate_complete
     assert any("not covered" in w for w in row.warnings)
     assert any("not in this plan's pharmacy network" in w for w in row.warnings)
+
+
+def test_compare_ranks_partial_estimates_after_complete_ones() -> None:
+    # Summit Rewards doesn't cover sitagliptin, so its total leaves that drug out and looks
+    # cheapest. It must still rank behind every plan that priced both drugs.
+    drugs = [
+        research.CompareDrugIn(drug_id="sitagliptin-100mg-tab"),
+        research.CompareDrugIn(drug_id="lisinopril-20mg-tab"),
+    ]
+    plan_ids = ["TRN-3003-002", "TRN-1001-001", "TRN-3003-001", "TRN-2002-001"]
+    result = research.compare(CATALOG, plan_ids, drugs, "alder-family-rx")
+    assert [r.plan.plan_id for r in result.plans] == [
+        "TRN-1001-001",
+        "TRN-3003-001",
+        "TRN-2002-001",
+        "TRN-3003-002",
+    ]
+    assert [r.total for r in result.plans] == [
+        Decimal("564.00"),
+        Decimal("564.00"),
+        Decimal("660.00"),
+        Decimal("36.00"),
+    ]
+    assert [r.estimate_complete for r in result.plans] == [True, True, True, False]
+    partial = result.plans[-1]
+    assert any("leaves out 1 of 2 drugs" in w for w in partial.warnings)
+    assert "leaves out a drug" in result.ranking
 
 
 def test_compare_adds_the_drug_deductible_once_for_higher_tiers() -> None:
@@ -129,7 +158,7 @@ def test_compare_limits() -> None:
 
 
 def test_research_endpoints_log_events(client: TestClient) -> None:
-    call = Call(client, "case-a-must-keep-specialist").start()
+    call = Call(client, "scenario-101").start()
     plans = call.get("/research/plans", zip="00041")
     assert len(plans["result"]) == 6
     assert call.get("/research/plans", zip="00099")["result"] == []

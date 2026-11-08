@@ -7,13 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.content.loader import load_bundle
-from app.engine.checks import run_checks
+from app.engine.checks import CoverageClaim, Facts, claim_backed, run_checks
 from app.engine.records import SessionState
 from app.engine.store import Store
 from tests.harness import Call
-from tests.test_goldens import A_DRUGS, MAPLE_CHOICE, a_call
+from tests.test_goldens import A_DRUGS, MAPLE_CHOICE, SUMMIT_CLASSIC, a_call, enroll_to_consent
 
-CASE_A = "case-a-must-keep-specialist"
+CASE_A = "scenario-101"
 
 
 def test_research_and_records_need_an_active_call(client: TestClient) -> None:
@@ -110,6 +110,75 @@ def test_sessions_pin_versions_and_seeded_rolls(client: TestClient) -> None:
     a, b = first.service.get(first.sid), second.service.get(second.sid)
     assert (a.mood, a.voice) == (b.mood, b.voice)
     assert (a.catalog_version, a.ruleset_version, a.rubric_version) == ("2027-v1", "mvp-2027.1", 1)
+
+
+def test_findings_refuse_content_the_session_was_not_pinned_to(client: TestClient) -> None:
+    call = Call(client, CASE_A).start().end()
+    assert call.get("/findings")["catalog_version"] == "2027-v1"
+    row = call.service.get(call.sid)
+    call.service.store.put_session(row.model_copy(update={"catalog_version": "2027-v9"}))
+    for path in ("/findings", "/answer-key"):
+        body = call.get(path, expect=409)
+        assert "catalog 2027-v9 (loaded: 2027-v1)" in body["detail"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"applicant_name": "Loretta B. Banks"},
+        {"residence_zip": "00042"},
+        {"pcp_practice_id": "whitfield-alder"},
+        {"effective_date": "2027-02-01"},
+        {"plan_id": "TRN-1001-001"},
+    ],
+)
+def test_application_fields_lock_after_checklist_review(
+    client: TestClient, change: dict[str, str]
+) -> None:
+    call, app_id = enroll_to_consent(client)
+    fields = call.get("/applications")[0]["application"]["fields"]
+    call.put(f"/applications/{app_id}", fields)  # unchanged is fine
+    body = call.put(f"/applications/{app_id}", fields | change, expect=409)
+    assert "start a new application" in body["detail"]
+
+
+def test_application_fields_lock_after_consent(client: TestClient) -> None:
+    call = a_call(client)
+    app_id = call.apply(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.consent(app_id, call.hear("Yes, sign me up."))
+    fields = call.get("/applications")[0]["application"]["fields"]
+    call.put(f"/applications/{app_id}", fields | {"residence_zip": "00042"}, expect=409)
+
+
+def test_claims_are_backed_only_by_lookups_that_showed_them(client: TestClient) -> None:
+    call = a_call(client)
+    early = call.say("Dr. Raman is in network on Summit Classic.")
+    call.network("raman-northside", SUMMIT_CLASSIC)  # out of network for 2027
+    call.network("raman-northside", MAPLE_CHOICE)  # in network
+    said = call.say("Dr. Raman is covered on both plans.")
+    bundle = load_bundle()
+    facts = Facts(
+        bundle.scenario(CASE_A),
+        bundle.catalog,
+        bundle.frame,
+        call.service.store.events(call.sid),
+        call.service.store.utterances(call.sid),
+    )
+
+    def backed(utt_id: str, plan_id: str, covered: bool = True) -> bool:
+        claim = CoverageClaim(
+            utt_id=utt_id,
+            plan_id=plan_id,
+            kind="provider_network",
+            subject_id="raman-northside",
+            covered=covered,
+        )
+        return claim_backed(facts, claim)
+
+    assert backed(said, MAPLE_CHOICE)
+    assert not backed(said, SUMMIT_CLASSIC)
+    assert backed(said, SUMMIT_CLASSIC, covered=False)
+    assert not backed(early, SUMMIT_CLASSIC, covered=False)
 
 
 def test_a_stored_log_replays_to_the_same_findings(client: TestClient, tmp_path: Path) -> None:

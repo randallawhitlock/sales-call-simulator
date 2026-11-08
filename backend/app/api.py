@@ -505,9 +505,10 @@ def withdraw_application(session_id: str, app_id: str, service: Service) -> Appl
 @router.get("/sessions/{session_id}/answer-key")
 def answer_key(session_id: str, service: Service) -> AnswerKey:
     row = service.require_ended(session_id)
-    catalog = service.content.catalog
+    content = service.pinned_content(row)
+    catalog = content.catalog
     return AnswerKey(
-        scenario=service.content.scenario(row.scenario_id),
+        scenario=content.scenario(row.scenario_id),
         document_defects={
             d.document_id: d.seeded_defect for d in catalog.documents if d.seeded_defect
         },
@@ -517,7 +518,7 @@ def answer_key(session_id: str, service: Service) -> AnswerKey:
 @router.get("/sessions/{session_id}/findings")
 def findings(session_id: str, service: Service) -> Findings:
     row = service.require_ended(session_id)
-    content = service.content
+    content = service.pinned_content(row)
     results = run_checks(
         content.scenario(row.scenario_id),
         content.catalog,
