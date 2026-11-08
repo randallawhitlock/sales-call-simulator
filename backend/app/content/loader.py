@@ -225,9 +225,10 @@ def _scenario_problems(s: Scenario, b: ContentBundle) -> list[str]:
     return out
 
 
-def _knowledge_leaks(s: Scenario, c: Catalog) -> list[str]:
-    """The build-time leak guard: customer knowledge stays in lay words."""
-    internal_ids = {
+def internal_ids(c: Catalog) -> set[str]:
+    """Catalog ids the customer could never know. Every one contains a hyphen, so a plain-word
+    match in prose is never a false hit."""
+    return {
         *(p.plan_id for p in c.plans),
         *(p.practice_id for p in c.practices),
         *(d.drug_id for d in c.drugs),
@@ -236,13 +237,22 @@ def _knowledge_leaks(s: Scenario, c: Catalog) -> list[str]:
         *(p.network_id for p in c.plans),
         *(p.formulary_id for p in c.plans),
     }
+
+
+def jargon_in(text: str) -> list[str]:
+    folded = text.casefold()
+    return [w for w in CUSTOMER_JARGON if re.search(rf"(?<![a-z]){re.escape(w)}", folded)]
+
+
+def _knowledge_leaks(s: Scenario, c: Catalog) -> list[str]:
+    """The build-time leak guard: customer knowledge stays in lay words."""
+    ids = internal_ids(c)
     out: list[str] = []
     for item in s.knowledge:
         text = item.lay_text.casefold()
-        for word in CUSTOMER_JARGON:
-            if re.search(rf"(?<![a-z]){re.escape(word)}", text):
-                out.append(f"knowledge {item.item_id} uses agent jargon {word!r}")
-        for internal in internal_ids:
+        for word in jargon_in(text):
+            out.append(f"knowledge {item.item_id} uses agent jargon {word!r}")
+        for internal in ids:
             if internal.casefold() in text:
                 out.append(f"knowledge {item.item_id} contains internal id {internal!r}")
     return out

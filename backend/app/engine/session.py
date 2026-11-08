@@ -10,12 +10,15 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
+from app.actor.actors import Actor, ActorError, ScriptedActor, Turn
+from app.actor.prompt import PROMPT_VERSION, CustomerPrompt, build_customer_prompt
 from app.content.catalog import DocumentKind
 from app.content.loader import ContentBundle
 from app.engine.events import (
     Channel,
+    ClientUttId,
     Event,
     EventType,
     Speaker,
@@ -65,14 +68,40 @@ class Invalid(SessionError):
     status_code = 422
 
 
+class ActorUnavailable(SessionError):
+    """The customer model didn't answer. The learner's line is saved; retry the same turn."""
+
+    status_code = 502
+
+
+class TurnIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_utt_id: ClientUttId
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class TurnOut(BaseModel):
+    learner: Utterance
+    customer: Utterance | None
+    """None when the turn is not the latest learner line, so no stale reply is made."""
+
+
 EVIDENCE_SOURCES = {EventType.LOOKUP, EventType.DOCUMENT_OPENED}
 
 
 class SessionService:
-    def __init__(self, store: Store, content: ContentBundle, clock: Clock = utc_now) -> None:
+    def __init__(
+        self,
+        store: Store,
+        content: ContentBundle,
+        clock: Clock = utc_now,
+        actor: Actor | None = None,
+    ) -> None:
         self.store = store
         self.content = content
         self.clock = clock
+        self.actor: Actor = actor or ScriptedActor()
 
     # Lifecycle
 
@@ -91,6 +120,8 @@ class SessionService:
             rubric_id=self.content.rubric.rubric_id,
             rubric_version=self.content.rubric.version,
             frame_id=self.content.frame.frame_id,
+            prompt_version=PROMPT_VERSION,
+            actor=self.actor.name,
             seed=seed,
             mood=rolls.choice(scenario.persona.moods),
             voice=rolls.choice(scenario.persona.voices),
@@ -216,6 +247,60 @@ class SessionService:
         if body.speaker is not Speaker.LEARNER or body.channel is not Channel.TEXT:
             raise Invalid("learners post their own text turns only")
         return self.add_utterance(session_id, body)
+
+    def take_turn(self, session_id: str, body: TurnIn) -> TurnOut:
+        """The learner says a line and the customer answers. Retrying with the same
+        ``client_utt_id`` returns the same pair; if the customer model failed last time, it is
+        asked again."""
+        row = self.require_active(session_id)
+        if self.state(session_id).on_hold:
+            raise Conflict("the customer is on hold and can't hear you")
+        learner = self.add_learner_text(
+            session_id,
+            UtteranceIn(
+                client_utt_id=body.client_utt_id,
+                speaker=Speaker.LEARNER,
+                channel=Channel.TEXT,
+                text=body.text,
+            ),
+        )
+        reply_key = f"reply-{learner.utt_id}"
+        transcript = self.store.utterances(session_id)
+        existing = self.store.utterance_by_client_id(session_id, reply_key)
+        if existing is not None:
+            return TurnOut(learner=learner, customer=existing)
+        latest = next((u for u in reversed(transcript) if u.speaker is Speaker.LEARNER), learner)
+        if latest.utt_id != learner.utt_id:
+            return TurnOut(learner=learner, customer=None)
+        prompt = self.customer_prompt(row)
+        history = [Turn(u.speaker, u.heard_text) for u in transcript if u.delivered]
+        try:
+            text = self.actor.reply(prompt, history, row.seed)
+        except ActorError as exc:
+            raise ActorUnavailable(str(exc)) from exc
+        customer = self.add_utterance(
+            session_id,
+            UtteranceIn(
+                client_utt_id=reply_key,
+                speaker=Speaker.CUSTOMER,
+                channel=Channel.TEXT,
+                text=text,
+            ),
+        )
+        return TurnOut(learner=learner, customer=customer)
+
+    def customer_prompt(self, row: SessionRow) -> CustomerPrompt:
+        """The prompt the session's customer plays from. Refuses if the server's prompt
+        template or model differs from what the session pinned."""
+        pinned = (row.prompt_version, row.actor)
+        running = (PROMPT_VERSION, self.actor.name)
+        if pinned != running:
+            raise Conflict(
+                f"this session's customer is {row.actor} on {row.prompt_version}; the server "
+                f"runs {self.actor.name} on {PROMPT_VERSION}"
+            )
+        scenario = self.content.scenario(row.scenario_id)
+        return build_customer_prompt(scenario, self.content.frame, row.mood)
 
     def transcript(self, session_id: str) -> list[Utterance]:
         self.get(session_id)

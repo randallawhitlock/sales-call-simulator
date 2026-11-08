@@ -9,8 +9,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import __version__
+from app.actor.actors import actor_from_env
+from app.actor.prompt import PROMPT_VERSION, check_all_prompts
 from app.api import router
-from app.content.loader import load_bundle
+from app.content.loader import ContentError, load_bundle
 from app.engine.session import SessionError, SessionService
 from app.engine.store import Store
 
@@ -24,14 +26,22 @@ class Health(BaseModel):
     rules: int
     catalog_version: str
     scenarios: int
+    actor: str
+    """The model playing the customer. ``scripted`` is the offline stand-in."""
+    prompt_version: str
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Load and cross-check content at startup so a bad file stops the server, not a call.
     content = load_bundle()
+    # The customer prompt's leak guard runs for every case and mood before any call can start.
+    problems = check_all_prompts(content)
+    if problems:
+        raise ContentError(problems)
+    actor = actor_from_env()
     store = Store(os.environ.get(DB_PATH_ENV, "simulator.db"))
-    app.state.sessions = SessionService(store, content)
+    app.state.sessions = SessionService(store, content, actor=actor)
     yield
     store.close()
 
@@ -47,7 +57,8 @@ async def session_error(request: Request, exc: SessionError) -> JSONResponse:
 
 @app.get("/api/health")
 def health(request: Request) -> Health:
-    content = request.app.state.sessions.content
+    service: SessionService = request.app.state.sessions
+    content = service.content
     return Health(
         status="ok",
         version=__version__,
@@ -55,4 +66,6 @@ def health(request: Request) -> Health:
         rules=len(content.ruleset.rules),
         catalog_version=content.catalog.catalog_version,
         scenarios=len(content.scenarios),
+        actor=service.actor.name,
+        prompt_version=PROMPT_VERSION,
     )

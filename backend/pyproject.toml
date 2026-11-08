@@ -5,6 +5,7 @@ description = "Medicare sales training simulator: engine, research APIs, grading
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.162.2",
+    "google-genai>=3.0.0",
     "pydantic>=2.14.3",
     "pyyaml>=6.0.3",
     "uvicorn[standard]>=0.54.0",

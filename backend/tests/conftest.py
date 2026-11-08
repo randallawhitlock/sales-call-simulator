@@ -21,6 +21,7 @@ class StepClock:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("SIM_DB_PATH", ":memory:")
+    monkeypatch.setenv("SIM_ACTOR", "scripted")  # never call a real model from the test suite
     with TestClient(app) as c:
         app.state.sessions.clock = StepClock()
         yield c

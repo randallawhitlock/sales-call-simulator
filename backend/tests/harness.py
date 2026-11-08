@@ -1,8 +1,8 @@
 """Drives a call through the learner API, the way the call screen will.
 
-Customer turns go straight to the session service, standing in for the AI customer that
-arrives in M2. Everything the learner does goes through HTTP, so golden tests exercise the
-same endpoints the browser uses.
+Scripted customer turns (``hear``) go straight to the session service so golden tests control
+exactly what the customer says; ``turn`` goes through the actor the way the call screen does.
+Everything the learner does goes through HTTP, so tests exercise the endpoints the browser uses.
 """
 
 import itertools
@@ -73,6 +73,11 @@ class Call:
             "text": text,
         }
         return str(self.post("/utterances", body, expect=201)["utt_id"])
+
+    def turn(self, text: str, expect: int = 200) -> Any:
+        """A learner line through the call screen's endpoint; the actor answers."""
+        body = {"client_utt_id": f"turn-{next(self._ids):04d}", "text": text}
+        return self.post("/turns", body, expect=expect)
 
     def hear(self, text: str, *, heard: str | None = None, interrupted: bool = False) -> str:
         """A customer turn. ``heard`` and ``interrupted`` simulate voice barge-in."""
