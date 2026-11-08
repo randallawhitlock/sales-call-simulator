@@ -1,5 +1,6 @@
 """The AI customer: prompt, leak guard, actors and the turn endpoint."""
 
+import os
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -132,6 +133,18 @@ def test_scripted_customer_volunteers_then_answers_by_topic() -> None:
     assert "apixaban" in reply and "Metoprolol" in reply
     later = scripted((L, "Hi."), (C, reply), (L, "Any other medications?"))
     assert "Atorvastatin" in later and "apixaban" not in later
+
+
+def test_scripted_customer_does_not_answer_statements() -> None:
+    disclaimer = (
+        "We do not offer every plan available in your area. Currently we represent 3 "
+        "organizations which offer 6 products in your area. Please contact Medicare.gov or "
+        "1-800-MEDICARE to get information on all of your options."
+    )
+    s = BUNDLE.scenario(CASE_A)
+    letter = next(k.lay_text for k in s.knowledge if k.reveal is Reveal.VOLUNTEER)
+    assert scripted((L, "Hi."), (C, letter), (L, disclaimer)) == "Okay."
+    assert "Part A" in scripted((L, "Tell me about your Medicare coverage."))
 
 
 def test_scripted_customer_keeps_specific_facts_for_specific_questions() -> None:
@@ -288,3 +301,19 @@ def test_sessions_pin_the_actor_and_prompt(client: TestClient) -> None:
     call.service.store.put_session(row.model_copy(update={"actor": "gemini:old-model"}))
     body = call.turn("Hello?", expect=409)
     assert "gemini:old-model" in body["detail"]
+
+
+# Live (opt-in: GEMINI_API_KEY and SIM_ACTOR_MODEL set, run with pytest -m live)
+
+
+@pytest.mark.live
+def test_live_gemini_customer_stays_in_lay_words() -> None:
+    actor = actor_from_env({**os.environ, "SIM_ACTOR": "gemini"})
+    prompt = prompt_for()
+    history = [
+        Turn(L, "Thanks for calling Larkspur Benefits Group. What can I help you with today?")
+    ]
+    reply = actor.reply(prompt, history, seed=7)
+    assert reply
+    problems = prompt_problems(replace(prompt, text=reply), BUNDLE)
+    assert problems == [], problems

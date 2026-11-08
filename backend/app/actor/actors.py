@@ -102,9 +102,9 @@ def _merged_roles(history: Sequence[Turn]) -> list[tuple[str, str]]:
 # Scripted
 
 
-_QUESTION = re.compile(
-    r"\?|\b(tell me|can you|could you|would you|do you|did you|are you|is there|what|which|"
-    r"who|where|when|how|please)\b"
+_ASKING_START = re.compile(
+    r"^(tell me|can|could|would|will|do|does|did|are|is|have|has|may|what|which|who|whose|"
+    r"where|when|how|let me know)\b"
 )
 _CONSENT_ASK = re.compile(
     r"\b(enroll you|sign you up|submit (?:your|the) (?:enrollment|application)|"
@@ -123,7 +123,7 @@ class ScriptedActor:
         knowledge = prompt.scenario.knowledge
         said = " ".join(t.text for t in history if t.speaker is Speaker.CUSTOMER)
         last = _fold(history[-1].text) if history else ""
-        asked = bool(_QUESTION.search(last))
+        asked = _is_question(last)
         if asked and _CONSENT_ASK.search(last):
             return "Yes, go ahead."
 
@@ -141,6 +141,15 @@ class ScriptedActor:
         if not lines:
             return "Hmm, I'm not sure about that." if asked else "Okay."
         return " ".join(lines)
+
+
+def _is_question(text: str) -> bool:
+    """A question mark, or a sentence that opens like a question or request. Statements such
+    as the disclaimer ("organizations which offer...") don't count."""
+    if "?" in text:
+        return True
+    sentences = (s.strip() for s in re.split(r"[.!]", text))
+    return any(_ASKING_START.match(s) for s in sentences if s)
 
 
 def _fold(text: str) -> str:

@@ -36,13 +36,14 @@ the conversation and the research on one screen and grades both.
 
 ## Status
 
-Pre-alpha. The content and the deterministic core are in; the call screen is next.
+Pre-alpha. The content and the deterministic core are in. The call screen and the text actor
+are working; the rest of M2 is in progress.
 
 | Milestone | What lands | State |
 |---|---|---|
 | M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold, CI | Done |
 | M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done; voice spike pending |
-| M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer | Next |
+| M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer | In progress: call screen, Gemini text actor, offline scripted actor |
 | M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, retry | Planned |
 | M4 Voice | LiveKit agent worker on Gemini Live | Planned |
 | M5 Hardening | Resilience tests, demo script | Planned |
@@ -101,7 +102,7 @@ screen can pin it as evidence.
 | Group | Endpoints |
 |---|---|
 | Sessions | `GET /scenarios`, `POST /sessions`, `GET /sessions/{id}`, `POST .../start`, `.../end`, `.../hold` |
-| Conversation | `POST .../utterances` (learner text turns only), `GET .../transcript`, `GET .../events` |
+| Conversation | `POST .../turns` (learner line in, customer reply out), `POST .../utterances` (learner text turns only), `GET .../transcript`, `GET .../events` |
 | Research | `.../research/plans`, `plans/{plan_id}`, `providers`, `providers/network`, `drugs`, `formulary`, `pharmacies`, `pharmacies/network`, `POST .../research/compare`, `.../documents` |
 | Records | `GET .../record`, `PUT .../record/{section}`, `POST .../scope`, `.../evidence`, `.../followups` |
 | Applications | `POST .../applications`, `PUT .../applications/{app_id}`, then `.../pecl`, `.../consent`, `.../submit` (idempotent), `.../withdraw` |
@@ -141,10 +142,21 @@ cd backend && uv sync && uv run uvicorn app.main:app --reload
 cd frontend && npm ci && npm run dev
 ```
 
-Open http://localhost:5173. The page reads "API: ok" once the backend is up. The backend
-validates every content file at startup, and checks the files against each other (every plan a
-case names exists, the disclaimer numbers match the catalog, customer knowledge has no agent
-jargon), so a broken file stops it right away. Sessions are stored in `simulator.db`.
+Open http://localhost:5173, pick a call and answer it. The call screen has the transcript on
+the left, research tabs and the application in the middle, and the customer record on the
+right. "Pin to record" saves a research result as evidence; "Use as source" on a customer line
+lets a record field or the enrollment consent cite it. Ending the call shows the rule-check
+findings.
+
+Without `GEMINI_API_KEY` the customer is an offline scripted stand-in that answers from the
+case's facts by topic and reveal rule. It is enough to click through a call, not to practice
+one.
+
+The backend validates every content file at startup, and checks the files against each other
+(every plan a case names exists, the disclaimer numbers match the catalog, customer knowledge
+has no agent jargon). It also builds the customer prompt for every case and mood and refuses to
+start if one contains agent jargon, catalog ids, plan codes or answer-key text. Sessions are
+stored in `simulator.db`.
 
 The checks CI runs on every pull request:
 
@@ -152,21 +164,24 @@ The checks CI runs on every pull request:
 cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q
 ```
 
+`uv run pytest -m live` runs the opt-in tests that call a real model (needs `GEMINI_API_KEY` and `SIM_ACTOR_MODEL`).
+
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm run build
 ```
 
 ### Environment variables
 
-Nothing so far needs a key. Later milestones read these from the environment or from a local
-`.env`, which git ignores. Never commit real values.
+No key is required to run the app. The backend reads these from the environment; `.env` files
+are git-ignored. Never commit real values.
 
 | Variable | Used for | From |
 |---|---|---|
 | `SIM_CONTENT_DIR` | Point the backend at another content directory | M0 |
 | `SIM_DB_PATH` | SQLite file for sessions and event logs (default `simulator.db`) | M1 |
 | `GEMINI_API_KEY` | Text actor, and Gemini Live for voice | M2 |
-| `SIM_ACTOR_MODEL` | Text actor model id | M2 |
+| `SIM_ACTOR_MODEL` | Text actor model id. Required with a key; never defaulted, so each session records the exact model | M2 |
+| `SIM_ACTOR` | `gemini` or `scripted` (default: `gemini` when a key is set) | M2 |
 | `ANTHROPIC_API_KEY` | Judge | M3 |
 | `SIM_JUDGE_MODEL` | Judge model id (default `claude-opus-5-5`) | M3 |
 | `SIM_LIVE_MODEL` | Gemini Live model id, always pinned | M4 |
