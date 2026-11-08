@@ -65,9 +65,9 @@ def test_catalog_matches_the_mvp_scope() -> None:
 
 def test_three_launch_cases_with_planted_canaries() -> None:
     assert set(BUNDLE.scenarios) == {
-        "case-a-must-keep-specialist",
-        "case-b-ad-allowance",
-        "case-c-retiree-coverage",
+        "scenario-101",
+        "scenario-102",
+        "scenario-103",
     }
     for scenario in BUNDLE.scenarios.values():
         assert scenario.leak_canaries
@@ -81,9 +81,9 @@ def test_keeping_and_deferring_can_be_right() -> None:
         for o in s.outcomes
         if o.verdict is OutcomeVerdict.ACCEPTABLE
     }
-    assert ("case-b-ad-allowance", "keep_current") in kinds
-    assert ("case-c-retiree-coverage", "defer") in kinds
-    assert not any(k == ("case-c-retiree-coverage", "enroll") for k in kinds)
+    assert ("scenario-102", "keep_current") in kinds
+    assert ("scenario-103", "defer") in kinds
+    assert not any(k == ("scenario-103", "enroll") for k in kinds)
 
 
 def test_bundle_rejects_a_frame_that_disagrees_with_the_catalog() -> None:
@@ -93,7 +93,7 @@ def test_bundle_rejects_a_frame_that_disagrees_with_the_catalog() -> None:
 
 
 def test_bundle_rejects_unclassified_plans_and_unknown_ids() -> None:
-    scenario = BUNDLE.scenario("case-b-ad-allowance")
+    scenario = BUNDLE.scenario("scenario-102")
     outcomes = tuple(o for o in scenario.outcomes if o.outcome_id != "enroll-other")
     truth = scenario.truth.model_copy(update={"pharmacy_id": "nowhere-rx"})
     broken = scenario.model_copy(update={"outcomes": outcomes, "truth": truth})
@@ -103,7 +103,7 @@ def test_bundle_rejects_unclassified_plans_and_unknown_ids() -> None:
 
 
 def test_leak_guard_rejects_agent_words_in_customer_knowledge() -> None:
-    scenario = BUNDLE.scenario("case-a-must-keep-specialist")
+    scenario = BUNDLE.scenario("scenario-101")
     item = scenario.knowledge[0].model_copy(
         update={"lay_text": "Is apixaban-5mg-tab on the formulary for TRN-1001-002?"}
     )

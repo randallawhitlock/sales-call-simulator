@@ -7,9 +7,9 @@ never reach the learner. ``knowledge`` is what the customer can say, under revea
 
 from datetime import date
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 
 from app.content.common import (
     CheckId,
@@ -157,8 +157,13 @@ class Trap(ContentModel):
     rationale: str
 
 
+ScenarioId = Annotated[str, StringConstraints(pattern=r"^scenario-\d{3}$")]
+"""Opaque on purpose: the id reaches the learner's case picker, so it must not name the lesson.
+The descriptive name lives in ``title``."""
+
+
 class Scenario(ContentModel):
-    scenario_id: Id
+    scenario_id: ScenarioId
     version: int = Field(ge=1)
     title: str
     """Author-facing. Names the lesson, so it never reaches the learner before the call ends."""

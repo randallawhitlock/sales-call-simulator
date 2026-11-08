@@ -64,7 +64,7 @@ def rule(**overrides: Any) -> dict[str, Any]:
 
 def scenario(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
-        "scenario_id": "case-test",
+        "scenario_id": "scenario-999",
         "version": 1,
         "title": "Test case",
         "learner_title": "Inbound call",

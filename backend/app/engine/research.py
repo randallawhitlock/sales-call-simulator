@@ -140,6 +140,10 @@ class ComparePlan(BaseModel):
     annual_drug_cost: Decimal
     drug_deductible_applied: Decimal
     total: Decimal
+    estimate_complete: bool
+    """False when a drug is left out of the total (not covered, or the pharmacy is out of
+    network). Such a total is lower than the real cost, so it never ranks ahead of a complete
+    one."""
     lines: list[CompareLine]
     warnings: list[str]
 
@@ -148,6 +152,7 @@ class CompareResult(BaseModel):
     label: str = ESTIMATE_LABEL
     ranking: str = (
         "Listed by estimated yearly premium plus drug costs for the drugs and pharmacy entered. "
+        "Plans whose estimate leaves out a drug are listed after every complete estimate. "
         "Medical costs are not included. This is not a recommendation."
     )
     method: str = (
@@ -341,7 +346,7 @@ def compare(
     if len(set(plan_ids)) != len(plan_ids):
         raise ValueError("compare lists a plan twice")
     rows = [_compare_plan(catalog, pid, drugs, pharmacy_id) for pid in plan_ids]
-    rows.sort(key=lambda r: (r.total, r.plan.plan_id))
+    rows.sort(key=lambda r: (not r.estimate_complete, r.total, r.plan.plan_id))
     return CompareResult(plans=rows)
 
 
@@ -386,7 +391,13 @@ def _compare_plan(
                 note=note,
             )
         )
-    drug_cost = sum((ln.annual_cost or Decimal(0) for ln in lines), Decimal(0))
+    left_out = sum(1 for ln in lines if ln.annual_cost is None)
+    if left_out:
+        warnings.append(
+            f"This total leaves out {left_out} of {len(lines)} drugs, so it is lower than the "
+            "real cost and can't be compared with a complete estimate."
+        )
+    drug_cost = sum((ln.annual_cost for ln in lines if ln.annual_cost is not None), Decimal(0))
     deductible = plan.drug_deductible if deductible_drug else Decimal(0)
     premium = plan.monthly_premium * 12
     return ComparePlan(
@@ -397,6 +408,7 @@ def _compare_plan(
         annual_drug_cost=drug_cost,
         drug_deductible_applied=deductible,
         total=premium + drug_cost + deductible,
+        estimate_complete=not left_out,
         lines=lines,
         warnings=warnings,
     )

@@ -142,6 +142,33 @@ class SessionService:
             raise Locked("available after the call ends")
         return row
 
+    def pinned_content(self, row: SessionRow) -> ContentBundle:
+        """The content bundle the session was pinned to at creation. Grading against any other
+        version would judge the call on facts the learner never saw while reporting the
+        session's versions, so a mismatch refuses instead."""
+        c = self.content
+        scenario = c.scenarios.get(row.scenario_id)
+        pinned = {
+            "scenario": f"{row.scenario_id} v{row.scenario_version}",
+            "catalog": row.catalog_version,
+            "ruleset": row.ruleset_version,
+            "rubric": f"{row.rubric_id} v{row.rubric_version}",
+            "frame": row.frame_id,
+        }
+        loaded = {
+            "scenario": f"{row.scenario_id} v{scenario.version}" if scenario else "missing",
+            "catalog": c.catalog.catalog_version,
+            "ruleset": c.ruleset.ruleset_version,
+            "rubric": f"{c.rubric.rubric_id} v{c.rubric.version}",
+            "frame": c.frame.frame_id,
+        }
+        diff = [f"{k} {pinned[k]} (loaded: {loaded[k]})" for k in pinned if pinned[k] != loaded[k]]
+        if diff:
+            raise Conflict(
+                "this session was pinned to content that is not loaded: " + "; ".join(diff)
+            )
+        return c
+
     def _t_ms(self, row: SessionRow, now: datetime) -> int:
         if row.started_at is None:
             return 0
@@ -251,8 +278,9 @@ class SessionService:
         self, session_id: str, app_id: str, fields: ApplicationFields
     ) -> Application:
         app = self._draft(session_id, app_id)
-        if fields.plan_id != app.fields.plan_id and app.pecl_marks:
-            raise Conflict("start a new application to change plans after checklist review")
+        if fields != app.fields and (app.pecl_marks or app.consent_seq is not None):
+            # The checklist and the customer's yes were for the application as it stood.
+            raise Conflict("start a new application to change it after checklist review")
         self._check_application(fields)
         self.log(
             session_id,

@@ -9,13 +9,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.engine.events import EventType
 from tests.harness import Call
 
 P, F, NA, NO, UG = "pass", "fail", "not_applicable", "not_observed", "ungraded"
 
-CASE_A = "case-a-must-keep-specialist"
-CASE_B = "case-b-ad-allowance"
-CASE_C = "case-c-retiree-coverage"
+CASE_A = "scenario-101"  # must-keep specialist
+CASE_B = "scenario-102"  # the ad promised money
+CASE_C = "scenario-103"  # retiree coverage
 
 MAPLE_VALUE, MAPLE_CHOICE = "TRN-1001-001", "TRN-1001-002"
 RIVERBEND_ESSENTIALS, RIVERBEND_SELECT = "TRN-2002-001", "TRN-2002-002"
@@ -65,23 +66,27 @@ def expected(
 # Case A
 
 
+A_DOCTORS: list[dict[str, Any]] = [
+    {
+        "name": "Dr. Priya Raman",
+        "role": "specialist",
+        "practice_id": "raman-northside",
+        "must_keep": True,
+    },
+    {"name": "Dr. Thomas Whitfield", "role": "pcp", "practice_id": "whitfield-alder"},
+]
+A_COVERAGE: dict[str, Any] = {"current_plan_id": SUMMIT_CLASSIC, "medicare_parts": ["a", "b"]}
+
+
 def a_call(client: TestClient, *, atorvastatin: str = "atorvastatin-40mg-tab") -> Call:
     call = Call(client, CASE_A).start().opening()
     call.hear("My heart doctor's group is leaving my plan next year.")
     call.record(
         zip_code="00041",
-        doctors=[
-            {
-                "name": "Dr. Priya Raman",
-                "role": "specialist",
-                "practice_id": "raman-northside",
-                "must_keep": True,
-            },
-            {"name": "Dr. Thomas Whitfield", "role": "pcp", "practice_id": "whitfield-alder"},
-        ],
+        doctors=A_DOCTORS,
         drugs=[A_DRUGS[0], A_DRUGS[1], atorvastatin],
         pharmacy_id="alder-family-rx",
-        coverage={"current_plan_id": SUMMIT_CLASSIC, "medicare_parts": ["a", "b"]},
+        coverage=A_COVERAGE,
     )
     return call
 
@@ -199,6 +204,58 @@ def test_a_double_submit_creates_one_application(client: TestClient) -> None:
     assert call.findings() == expected(ENROLLED_CLEAN)
 
 
+def test_a_record_filled_in_after_submission(client: TestClient) -> None:
+    # The record is graded as it stood at submission, not as it was tidied up afterward.
+    call = Call(client, CASE_A).start().opening()
+    call.hear("My heart doctor's group is leaving my plan next year.")
+    call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    call.decide("enroll", MAPLE_CHOICE)
+    call.enroll(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.record(
+        zip_code="00041",
+        doctors=A_DOCTORS,
+        drugs=A_DRUGS,
+        pharmacy_id="alder-family-rx",
+        coverage=A_COVERAGE,
+    )
+    call.end()
+    assert call.findings() == expected(
+        ENROLLED_CLEAN, needs_match_truth=F, application_matches_record=F
+    )
+    assert "Residence ZIP" in call.detail("application_matches_record")["detail"]
+
+
+def test_a_withdrawn_submission_is_still_audited(client: TestClient) -> None:
+    call = a_call(client)
+    call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    call.decide("enroll", MAPLE_CHOICE)
+    call.document("sob-maple-choice-2027")
+    first = call.apply(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.review_checklist(first)
+    call.submit(first, key="first-key-0001")  # no consent
+    call.post(f"/applications/{first}/withdraw")
+    call.enroll(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.end()
+    assert call.findings() == expected(
+        ENROLLED_CLEAN, critical=("consent_before_submit",), consent_before_submit=F
+    )
+    detail = call.detail("consent_before_submit")["detail"]
+    assert detail.startswith(f"Application {first} (later withdrawn): No consent")
+
+
+def test_a_two_standing_submissions_enroll_twice(client: TestClient) -> None:
+    call = a_call(client)
+    call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    call.decide("enroll", MAPLE_CHOICE)
+    call.enroll(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.enroll(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.end()
+    assert call.findings() == expected(
+        ENROLLED_CLEAN, critical=("outcome_acceptable",), outcome_acceptable=F
+    )
+    assert "enrolls the customer twice" in call.detail("outcome_acceptable")["detail"]
+
+
 def test_a_benefits_before_disclaimer(client: TestClient) -> None:
     call = Call(client, CASE_A).start()
     call.say("Thanks for calling. This call is recorded. Our plans have great dental benefits.")
@@ -210,6 +267,19 @@ def test_a_benefits_before_disclaimer(client: TestClient) -> None:
     result = call.detail("disclaimer_before_benefits")
     assert result["status"] == F
     assert "before the disclaimer" in result["detail"]
+
+
+def test_a_bare_benefit_before_disclaimer_goes_to_the_judge(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    call.say("Thanks for calling. This call is recorded. The main benefit of calling us is choice.")
+    call.say(
+        "We do not offer every plan available in your area. We represent 3 organizations which "
+        "offer 6 products. Please contact Medicare.gov or 1-800-MEDICARE for all your options."
+    )
+    call.end()
+    result = call.detail("disclaimer_before_benefits")
+    assert (result["status"], result["critical"]) == (UG, False)
+    assert "needs the judge" in result["detail"].lower()
 
 
 def test_a_disclaimer_with_wrong_numbers(client: TestClient) -> None:
@@ -279,6 +349,53 @@ def test_a_consent_must_be_a_heard_customer_yes(
     result = call.detail("consent_before_submit")
     assert (result["status"], result["critical"]) == (F, True)
     assert reason in result["detail"]
+
+
+@pytest.mark.parametrize(
+    ("yes", "after", "status"),
+    [
+        ("Yes, I don't have any questions. Go ahead.", None, P),
+        ("Yeah, no problem, sign me up.", None, P),
+        ("Okay, not a problem, go ahead.", None, P),
+        ("Yes, sign me up.", "No, that's everything.", P),
+        ("Okay, sure, why not.", None, UG),
+        ("Yes, sign me up.", "No.", UG),
+        ("Yes, but don't submit it yet.", None, F),
+    ],
+)
+def test_a_consent_wording(client: TestClient, yes: str, after: str | None, status: str) -> None:
+    call, app_id = enroll_to_consent(client)
+    call.say("Would you like me to submit your enrollment in this plan?")
+    utt = call.hear(yes)
+    call.consent(app_id, utt)
+    if after is not None:
+        call.say("Anything else before I submit?")
+        call.hear(after)
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert (result["status"], result["critical"]) == (status, status == F)
+
+
+def test_a_application_changed_after_consent(client: TestClient) -> None:
+    # The API refuses this edit; the grader still catches it in a log that has one.
+    call, app_id = enroll_to_consent(client)
+    yes = call.hear("Yes, sign me up.")
+    call.consent(app_id, yes)
+    fields = call.get("/applications")[0]["application"]["fields"]
+    call.service.log(
+        call.sid,
+        EventType.APPLICATION_UPDATED,
+        {"application_id": app_id, "fields": fields | {"pcp_practice_id": "whitfield-alder"}},
+    )
+    call.submit(app_id)
+    call.end()
+    consent = call.detail("consent_before_submit")
+    assert (consent["status"], consent["critical"]) == (F, True)
+    assert "changed after the customer said yes" in consent["detail"]
+    pecl = call.detail("pecl_complete_before_submit")
+    assert (pecl["status"], pecl["critical"]) == (F, True)
+    assert "after the application last changed" in pecl["detail"]
 
 
 def test_a_consent_before_checklist_finished(client: TestClient) -> None:

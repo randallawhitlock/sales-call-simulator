@@ -191,7 +191,11 @@ class Application(BaseModel):
     fields: ApplicationFields
     status: Literal["draft", "submitted", "withdrawn"] = "draft"
     created_seq: int
+    updated_seq: int | None = None
+    """Seq of the last update that changed a field. Checklist marks and consent given before
+    it no longer describe the application."""
     submitted_seq: int | None = None
+    """Kept after a withdrawal: the submission still happened."""
     idempotency_key: str | None = None
     pecl_marks: dict[int, int] = {}
     """Checklist item index -> seq of the mark."""
@@ -235,7 +239,10 @@ class SessionState(BaseModel):
                     )
                 case EventType.APPLICATION_UPDATED:
                     app = state.applications[str(p["application_id"])]
-                    app.fields = ApplicationFields.model_validate(p["fields"])
+                    fields = ApplicationFields.model_validate(p["fields"])
+                    if fields != app.fields:
+                        app.fields = fields
+                        app.updated_seq = e.seq
                 case EventType.PECL_ITEM_MARKED:
                     app = state.applications[str(p["application_id"])]
                     app.pecl_marks.setdefault(_int(p["item_index"]), e.seq)
@@ -256,8 +263,16 @@ class SessionState(BaseModel):
         return state
 
     def submitted_application(self) -> Application | None:
+        """The enrollment that stands at the end: the latest submission not withdrawn."""
         submitted = [a for a in self.applications.values() if a.status == "submitted"]
         return max(submitted, key=lambda a: a.submitted_seq or 0) if submitted else None
+
+    def submissions(self) -> list[Application]:
+        """Every application that was submitted, withdrawn or not, in submission order.
+        Compliance is audited on each one: a later clean submission doesn't erase an earlier
+        faulty one."""
+        done = [a for a in self.applications.values() if a.submitted_seq is not None]
+        return sorted(done, key=lambda a: a.submitted_seq or 0)
 
 
 def _int(value: object) -> int:

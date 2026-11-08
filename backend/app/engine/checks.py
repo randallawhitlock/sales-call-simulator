@@ -22,7 +22,7 @@ from app.content.common import CheckId, OutcomeKind
 from app.content.loader import aep_end
 from app.content.scenario import CallFrame, OutcomeVerdict, Scenario
 from app.engine.events import Event, EventType, Speaker, Utterance
-from app.engine.records import Application, SessionState
+from app.engine.records import Application, CustomerRecord, SessionState
 
 
 class CheckStatus(StrEnum):
@@ -53,12 +53,16 @@ class Facts:
     outcome: OutcomeKind | None = field(init=False)
     outcome_seqs: list[int] = field(init=False)
     enrolled: Application | None = field(init=False)
+    """The enrollment standing at the end of the call; decides the outcome."""
+    submissions: list[Application] = field(init=False)
+    """Every submission, withdrawn or not; compliance checks audit each."""
     outcome_plan_id: str | None = field(init=False)
     cutoff: int = field(init=False)
 
     def __post_init__(self) -> None:
         self.state = SessionState.fold(self.events)
         self.enrolled = self.state.submitted_application()
+        self.submissions = self.state.submissions()
         disposition = self.state.record.disposition
         self.outcome, self.outcome_seqs = None, []
         if self.enrolled is not None:
@@ -82,6 +86,18 @@ class Facts:
 
     def before_cutoff(self, type_: EventType) -> list[Event]:
         return [e for e in self.events if e.type is type_ and e.seq < self.cutoff]
+
+    def record_at(self, seq: int) -> CustomerRecord:
+        """The customer record as it stood just before event ``seq``. Edits made after a
+        submission can't make that submission look better prepared than it was."""
+        return SessionState.fold([e for e in self.events if e.seq < seq]).record
+
+    @property
+    def needs_cutoff(self) -> int:
+        """Where the record is graded: the first submission, else the end of the call."""
+        if self.submissions and self.submissions[0].submitted_seq is not None:
+            return self.submissions[0].submitted_seq
+        return self.cutoff
 
     def lookups(self, kind: str) -> list[Event]:
         return [e for e in self.before_cutoff(EventType.LOOKUP) if e.payload.get("kind") == kind]
@@ -183,6 +199,15 @@ def outcome_acceptable(f: Facts, prior: dict[CheckId, CheckResult]) -> CheckResu
                 [f.state.record.saved_seq["disposition"]],
             )
         return _result(check, CheckStatus.NOT_OBSERVED, "No outcome was recorded.")
+    standing = [a for a in f.submissions if a.status == "submitted"]
+    if len(standing) > 1:
+        return _result(
+            check,
+            CheckStatus.FAIL,
+            f"{len(standing)} applications were left submitted. That enrolls the customer twice.",
+            [a.submitted_seq or 0 for a in standing],
+            critical=True,
+        )
     match = next(
         (
             o
@@ -375,8 +400,15 @@ def pharmacy_checked(f: Facts) -> CheckResult:
 
 def needs_match_truth(f: Facts) -> CheckResult:
     check = CheckId.NEEDS_MATCH_TRUTH
-    truth, rec = f.scenario.truth, f.state.record
+    truth, rec = f.scenario.truth, f.record_at(f.needs_cutoff)
     if not rec.saved_seq:
+        if f.submissions:
+            return _result(
+                check,
+                CheckStatus.FAIL,
+                "Nothing was saved to the customer record before the application was submitted.",
+                [f.needs_cutoff],
+            )
         return _result(check, CheckStatus.NOT_OBSERVED, "Nothing was saved to the customer record.")
     problems: list[str] = []
     recorded_practices = {d.practice_id for d in rec.doctors.doctors} if rec.doctors else set()
@@ -455,49 +487,81 @@ def evidence_context_matches(f: Facts) -> CheckResult:
 # Enrollment
 
 
-def _enrollment_only(check: CheckId, f: Facts) -> CheckResult | None:
-    if f.enrolled is None:
+def _audit_submissions(
+    check: CheckId, f: Facts, per_app: Callable[[Facts, Application], CheckResult]
+) -> CheckResult:
+    """Runs ``per_app`` on every submission, withdrawn or not, and reports the worst. A clean
+    resubmission doesn't hide a faulty first one."""
+    if not f.submissions:
         return _result(check, CheckStatus.NOT_APPLICABLE, "No application was submitted.")
-    return None
+    results = [(app, per_app(f, app)) for app in f.submissions]
+    if len(results) == 1:
+        return results[0][1]
+    bad = [(app, r) for app, r in results if r.status is not CheckStatus.PASS]
+    if not bad:
+        return _result(
+            check,
+            CheckStatus.PASS,
+            f"Every one of the {len(results)} submitted applications passed. "
+            + results[-1][1].detail,
+            [s for _, r in results for s in r.event_seqs],
+            [u for _, r in results for u in r.utt_ids],
+        )
+    app, worst = min(bad, key=lambda pair: _SEVERITY.get((pair[1].status, pair[1].critical), 9))
+    withdrawn = " (later withdrawn)" if app.status == "withdrawn" else ""
+    return worst.model_copy(
+        update={"detail": f"Application {app.application_id}{withdrawn}: {worst.detail}"}
+    )
+
+
+_SEVERITY = {
+    (CheckStatus.FAIL, True): 0,
+    (CheckStatus.FAIL, False): 1,
+    (CheckStatus.UNGRADED, False): 2,
+    (CheckStatus.NOT_OBSERVED, False): 3,
+}
 
 
 def sob_for_submitted_plan(f: Facts) -> CheckResult:
+    return _audit_submissions(CheckId.SOB_FOR_SUBMITTED_PLAN, f, _sob_opened)
+
+
+def _sob_opened(f: Facts, app: Application) -> CheckResult:
     check = CheckId.SOB_FOR_SUBMITTED_PLAN
-    if (skip := _enrollment_only(check, f)) is not None:
-        return skip
-    assert f.enrolled is not None
-    sob = f.catalog.plan_document(f.enrolled.fields.plan_id, DocumentKind.SUMMARY_OF_BENEFITS)
+    submitted = app.submitted_seq or 0
+    sob = f.catalog.plan_document(app.fields.plan_id, DocumentKind.SUMMARY_OF_BENEFITS)
     opens = [
         e.seq
-        for e in f.before_cutoff(EventType.DOCUMENT_OPENED)
-        if e.payload.get("document_id") == sob.document_id
+        for e in f.events
+        if e.type is EventType.DOCUMENT_OPENED
+        and e.seq < submitted
+        and e.payload.get("document_id") == sob.document_id
     ]
     if not opens:
         return _result(
-            check,
-            CheckStatus.FAIL,
-            f"{sob.title} was not opened before submission.",
-            [f.enrolled.submitted_seq or 0],
+            check, CheckStatus.FAIL, f"{sob.title} was not opened before submission.", [submitted]
         )
     return _result(check, CheckStatus.PASS, f"{sob.title} was opened before submission.", opens)
 
 
 def pecl_complete_before_submit(f: Facts) -> CheckResult:
+    return _audit_submissions(CheckId.PECL_COMPLETE_BEFORE_SUBMIT, f, _pecl_complete)
+
+
+def _pecl_complete(f: Facts, app: Application) -> CheckResult:
     check = CheckId.PECL_COMPLETE_BEFORE_SUBMIT
-    if (skip := _enrollment_only(check, f)) is not None:
-        return skip
-    app = f.enrolled
-    assert app is not None
     pecl = f.catalog.plan_document(app.fields.plan_id, DocumentKind.PRE_ENROLLMENT_CHECKLIST)
     submitted = app.submitted_seq or 0
-    marked = {i: s for i, s in app.pecl_marks.items() if s < submitted}
+    changed = app.updated_seq or 0
+    marked = {i: s for i, s in app.pecl_marks.items() if changed < s < submitted}
     missing = [i + 1 for i in range(len(pecl.checklist_items)) if i not in marked]
     if missing:
+        when = "after the application last changed" if changed else "before submission"
         return _result(
             check,
             CheckStatus.FAIL,
-            f"Checklist items not reviewed before submission: {missing}.",
-            [*marked.values(), submitted],
+            f"Checklist items not reviewed {when}: {missing}.",
+            [*marked.values(), *([changed] if changed else []), submitted],
             critical=True,
         )
     return _result(
@@ -512,17 +576,39 @@ def pecl_complete_before_submit(f: Facts) -> CheckResult:
 _AFFIRMATIVE = re.compile(
     r"\b(yes|yeah|yep|ok|okay|sure|go ahead|sign me up|i agree|please do|let's do it|do it)\b"
 )
-_NEGATIVE = re.compile(
-    r"\b(no|not|don't|dont|wait|hold on|stop|cancel|never mind|nevermind|changed my mind)\b"
+_OBJECTION = re.compile(
+    r"\b(wait|hold on|stop|cancel|never ?mind|changed my mind|not yet|not ready|not sure|"
+    r"(?:don't|dont|do not) (?:want|sign|submit|enroll|do it)|rather not|no thanks|no thank you|"
+    r"think (?:about it|it over)|talk to|ask my)\b"
 )
+"""Clear objections: these fail consent outright."""
+_BENIGN_NEGATIVE = re.compile(
+    r"\b(?:no|not an?) (?:problem|worries|issue)s?\b|\bno (?:other |more )?questions\b|"
+    r"\b(?:don't|dont|do not) have (?:any )?(?:other |more )?questions\b|"
+    r"\bno,? (?:that's|that is|that'll be) (?:it|all|everything)\b|\bnothing else\b"
+)
+"""Everyday phrasings with a negative word that are not objections."""
+_HEDGE = re.compile(r"\b(no|not|don't|dont)\b")
+"""A negative word left over once benign phrasings are removed. Too weak to fail consent on
+its own; the result goes to the judge instead."""
+
+
+def _consent_signal(text: str) -> str:
+    """``objection``, ``hedge`` or ``clear`` for one customer utterance."""
+    folded = _fold(text)
+    if _OBJECTION.search(folded):
+        return "objection"
+    if _HEDGE.search(_BENIGN_NEGATIVE.sub(" ", folded)):
+        return "hedge"
+    return "clear"
 
 
 def consent_before_submit(f: Facts) -> CheckResult:
+    return _audit_submissions(CheckId.CONSENT_BEFORE_SUBMIT, f, _consent)
+
+
+def _consent(f: Facts, app: Application) -> CheckResult:
     check = CheckId.CONSENT_BEFORE_SUBMIT
-    if (skip := _enrollment_only(check, f)) is not None:
-        return skip
-    app = f.enrolled
-    assert app is not None
     submitted = app.submitted_seq or 0
     if app.consent_utt_id is None or (app.consent_seq or 0) > submitted:
         return _result(
@@ -543,24 +629,37 @@ def consent_before_submit(f: Facts) -> CheckResult:
         return fail("Consent points to something the customer did not say.")
     if utt.interrupted or not utt.delivered:
         return fail("Consent points to speech that was cut off.")
-    text = _fold(utt.heard_text)
-    if not _AFFIRMATIVE.search(text) or _NEGATIVE.search(text):
+    signal = _consent_signal(utt.heard_text)
+    if not _AFFIRMATIVE.search(_fold(utt.heard_text)) or signal == "objection":
         return fail("The consent utterance is not a clear yes.")
+    hedges = [utt.utt_id] if signal == "hedge" else []
     utt_seq = f.utt_seq(utt.utt_id)
     last_mark = max(app.pecl_marks.values(), default=0)
     if utt_seq < last_mark:
         return fail("The customer's yes came before the checklist review finished.")
     if utt_seq > submitted:
         return fail("The customer's yes came after submission.")
+    if app.updated_seq is not None and utt_seq < app.updated_seq < submitted:
+        seqs.append(app.updated_seq)
+        return fail("The application changed after the customer said yes.")
     for later in f.utterances:
         later_seq = f.utt_seq(later.utt_id)
-        if (
-            later.speaker is Speaker.CUSTOMER
-            and utt_seq < later_seq < submitted
-            and _NEGATIVE.search(_fold(later.heard_text))
-        ):
+        if later.speaker is not Speaker.CUSTOMER or not utt_seq < later_seq < submitted:
+            continue
+        later_signal = _consent_signal(later.heard_text)
+        if later_signal == "objection":
             utts.append(later.utt_id)
             return fail("The customer objected after saying yes, before submission.")
+        if later_signal == "hedge":
+            hedges.append(later.utt_id)
+    if hedges:
+        return _result(
+            check,
+            CheckStatus.UNGRADED,
+            "The customer said yes, but with wording that might be a hesitation. Needs the judge.",
+            seqs,
+            utts + hedges,
+        )
     return _result(
         check,
         CheckStatus.PASS,
@@ -571,12 +670,13 @@ def consent_before_submit(f: Facts) -> CheckResult:
 
 
 def application_matches_record(f: Facts) -> CheckResult:
+    return _audit_submissions(CheckId.APPLICATION_MATCHES_RECORD, f, _matches_record)
+
+
+def _matches_record(f: Facts, app: Application) -> CheckResult:
     check = CheckId.APPLICATION_MATCHES_RECORD
-    if (skip := _enrollment_only(check, f)) is not None:
-        return skip
-    app = f.enrolled
-    assert app is not None
-    rec, fields = f.state.record, app.fields
+    submitted = app.submitted_seq or 0
+    rec, fields = f.record_at(submitted), app.fields
     problems: list[str] = []
     if _fold(fields.applicant_name) != _fold(f.scenario.crm_seed.customer_name):
         problems.append("applicant name differs from the customer's name")
@@ -591,18 +691,18 @@ def application_matches_record(f: Facts) -> CheckResult:
     pcps = {d.practice_id for d in rec.doctors.doctors if d.role == "pcp"} if rec.doctors else set()
     if fields.pcp_practice_id is not None and pcps and fields.pcp_practice_id not in pcps:
         problems.append("PCP differs from the record")
-    seqs = [app.submitted_seq or 0, *rec.saved_seq.values()]
+    seqs = [submitted, *rec.saved_seq.values()]
     if problems:
         return _result(check, CheckStatus.FAIL, _sentence(problems), seqs)
     return _result(check, CheckStatus.PASS, "The application matches the customer record.", seqs)
 
 
 def pcp_matches_plan_rule(f: Facts) -> CheckResult:
+    return _audit_submissions(CheckId.PCP_MATCHES_PLAN_RULE, f, _pcp_rule)
+
+
+def _pcp_rule(f: Facts, app: Application) -> CheckResult:
     check = CheckId.PCP_MATCHES_PLAN_RULE
-    if (skip := _enrollment_only(check, f)) is not None:
-        return skip
-    app = f.enrolled
-    assert app is not None
     plan = f.catalog.plan(app.fields.plan_id)
     seqs = [app.submitted_seq or 0]
     pcp = app.fields.pcp_practice_id
@@ -635,15 +735,15 @@ def no_enroll_with_unresolved_other_coverage(f: Facts) -> CheckResult:
     other = f.scenario.truth.other_coverage
     if other is None or not other.may_end_if_ma_enrollment:
         return _result(check, CheckStatus.NOT_APPLICABLE, "No other coverage at risk in this case.")
-    if f.outcome is None:
-        return _result(check, CheckStatus.NOT_OBSERVED, "No outcome was recorded.")
-    if f.enrolled is not None:
+    if f.submissions:
         return _result(
             check,
             CheckStatus.FAIL,
             "Enrolled while joining could end the customer's other coverage.",
-            f.outcome_seqs,
+            [a.submitted_seq or 0 for a in f.submissions],
         )
+    if f.outcome is None:
+        return _result(check, CheckStatus.NOT_OBSERVED, "No outcome was recorded.")
     return _result(
         check, CheckStatus.PASS, "No enrollment while other coverage was at risk.", f.outcome_seqs
     )
@@ -715,9 +815,14 @@ def _disclaimer_elements(frame: CallFrame) -> dict[str, re.Pattern[str]]:
 
 _BENEFIT_TALK = re.compile(
     r"\b(premiums?|co-?pays?|deductibles?|coinsurance|out[- ]of[- ]pocket|dental|vision|"
-    r"hearing|allowances?|benefits?|giveback|over[- ]the[- ]counter|otc|eyewear|"
-    r"drug coverage|formulary)\b"
+    r"hearing|allowances?|giveback|over[- ]the[- ]counter|otc|eyewear|drug coverage|formulary|"
+    r"(?:extra|additional|supplemental|plan|medical|health|drug) benefits?|"
+    r"benefits? (?:include|like|such as)|summary of benefits)\b"
 )
+"""Plainly about plan benefits or costs."""
+_MAYBE_BENEFIT_TALK = re.compile(r"\bbenefits?\b")
+"""A bare "benefit" ("the main benefit of switching") may or may not be benefit talk. Too weak
+to fail the disclaimer on; it sends the result to the judge."""
 
 
 _NOT_BENEFIT_TALK = re.compile(
@@ -726,9 +831,14 @@ _NOT_BENEFIT_TALK = re.compile(
 """Names like "Larkspur Benefits Group" or "Retiree Benefits Center" aren't benefit talk."""
 
 
-def _talks_benefits(text: str, frame: CallFrame) -> bool:
-    folded = _fold(text).replace(_fold(frame.agency_name), " ")
-    return bool(_BENEFIT_TALK.search(_NOT_BENEFIT_TALK.sub(" ", folded)))
+def _talks_benefits(text: str, frame: CallFrame) -> str | None:
+    """``strong``, ``weak`` or None."""
+    folded = _NOT_BENEFIT_TALK.sub(" ", _fold(text).replace(_fold(frame.agency_name), " "))
+    if _BENEFIT_TALK.search(folded):
+        return "strong"
+    if _MAYBE_BENEFIT_TALK.search(folded):
+        return "weak"
+    return None
 
 
 def disclaimer_before_benefits(f: Facts) -> CheckResult:
@@ -740,27 +850,41 @@ def disclaimer_before_benefits(f: Facts) -> CheckResult:
         for name, pattern in _disclaimer_elements(f.frame).items():
             if name not in first_hit and pattern.search(text):
                 first_hit[name] = i
-    benefit_at = next(
-        (i for i, u in enumerate(learner) if _talks_benefits(u.heard_text, f.frame)), None
-    )
+    talk = [_talks_benefits(u.heard_text, f.frame) for u in learner]
+    strong_at = next((i for i, t in enumerate(talk) if t == "strong"), None)
+    weak_at = next((i for i, t in enumerate(talk) if t == "weak"), None)
     names = list(_disclaimer_elements(f.frame))
     missing = [n for n in names if n not in first_hit]
     cited = {learner[i].utt_id for i in first_hit.values()}
-    if benefit_at is not None:
-        cited.add(learner[benefit_at].utt_id)
+    for at in (strong_at, weak_at):
+        if at is not None:
+            cited.add(learner[at].utt_id)
     if missing:
-        status = (
-            CheckStatus.NOT_OBSERVED if not first_hit and benefit_at is None else CheckStatus.FAIL
-        )
-        return _result(
-            check, status, f"Disclaimer elements not found: {', '.join(missing)}.", utts=cited
-        )
+        detail = f"Disclaimer elements not found: {', '.join(missing)}."
+        if first_hit or strong_at is not None:
+            return _result(check, CheckStatus.FAIL, detail, utts=cited)
+        if weak_at is not None:
+            return _result(
+                check,
+                CheckStatus.UNGRADED,
+                detail + " Possible benefit talk; needs the judge.",
+                utts=cited,
+            )
+        return _result(check, CheckStatus.NOT_OBSERVED, detail, utts=cited)
     complete_at = max(first_hit.values())
-    if benefit_at is not None and benefit_at < complete_at:
+    if strong_at is not None and strong_at < complete_at:
         return _result(
             check,
             CheckStatus.FAIL,
             "Benefits came up before the disclaimer was complete.",
+            utts=cited,
+        )
+    if weak_at is not None and weak_at < complete_at:
+        return _result(
+            check,
+            CheckStatus.UNGRADED,
+            "Something that may be benefit talk came before the disclaimer was complete. Needs "
+            "the judge.",
             utts=cited,
         )
     return _result(
@@ -854,16 +978,27 @@ class CoverageClaim(BaseModel):
     """provider_network, formulary or pharmacy_network."""
     subject_id: str
     """practice_id, drug_id or pharmacy_id."""
+    covered: bool = True
+    """What was claimed: covered or in network (True), or not (False)."""
+
+
+_CLAIM_SUBJECT = {
+    "provider_network": "practice_id",
+    "formulary": "drug_id",
+    "pharmacy_network": "pharmacy_id",
+}
+_CLAIM_RESULT = {
+    "provider_network": "in_network",
+    "formulary": "covered",
+    "pharmacy_network": "in_network",
+}
 
 
 def claim_backed(f: Facts, claim: CoverageClaim) -> bool:
-    """Whether a lookup that supports the claim happened before the claim was spoken."""
+    """Whether a lookup made before the claim was spoken showed what the learner claimed.
+    Looking something up doesn't back a claim the lookup contradicted."""
     spoken = f.utt_seq(claim.utt_id)
-    key = {
-        "provider_network": "practice_id",
-        "formulary": "drug_id",
-        "pharmacy_network": "pharmacy_id",
-    }[claim.kind]
+    key, result = _CLAIM_SUBJECT[claim.kind], _CLAIM_RESULT[claim.kind]
     for e in f.events:
         if e.seq >= spoken or e.type is not EventType.LOOKUP:
             continue
@@ -875,7 +1010,8 @@ def claim_backed(f: Facts, claim: CoverageClaim) -> bool:
         ):
             if claim.kind == "provider_network" and p.get("year") != f.plan_year:
                 continue
-            return True
+            if p.get(result) is claim.covered:
+                return True
     return False
 
 
