@@ -6,16 +6,21 @@ status codes.
 
 import random
 import secrets
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
+from app.actor.actors import Actor, ActorError, ScriptedActor, Turn
+from app.actor.prompt import PROMPT_VERSION, CustomerPrompt, build_customer_prompt
 from app.content.catalog import DocumentKind
 from app.content.loader import ContentBundle
 from app.engine.events import (
     Channel,
+    ClientUttId,
     Event,
     EventType,
     Speaker,
@@ -65,14 +70,53 @@ class Invalid(SessionError):
     status_code = 422
 
 
+class ActorUnavailable(SessionError):
+    """The customer model didn't answer. The learner's line is saved; retry the same turn."""
+
+    status_code = 502
+
+
+class TurnIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_utt_id: ClientUttId
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class TurnOut(BaseModel):
+    learner: Utterance
+    customer: Utterance | None
+    """None when the turn is not the latest learner line, so no stale reply is made."""
+
+
 EVIDENCE_SOURCES = {EventType.LOOKUP, EventType.DOCUMENT_OPENED}
 
 
 class SessionService:
-    def __init__(self, store: Store, content: ContentBundle, clock: Clock = utc_now) -> None:
+    def __init__(
+        self,
+        store: Store,
+        content: ContentBundle,
+        clock: Clock = utc_now,
+        actor: Actor | None = None,
+    ) -> None:
         self.store = store
         self.content = content
         self.clock = clock
+        self.actor: Actor = actor or ScriptedActor()
+        self._turn_locks: dict[str, threading.Lock] = {}
+        self._turn_locks_guard = threading.Lock()
+
+    @contextmanager
+    def turn_lock(self, session_id: str) -> Iterator[None]:
+        """One customer turn at a time per session. Hold and end take the same lock, so they
+        wait for a reply in flight instead of racing it: a reply never lands after the
+        customer was put on hold or the call ended. In-process only, which fits the
+        single-process SQLite MVP."""
+        with self._turn_locks_guard:
+            lock = self._turn_locks.setdefault(session_id, threading.Lock())
+        with lock:
+            yield
 
     # Lifecycle
 
@@ -91,6 +135,8 @@ class SessionService:
             rubric_id=self.content.rubric.rubric_id,
             rubric_version=self.content.rubric.version,
             frame_id=self.content.frame.frame_id,
+            prompt_version=PROMPT_VERSION,
+            actor=self.actor.name,
             seed=seed,
             mood=rolls.choice(scenario.persona.moods),
             voice=rolls.choice(scenario.persona.voices),
@@ -117,18 +163,19 @@ class SessionService:
         return row
 
     def end(self, session_id: str, reason: str = "learner_ended") -> SessionRow:
-        row = self.require_active(session_id)
-        now = self.clock()
-        self.store.append_event(
-            session_id,
-            EventType.CALL_ENDED,
-            at=now,
-            t_ms=self._t_ms(row, now),
-            payload={"reason": reason},
-        )
-        row = row.model_copy(update={"status": SessionStatus.ENDED, "ended_at": now})
-        self.store.put_session(row)
-        return row
+        with self.turn_lock(session_id):
+            row = self.require_active(session_id)
+            now = self.clock()
+            self.store.append_event(
+                session_id,
+                EventType.CALL_ENDED,
+                at=now,
+                t_ms=self._t_ms(row, now),
+                payload={"reason": reason},
+            )
+            row = row.model_copy(update={"status": SessionStatus.ENDED, "ended_at": now})
+            self.store.put_session(row)
+            return row
 
     def require_active(self, session_id: str) -> SessionRow:
         row = self.get(session_id)
@@ -198,9 +245,11 @@ class SessionService:
     # Utterances
 
     def add_utterance(self, session_id: str, body: UtteranceIn) -> Utterance:
+        """Idempotent per ``client_utt_id``. Reusing an id for a different line is refused,
+        so a client bug can't silently get back someone else's turn."""
         row = self.require_active(session_id)
         now = self.clock()
-        utt, _ = self.store.append_utterance(
+        utt, new = self.store.append_utterance(
             session_id,
             client_utt_id=body.client_utt_id,
             at=now,
@@ -208,6 +257,14 @@ class SessionService:
                 body, utt_id=utt_id, session_id=session_id, t_ms=self._t_ms(row, now)
             ),
         )
+        if not new and (utt.speaker, utt.channel, utt.text) != (
+            body.speaker,
+            body.channel,
+            body.text,
+        ):
+            raise Conflict(
+                f"client_utt_id {body.client_utt_id} was already used for a different line"
+            )
         return utt
 
     def add_learner_text(self, session_id: str, body: UtteranceIn) -> Utterance:
@@ -216,6 +273,83 @@ class SessionService:
         if body.speaker is not Speaker.LEARNER or body.channel is not Channel.TEXT:
             raise Invalid("learners post their own text turns only")
         return self.add_utterance(session_id, body)
+
+    def take_turn(self, session_id: str, body: TurnIn) -> TurnOut:
+        """The learner says a line and the customer answers. Retrying with the same
+        ``client_utt_id`` returns the same pair; if the customer model failed last time, it is
+        asked again.
+
+        Turns are serialized per session, and the reply is checked again before it is saved:
+        if a newer learner line, a hold or the end of the call arrived while the model was
+        thinking, the reply is dropped instead of landing out of order."""
+        with self.turn_lock(session_id):
+            row = self.require_active(session_id)
+            if self.state(session_id).on_hold:
+                raise Conflict("the customer is on hold and can't hear you")
+            learner = self.add_learner_text(
+                session_id,
+                UtteranceIn(
+                    client_utt_id=body.client_utt_id,
+                    speaker=Speaker.LEARNER,
+                    channel=Channel.TEXT,
+                    text=body.text,
+                ),
+            )
+            reply_key = f"reply-{learner.utt_id}"
+            existing = self.store.utterance_by_client_id(session_id, reply_key)
+            if existing is not None:
+                return TurnOut(learner=learner, customer=existing)
+            transcript = self.store.utterances(session_id)
+            if not self._still_current(session_id, learner):
+                return TurnOut(learner=learner, customer=None)
+            prompt = self.customer_prompt(row)
+            history = [Turn(u.speaker, u.heard_text) for u in transcript if u.delivered]
+            try:
+                text = self.actor.reply(prompt, history, row.seed)
+            except ActorError as exc:
+                raise ActorUnavailable(str(exc)) from exc
+            with self.store.transaction():
+                if not self._still_current(session_id, learner):
+                    return TurnOut(learner=learner, customer=None)
+                customer = self.add_utterance(
+                    session_id,
+                    UtteranceIn(
+                        client_utt_id=reply_key,
+                        speaker=Speaker.CUSTOMER,
+                        channel=Channel.TEXT,
+                        text=text,
+                    ),
+                )
+            return TurnOut(learner=learner, customer=customer)
+
+    def _still_current(self, session_id: str, learner: Utterance) -> bool:
+        """Whether a reply to ``learner`` may still be said: the call is active, the customer
+        is not on hold, and no learner line came after this one."""
+        row = self.get(session_id)
+        if row.status is not SessionStatus.ACTIVE or self.state(session_id).on_hold:
+            return False
+        latest = next(
+            (
+                u
+                for u in reversed(self.store.utterances(session_id))
+                if u.speaker is Speaker.LEARNER
+            ),
+            None,
+        )
+        return latest is not None and latest.utt_id == learner.utt_id
+
+    def customer_prompt(self, row: SessionRow) -> CustomerPrompt:
+        """The prompt the session's customer plays from. Refuses if the server's prompt
+        template or model differs from what the session pinned."""
+        pinned = (row.prompt_version, row.actor)
+        running = (PROMPT_VERSION, self.actor.name)
+        if pinned != running:
+            raise Conflict(
+                f"this session's customer is {row.actor} on {row.prompt_version}; the server "
+                f"runs {self.actor.name} on {PROMPT_VERSION}"
+            )
+        scenario = self.content.scenario(row.scenario_id)
+        return build_customer_prompt(scenario, self.content.frame, row.mood)
 
     def transcript(self, session_id: str) -> list[Utterance]:
         self.get(session_id)
@@ -256,10 +390,11 @@ class SessionService:
         return self.log(session_id, EventType.FOLLOWUP_CREATED, body.model_dump(mode="json"))
 
     def hold(self, session_id: str, on: bool) -> Event:
-        state = self.state(session_id)
-        if state.on_hold == on:
-            raise Conflict("already on hold" if on else "not on hold")
-        return self.log(session_id, EventType.HOLD_STARTED if on else EventType.HOLD_ENDED)
+        with self.turn_lock(session_id):
+            state = self.state(session_id)
+            if state.on_hold == on:
+                raise Conflict("already on hold" if on else "not on hold")
+            return self.log(session_id, EventType.HOLD_STARTED if on else EventType.HOLD_ENDED)
 
     # Applications
 
@@ -309,8 +444,16 @@ class SessionService:
 
     def mark_consent(self, session_id: str, app_id: str, body: ConsentIn) -> Application:
         self._draft(session_id, app_id)
-        if body.utt_id not in {u.utt_id for u in self.store.utterances(session_id)}:
+        utt = next((u for u in self.store.utterances(session_id) if u.utt_id == body.utt_id), None)
+        if utt is None:
             raise Invalid(f"no utterance {body.utt_id} in this call")
+        # The mark is the learner's annotation. Whether the line really is a clear, timely yes
+        # is graded by consent_before_submit; here it only has to be the customer's own heard
+        # words.
+        if utt.speaker is not Speaker.CUSTOMER:
+            raise Invalid(f"{body.utt_id} is not the customer's; consent must cite the customer")
+        if not utt.delivered:
+            raise Invalid(f"{body.utt_id} was cut off before the customer said anything")
         self.log(
             session_id,
             EventType.CONSENT_MARKED,

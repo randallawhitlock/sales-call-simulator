@@ -28,7 +28,7 @@ from app.engine.records import (
     ScopeIn,
     SubmitIn,
 )
-from app.engine.session import Invalid, NotFound, SessionService
+from app.engine.session import Invalid, NotFound, SessionService, TurnIn, TurnOut
 from app.engine.store import SessionRow, SessionStatus
 
 router = APIRouter(prefix="/api")
@@ -181,6 +181,12 @@ def end_call(session_id: str, service: Service) -> SessionView:
 @router.post("/sessions/{session_id}/hold")
 def hold(session_id: str, body: HoldIn, service: Service) -> Event:
     return service.hold(session_id, body.on)
+
+
+@router.post("/sessions/{session_id}/turns")
+def post_turn(session_id: str, body: TurnIn, service: Service) -> TurnOut:
+    """The learner's typed line and the customer's reply."""
+    return service.take_turn(session_id, body)
 
 
 @router.post("/sessions/{session_id}/utterances", status_code=201)

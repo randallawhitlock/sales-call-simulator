@@ -52,6 +52,10 @@ def sweep(call: Call) -> None:
     call.post("/followups", {"due_date": "2026-12-01", "reason": "Call back"}, 201)
     call.post("/hold", {"on": True})
     call.post("/hold", {"on": False})
+    # Ask about every topic so the customer says everything it knows.
+    topics = sorted({t for s in BUNDLE.scenarios.values() for k in s.knowledge for t in k.topics})
+    for topic in topics:
+        call.turn(f"Can you tell me about your {topic}?")
     call.get("/record")
     call.get("/transcript")
     call.get("/events")

@@ -63,6 +63,10 @@ class SessionRow(BaseModel):
     rubric_id: str
     rubric_version: int
     frame_id: str
+    prompt_version: str | None = None
+    """Customer prompt template the session's customer plays from."""
+    actor: str | None = None
+    """The model playing the customer, e.g. ``scripted`` or ``gemini:<model>``."""
     seed: int
     mood: str
     voice: str
@@ -235,6 +239,14 @@ class Store:
                 utterance.utt_id,
             )
             return utterance, True
+
+    def utterance_by_client_id(self, session_id: str, client_utt_id: str) -> Utterance | None:
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT data FROM utterances WHERE session_id = ? AND client_utt_id = ?",
+                (session_id, client_utt_id),
+            ).fetchone()
+        return None if found is None else Utterance.model_validate_json(found[0])
 
     def utterances(self, session_id: str) -> list[Utterance]:
         with self._lock:
