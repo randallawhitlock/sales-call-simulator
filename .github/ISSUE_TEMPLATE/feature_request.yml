@@ -1,0 +1,19 @@
+name: Feature or scenario idea
+description: Suggest a feature, a training case, or a rule the grader should check
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What should a learner be able to practice or see?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+  - type: textarea
+    id: source
+    attributes:
+      label: Regulatory source (if this is about a rule)
+      description: Link a public source (eCFR, cms.gov, medicare.gov) and the paragraph.
