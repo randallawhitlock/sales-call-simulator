@@ -62,7 +62,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267), [eCFR 422.2274](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2274) |
-| Check | Deterministic `disclaimer_before_benefits`: element match on heard learner speech for the three elements (not every plan; represents [#] organizations offering [#] products; Medicare.gov or 1-800-MEDICARE), with the numbers taken from the call frame, which startup validation ties to the catalog. All elements must be heard before the first learner utterance that discusses benefits (premiums, copays, deductibles, dental, allowances and similar words; agency and office names excluded). The judge backs up the match for paraphrases. |
+| Check | Deterministic `disclaimer_before_benefits`: element match on heard learner speech for the three elements (not every plan; represents [#] organizations offering [#] products; Medicare.gov or 1-800-MEDICARE), with the numbers taken from the call frame, which startup validation ties to the catalog. All elements must be heard before the first learner utterance that discusses benefits (premiums, copays, deductibles, dental, allowances, "extra benefits" and similar phrases; agency and office names excluded). A bare "benefit" ("the main benefit of switching") is too weak to fail on: if it comes first, the result is `ungraded` and goes to the judge. The judge backs up the match for paraphrases. |
 | Grading | High weight |
 
 ### R-NEEDS: Pre-enrollment needs discussion
@@ -87,7 +87,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267) |
-| Check | Deterministic `pecl_complete_before_submit`: every item on the submitted plan's checklist is marked before the `application_submitted` event. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. |
+| Check | Deterministic `pecl_complete_before_submit`: every item on the submitted plan's checklist is marked before the `application_submitted` event, and after the last change to the application. Every submission is audited, including ones later withdrawn. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. |
 | Grading | Critical if skipped on an enrollment |
 
 ### R-SB: Summary of Benefits
@@ -99,7 +99,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | unverified |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267) |
-| Check | Deterministic `sob_for_submitted_plan`: a document-access event for the submitted plan's 2027 Summary of Benefits exists before submission. |
+| Check | Deterministic `sob_for_submitted_plan`: a document-access event for the submitted plan's 2027 Summary of Benefits exists before submission. Every submission is audited, including ones later withdrawn. |
 | Grading | Standard |
 
 ### R-CONSENT: Enrollment consent
@@ -111,7 +111,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | unverified |
 | Source | [CMS Managed Care Eligibility and Enrollment](https://www.cms.gov/medicare/enrollment-renewal/managed-care-eligibility-enrollment), [CY2027 Agent and Broker Training and Testing Guidelines](https://www.cms.gov/files/document/cy2027-agent-broker-training-testing-guidelines-pdf.pdf) |
-| Check | Deterministic `consent_before_submit`: the consent mark points to a customer "yes" utterance that was heard (not interrupted), comes after the last checklist item and before submission, and does not follow an unretracted refusal. |
+| Check | Deterministic `consent_before_submit`: the consent mark points to a customer "yes" utterance that was heard (not interrupted), comes after the last checklist item and before submission, and does not follow an unretracted refusal. The application must not change after the yes. Clear objections ("wait", "cancel", "don't submit", "not yet") fail; everyday negatives ("no problem", "I don't have any questions") don't; any other stray "no" or "not" makes the result `ungraded` for the judge. Every submission is audited, including ones later withdrawn, so a clean resubmission doesn't hide a faulty first one. |
 | Grading | Critical if consent is missing or fabricated on an enrollment |
 
 ### G-PREENR: Longer pre-enrollment checklist
