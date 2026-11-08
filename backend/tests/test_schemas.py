@@ -30,6 +30,14 @@ def plan(**overrides: Any) -> dict[str, Any]:
         "pcp_required": True,
         "referrals_required": True,
         "benefits": [{"category": "pcp_visit", "label": "PCP visit", "in_network": "$0"}],
+        "drug_tiers": [
+            {
+                "tier": 1,
+                "preferred_retail_30": "0.00",
+                "standard_retail_30": "10.00",
+                "mail_90": "0.00",
+            }
+        ],
     }
     return base | overrides
 
@@ -56,9 +64,10 @@ def rule(**overrides: Any) -> dict[str, Any]:
 
 def scenario(**overrides: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
-        "scenario_id": "case-test",
+        "scenario_id": "scenario-999",
         "version": 1,
         "title": "Test case",
+        "learner_title": "Inbound call",
         "frame_id": "aep-2027",
         "catalog_version": "2027-v1",
         "persona": {
@@ -75,7 +84,11 @@ def scenario(**overrides: Any) -> dict[str, Any]:
             "zip": "00042",
             "lead_source": "Inbound call",
         },
-        "truth": {"current_plan_id": "TRN-1001-001", "pharmacy_id": "corner-rx"},
+        "truth": {
+            "current_plan_id": "TRN-1001-001",
+            "residence_zip": "00042",
+            "pharmacy_id": "corner-rx",
+        },
         "knowledge": [
             {
                 "item_id": "k1",

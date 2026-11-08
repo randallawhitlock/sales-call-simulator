@@ -49,7 +49,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2264](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2264) |
-| Check | Deterministic `scope_before_plan_discussion`: a `scope_recorded` event (products selected) exists before the first lookup on any plan other than the current one. The judge confirms the learner asked for the scope instead of assuming it. |
+| Check | Deterministic `scope_before_plan_discussion`: a `scope_recorded` event whose products include Medicare Advantage exists before the first lookup or document open on any plan other than the current one. The judge confirms the learner asked for the scope instead of assuming it. |
 | Grading | High weight, not critical. No penalty depends on the time between scope and appointment. |
 
 ### R-DISC: TPMO disclaimer
@@ -62,7 +62,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267), [eCFR 422.2274](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2274) |
-| Check | Element match on learner utterances for the three elements (not every plan; represents [#] organizations offering [#] products; Medicare.gov or 1-800-MEDICARE), with the numbers taken from the MVP catalog. The match must come before the first benefit-discussion utterance. The judge backs up the match for paraphrases. |
+| Check | Deterministic `disclaimer_before_benefits`: element match on heard learner speech for the three elements (not every plan; represents [#] organizations offering [#] products; Medicare.gov or 1-800-MEDICARE), with the numbers taken from the call frame, which startup validation ties to the catalog. All elements must be heard before the first learner utterance that discusses benefits (premiums, copays, deductibles, dental, allowances, "extra benefits" and similar phrases; agency and office names excluded). A bare "benefit" ("the main benefit of switching") is too weak to fail on: if it comes first, the result is `ungraded` and goes to the judge. The judge backs up the match for paraphrases. |
 | Grading | High weight |
 
 ### R-NEEDS: Pre-enrollment needs discussion
@@ -87,7 +87,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267) |
-| Check | Deterministic `pecl_complete_before_submit`: every checklist item is marked before `simulated_submitted`. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. |
+| Check | Deterministic `pecl_complete_before_submit`: every item on the submitted plan's checklist is marked before the `application_submitted` event, and after the last change to the application. Every submission is audited, including ones later withdrawn. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. |
 | Grading | Critical if skipped on an enrollment |
 
 ### R-SB: Summary of Benefits
@@ -99,7 +99,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | unverified |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267) |
-| Check | Deterministic `sob_for_submitted_plan`: a document-access event for the submitted plan's 2027 Summary of Benefits exists before submission. |
+| Check | Deterministic `sob_for_submitted_plan`: a document-access event for the submitted plan's 2027 Summary of Benefits exists before submission. Every submission is audited, including ones later withdrawn. |
 | Grading | Standard |
 
 ### R-CONSENT: Enrollment consent
@@ -111,7 +111,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | unverified |
 | Source | [CMS Managed Care Eligibility and Enrollment](https://www.cms.gov/medicare/enrollment-renewal/managed-care-eligibility-enrollment), [CY2027 Agent and Broker Training and Testing Guidelines](https://www.cms.gov/files/document/cy2027-agent-broker-training-testing-guidelines-pdf.pdf) |
-| Check | Deterministic `consent_before_submit`: the consent mark points to a customer "yes" utterance that was heard (not interrupted), comes after the last checklist item and before submission, and does not follow an unretracted refusal. |
+| Check | Deterministic `consent_before_submit`: the consent mark points to a customer "yes" utterance that was heard (not interrupted), comes after the last checklist item and before submission, and does not follow an unretracted refusal. The application must not change after the yes. Clear objections ("wait", "cancel", "don't submit", "not yet") fail; everyday negatives ("no problem", "I don't have any questions") don't; any other stray "no" or "not" makes the result `ungraded` for the judge. Every submission is audited, including ones later withdrawn, so a clean resubmission doesn't hide a faulty first one. |
 | Grading | Critical if consent is missing or fabricated on an enrollment |
 
 ### G-PREENR: Longer pre-enrollment checklist
@@ -147,7 +147,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Organization |
 | Status | approved as organization policy |
 | Source | [eCFR 422.2274](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2274) for the federal recording duty |
-| Check | Element match on an early learner utterance |
+| Check | Deterministic `recording_notice_given`: a learner utterance among the first three mentions that the call is recorded |
 | Grading | Low weight, labeled organization policy in the debrief |
 
 ## Out of MVP

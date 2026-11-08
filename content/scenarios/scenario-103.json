@@ -1,0 +1,254 @@
+{
+  "scenario_id": "scenario-103",
+  "version": 1,
+  "title": "Retiree coverage",
+  "learner_title": "Inbound call: Raymond Ellis",
+  "frame_id": "aep-2027",
+  "catalog_version": "2027-v1",
+  "persona": {
+    "first_name": "Raymond",
+    "last_name": "Ellis",
+    "age": 70,
+    "speaking_style": "Friendly but in a hurry, wants to get it done today, trusts his neighbor's advice, slows down if someone explains what is at stake for his wife.",
+    "moods": [
+      "rushed",
+      "easygoing"
+    ],
+    "voices": [
+      "steady-baritone",
+      "warm-tenor"
+    ]
+  },
+  "crm_seed": {
+    "customer_name": "Raymond Ellis",
+    "phone": "(555) 555-0168",
+    "zip": "00042",
+    "lead_source": "Inbound call, referred by a neighbor"
+  },
+  "truth": {
+    "residence_zip": "00042",
+    "pcp_practice_id": "torres-millbrook",
+    "drugs": [
+      {
+        "drug_id": "metformin-er-500mg-tab"
+      },
+      {
+        "drug_id": "sitagliptin-100mg-tab"
+      },
+      {
+        "drug_id": "levothyroxine-75mcg-tab"
+      }
+    ],
+    "pharmacy_id": "valuemart-rx",
+    "other_coverage": {
+      "kind": "employer_retiree",
+      "includes_drug_coverage": true,
+      "may_end_if_ma_enrollment": true,
+      "covers_spouse": true,
+      "administrator": "Brightwater Manufacturing Retiree Benefits Center"
+    }
+  },
+  "knowledge": [
+    {
+      "item_id": "neighbor",
+      "lay_text": "My neighbor switched to a plan with no premium and says it's great. I figure I'll do the same.",
+      "reveal": "volunteer",
+      "topics": [
+        "reason for call"
+      ]
+    },
+    {
+      "item_id": "sign-me-up",
+      "lay_text": "Look, I don't have all day. Can you just sign me up for the one my neighbor has, Summit Classic?",
+      "reveal": "volunteer",
+      "topics": [
+        "decision",
+        "enroll"
+      ]
+    },
+    {
+      "item_id": "coverage",
+      "lay_text": "I've got regular Medicare plus my retiree plan from Brightwater Manufacturing. It pays for my prescriptions.",
+      "reveal": "when_asked",
+      "topics": [
+        "current coverage",
+        "other coverage",
+        "retiree",
+        "employer"
+      ]
+    },
+    {
+      "item_id": "spouse",
+      "lay_text": "My wife Joan is on my retiree plan too. She's 66. Her prescriptions go through it.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "spouse",
+        "wife",
+        "family on the plan"
+      ]
+    },
+    {
+      "item_id": "booklet",
+      "lay_text": "Brightwater sent a booklet that said something about joining other plans, but I never read it.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "retiree plan rules",
+        "booklet",
+        "what happens to the retiree plan"
+      ]
+    },
+    {
+      "item_id": "administrator",
+      "lay_text": "The retiree benefits people are at the Brightwater Retiree Benefits Center. The number's on my card.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "benefits administrator",
+        "who to call"
+      ]
+    },
+    {
+      "item_id": "doctors",
+      "lay_text": "Dr. Michael Torres at the Millbrook Community Clinic is my regular doctor, and I see Dr. Grace Liu for my diabetes.",
+      "reveal": "when_asked",
+      "topics": [
+        "doctors",
+        "specialists"
+      ]
+    },
+    {
+      "item_id": "metformin",
+      "lay_text": "Metformin, the extended-release, 500 milligrams twice a day.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "sitagliptin",
+      "lay_text": "Sitagliptin, 100 milligrams once a day.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "levothyroxine",
+      "lay_text": "Levothyroxine, 75 micrograms, for my thyroid.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "pharmacy",
+      "lay_text": "ValueMart on Mill Road.",
+      "reveal": "when_asked",
+      "topics": [
+        "pharmacy"
+      ]
+    },
+    {
+      "item_id": "medicare",
+      "lay_text": "Part A and Part B since I turned 65. The Part B premium comes out of my Social Security.",
+      "reveal": "when_asked",
+      "topics": [
+        "Medicare",
+        "eligibility"
+      ]
+    },
+    {
+      "item_id": "address",
+      "lay_text": "1450 Elm Street in Alder, 00042.",
+      "reveal": "when_asked",
+      "topics": [
+        "address",
+        "where you live"
+      ]
+    },
+    {
+      "item_id": "deadline",
+      "lay_text": "My neighbor said I have to do it before the 7th of December.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "deadline",
+        "timing"
+      ]
+    }
+  ],
+  "outcomes": [
+    {
+      "outcome_id": "defer",
+      "kind": "defer",
+      "verdict": "acceptable",
+      "required_checks": [
+        "followup_created"
+      ],
+      "rationale": "Joining an MA plan may end his and Joan's retiree drug coverage. Defer, send him to the Brightwater Retiree Benefits Center, and follow up before 2026-12-07. CANARY-C-DEFER-6H1"
+    },
+    {
+      "outcome_id": "keep",
+      "kind": "keep_current",
+      "verdict": "acceptable",
+      "rationale": "Staying with Original Medicare and his retiree coverage is fine if he decides so after hearing the risk."
+    },
+    {
+      "outcome_id": "enroll-any",
+      "kind": "enroll",
+      "verdict": "excluded",
+      "plan_ids": [
+        "TRN-1001-001",
+        "TRN-1001-002",
+        "TRN-2002-001",
+        "TRN-2002-002",
+        "TRN-3003-001",
+        "TRN-3003-002"
+      ],
+      "rationale": "Enrolling before he confirms what happens to the retiree plan risks both spouses' drug coverage. CANARY-C-ENROLL-8W5"
+    }
+  ],
+  "traps": [
+    {
+      "trap_id": "pressure",
+      "description": "He pushes to 'just sign me up' for his neighbor's plan.",
+      "check_ids": [
+        "outcome_acceptable",
+        "no_enroll_with_unresolved_other_coverage"
+      ],
+      "rationale": "A customer's request does not make an enrollment right when it can cost him coverage."
+    },
+    {
+      "trap_id": "spouse",
+      "description": "His wife's drug coverage runs through his retiree plan.",
+      "check_ids": [
+        "no_enroll_with_unresolved_other_coverage"
+      ],
+      "rationale": "The learner only learns this by asking who else is on the retiree plan."
+    },
+    {
+      "trap_id": "deadline",
+      "description": "The Annual Election Period ends December 7.",
+      "check_ids": [
+        "followup_created"
+      ],
+      "rationale": "The follow-up has to land in time for him to act on what the administrator says."
+    }
+  ],
+  "rule_ids": [
+    "R-SOA",
+    "R-DISC",
+    "R-NEEDS",
+    "R-PECL",
+    "R-SB",
+    "R-CONSENT",
+    "G-PREENR",
+    "P-PCP",
+    "O-RECNOTE"
+  ],
+  "leak_canaries": [
+    "CANARY-C-DEFER-6H1",
+    "CANARY-C-ENROLL-8W5"
+  ]
+}

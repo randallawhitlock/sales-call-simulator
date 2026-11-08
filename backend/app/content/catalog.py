@@ -7,7 +7,7 @@ the most common way agents get it wrong.
 
 from datetime import date
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import Field, model_validator
 
@@ -83,6 +83,16 @@ class Supplemental(ContentModel):
         return self
 
 
+class TierCopay(ContentModel):
+    """Authored copays for one formulary tier. A drug's cost on a plan is its tier's copay at
+    the pharmacy's channel, so screens, documents and estimates read one number."""
+
+    tier: int = Field(ge=1, le=6)
+    preferred_retail_30: Money
+    standard_retail_30: Money
+    mail_90: Money
+
+
 class Plan(ContentModel):
     plan_id: PlanId
     carrier_id: Id
@@ -96,6 +106,7 @@ class Plan(ContentModel):
     monthly_premium: Money
     medical_deductible: Money
     drug_deductible: Money
+    """Applies to tiers 3 and up. Tiers 1 and 2 are copay-only from the first fill."""
     moop_in_network: Money
     moop_combined: Money | None = None
     """In- and out-of-network maximum. PPOs only."""
@@ -103,9 +114,20 @@ class Plan(ContentModel):
     referrals_required: bool
     benefits: tuple[Benefit, ...] = Field(min_length=1)
     supplementals: tuple[Supplemental, ...] = ()
+    drug_tiers: tuple[TierCopay, ...] = Field(min_length=1)
+
+    def tier_copay(self, tier: int) -> TierCopay:
+        for row in self.drug_tiers:
+            if row.tier == tier:
+                return row
+        raise KeyError(f"{self.plan_id} has no copay for tier {tier}")
 
     @model_validator(mode="after")
     def _ppo_moop(self) -> Self:
+        require_unique(f"{self.plan_id} drug tiers", (str(t.tier) for t in self.drug_tiers))
+        require_unique(
+            f"{self.plan_id} supplementals", (x.supplemental_id for x in self.supplementals)
+        )
         if (self.plan_type is PlanType.PPO) != (self.moop_combined is not None):
             raise ValueError(f"{self.plan_id}: moop_combined is set exactly when the plan is a PPO")
         if self.moop_combined is not None and self.moop_combined < self.moop_in_network:
@@ -199,31 +221,6 @@ class PharmacyChannel(StrEnum):
     MAIL = "mail"
 
 
-class DrugCostFixture(ContentModel):
-    plan_id: PlanId
-    drug_id: Id
-    channel: PharmacyChannel
-    days_supply: Literal[30, 90]
-    copay: Money
-
-
-class AnnualEstimate(ContentModel):
-    estimate_id: Id
-    plan_id: PlanId
-    scenario_id: Id
-    premiums: Money
-    drug_costs: Money
-    medical_costs: Money
-    total: Money
-    label: Literal["Training estimate"] = "Training estimate"
-
-    @model_validator(mode="after")
-    def _total(self) -> Self:
-        if self.premiums + self.drug_costs + self.medical_costs != self.total:
-            raise ValueError(f"{self.estimate_id}: total does not equal its parts")
-        return self
-
-
 class DocumentKind(StrEnum):
     SUMMARY_OF_BENEFITS = "summary_of_benefits"
     PRE_ENROLLMENT_CHECKLIST = "pre_enrollment_checklist"
@@ -240,7 +237,9 @@ class Document(ContentModel):
     title: str
     plan_id: PlanId | None = None
     plan_year: int
-    body_markdown: str
+    body_markdown: str = ""
+    """Authored text. Summaries of Benefits and checklists are rendered from records, so their
+    numbers never drift from the plan."""
     checklist_items: tuple[str, ...] = ()
     seeded_defect: str | None = None
     """Truth-only note on a deliberate error in the document. Never shown to the learner."""
@@ -267,7 +266,6 @@ class Catalog(ContentModel):
     formulary: tuple[FormularyEntry, ...] = ()
     pharmacies: tuple[Pharmacy, ...] = ()
     pharmacy_networks: tuple[PharmacyNetworkEntry, ...] = ()
-    drug_costs: tuple[DrugCostFixture, ...] = ()
     documents: tuple[Document, ...] = ()
 
     @model_validator(mode="after")
@@ -325,11 +323,85 @@ class Catalog(ContentModel):
         require_known(
             "pharmacy ids in networks", (e.pharmacy_id for e in self.pharmacy_networks), pharmacies
         )
-        require_known("plan ids on drug costs", (c.plan_id for c in self.drug_costs), plans)
-        require_known("drug ids on drug costs", (c.drug_id for c in self.drug_costs), drugs)
+        require_known(
+            "pharmacy network ids",
+            (e.pharmacy_network_id for e in self.pharmacy_networks),
+            {p.pharmacy_network_id for p in self.plans},
+        )
+        require_unique(
+            "pharmacy network entries",
+            (f"{e.pharmacy_network_id}/{e.pharmacy_id}" for e in self.pharmacy_networks),
+        )
+        for plan in self.plans:
+            tiers = {f.tier for f in self.formulary if f.formulary_id == plan.formulary_id}
+            missing = sorted(tiers - {t.tier for t in plan.drug_tiers})
+            if missing:
+                raise ValueError(f"{plan.plan_id}: no copay for formulary tiers {missing}")
         require_known(
             "plan ids on documents",
             (d.plan_id for d in self.documents if d.plan_id is not None),
             plans,
         )
         return self
+
+    # Lookups. Content is small, so linear scans keep the model simple.
+
+    def plan(self, plan_id: str) -> Plan:
+        return _find(self.plans, "plan_id", plan_id)
+
+    def carrier(self, carrier_id: str) -> Carrier:
+        return _find(self.carriers, "carrier_id", carrier_id)
+
+    def provider(self, provider_id: str) -> Provider:
+        return _find(self.providers, "provider_id", provider_id)
+
+    def location(self, location_id: str) -> Location:
+        return _find(self.locations, "location_id", location_id)
+
+    def practice(self, practice_id: str) -> Practice:
+        return _find(self.practices, "practice_id", practice_id)
+
+    def drug(self, drug_id: str) -> Drug:
+        return _find(self.drugs, "drug_id", drug_id)
+
+    def pharmacy(self, pharmacy_id: str) -> Pharmacy:
+        return _find(self.pharmacies, "pharmacy_id", pharmacy_id)
+
+    def document(self, document_id: str) -> Document:
+        return _find(self.documents, "document_id", document_id)
+
+    def formulary_entry(self, plan_id: str, drug_id: str) -> FormularyEntry | None:
+        formulary_id = self.plan(plan_id).formulary_id
+        for entry in self.formulary:
+            if entry.formulary_id == formulary_id and entry.drug_id == drug_id:
+                return entry
+        return None
+
+    def pharmacy_entry(self, plan_id: str, pharmacy_id: str) -> PharmacyNetworkEntry | None:
+        network_id = self.plan(plan_id).pharmacy_network_id
+        for entry in self.pharmacy_networks:
+            if entry.pharmacy_network_id == network_id and entry.pharmacy_id == pharmacy_id:
+                return entry
+        return None
+
+    def participation_on(
+        self, practice_id: str, plan_id: str, on: date
+    ) -> NetworkParticipation | None:
+        network_id = self.plan(plan_id).network_id
+        for row in self.participation:
+            if row.practice_id == practice_id and row.network_id == network_id and row.covers(on):
+                return row
+        return None
+
+    def plan_document(self, plan_id: str, kind: DocumentKind) -> Document:
+        for doc in self.documents:
+            if doc.plan_id == plan_id and doc.kind is kind and doc.plan_year == self.plan_year:
+                return doc
+        raise KeyError(f"{plan_id} has no {self.plan_year} {kind.value}")
+
+
+def _find[T: ContentModel](items: tuple[T, ...], field: str, value: str) -> T:
+    for item in items:
+        if getattr(item, field) == value:
+            return item
+    raise KeyError(f"unknown {field}: {value}")
