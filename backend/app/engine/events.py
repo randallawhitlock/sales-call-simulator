@@ -125,6 +125,7 @@ class EventType(StrEnum):
     PECL_ITEM_MARKED = "pecl_item_marked"
     CONSENT_MARKED = "consent_marked"
     APPLICATION_CREATED = "application_created"
+    APPLICATION_UPDATED = "application_updated"
     APPLICATION_SUBMITTED = "application_submitted"
     APPLICATION_WITHDRAWN = "application_withdrawn"
     FOLLOWUP_CREATED = "followup_created"

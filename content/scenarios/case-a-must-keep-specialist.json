@@ -1,0 +1,320 @@
+{
+  "scenario_id": "case-a-must-keep-specialist",
+  "version": 1,
+  "title": "Must-keep specialist",
+  "learner_title": "Inbound call: Loretta Banks",
+  "frame_id": "aep-2027",
+  "catalog_version": "2027-v1",
+  "persona": {
+    "first_name": "Loretta",
+    "last_name": "Banks",
+    "age": 72,
+    "speaking_style": "Warm and talkative, drifts into stories about her grandchildren, precise about her heart doctor and vague about pill strengths.",
+    "moods": [
+      "worried",
+      "chatty"
+    ],
+    "voices": [
+      "warm-alto",
+      "bright-mezzo"
+    ]
+  },
+  "crm_seed": {
+    "customer_name": "Loretta Banks",
+    "phone": "(555) 555-0123",
+    "zip": "00041",
+    "lead_source": "Inbound call",
+    "notes": "Called after receiving a letter from her plan."
+  },
+  "truth": {
+    "current_plan_id": "TRN-3003-001",
+    "residence_zip": "00041",
+    "pcp_practice_id": "whitfield-alder",
+    "must_keep_practices": [
+      "raman-northside"
+    ],
+    "drugs": [
+      {
+        "drug_id": "apixaban-5mg-tab"
+      },
+      {
+        "drug_id": "metoprolol-succ-er-50mg-tab"
+      },
+      {
+        "drug_id": "atorvastatin-40mg-tab"
+      }
+    ],
+    "pharmacy_id": "alder-family-rx"
+  },
+  "knowledge": [
+    {
+      "item_id": "letter",
+      "lay_text": "I got a letter from my plan saying my heart doctor's group won't be with them next year, and it scared me.",
+      "reveal": "volunteer",
+      "topics": [
+        "reason for call",
+        "letter"
+      ]
+    },
+    {
+      "item_id": "cardiologist",
+      "lay_text": "My heart doctor is Dr. Priya Raman. I see her at the Alder Heart Associates office on Birch Avenue in Northside.",
+      "reveal": "when_asked",
+      "topics": [
+        "doctors",
+        "specialists",
+        "heart doctor"
+      ]
+    },
+    {
+      "item_id": "must-keep",
+      "lay_text": "I've been with Dr. Raman nine years, since my heart scare. I'm not switching heart doctors.",
+      "reveal": "when_asked",
+      "topics": [
+        "doctors",
+        "priorities",
+        "what matters most"
+      ]
+    },
+    {
+      "item_id": "other-office",
+      "lay_text": "Dr. Raman also sees people at an office out in Lakeview, but that's a long drive. I only ever go to the Northside one.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "which office",
+        "location",
+        "Lakeview"
+      ]
+    },
+    {
+      "item_id": "pcp",
+      "lay_text": "My regular doctor is Dr. Thomas Whitfield at Alder Internal Medicine on Main Street.",
+      "reveal": "when_asked",
+      "topics": [
+        "doctors",
+        "primary care"
+      ]
+    },
+    {
+      "item_id": "apixaban",
+      "lay_text": "I take apixaban, the blood thinner. Five milligrams, twice a day.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "metoprolol",
+      "lay_text": "Metoprolol for my heart rate, the extended-release kind, 50 milligrams once a day.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "atorvastatin",
+      "lay_text": "Atorvastatin for cholesterol. Twenty milligrams, I think.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ],
+      "misconception": true
+    },
+    {
+      "item_id": "atorvastatin-bottle",
+      "lay_text": "Oh, hold on, the bottle says 40 milligrams. I had that mixed up.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "check the bottle",
+        "strength",
+        "dose"
+      ]
+    },
+    {
+      "item_id": "pharmacy",
+      "lay_text": "I get everything at Alder Family Pharmacy in the Northside Plaza.",
+      "reveal": "when_asked",
+      "topics": [
+        "pharmacy"
+      ]
+    },
+    {
+      "item_id": "current-plan",
+      "lay_text": "I have Summit Classic HMO right now. Three years. I've liked it fine until this letter.",
+      "reveal": "when_asked",
+      "topics": [
+        "current coverage",
+        "current plan"
+      ]
+    },
+    {
+      "item_id": "medicare",
+      "lay_text": "I have Medicare Part A and Part B. No Medicaid, and I don't get any help paying.",
+      "reveal": "when_asked",
+      "topics": [
+        "Medicare",
+        "Medicaid",
+        "eligibility"
+      ]
+    },
+    {
+      "item_id": "address",
+      "lay_text": "I live at 22 Birch Court in Northside, ZIP code 00041. My mail comes there too.",
+      "reveal": "when_asked",
+      "topics": [
+        "address",
+        "where you live"
+      ]
+    },
+    {
+      "item_id": "budget",
+      "lay_text": "I could manage a small premium to keep Dr. Raman, maybe fifty dollars a month, but nothing big.",
+      "reveal": "when_asked",
+      "topics": [
+        "budget",
+        "premium",
+        "costs"
+      ]
+    },
+    {
+      "item_id": "no-other-coverage",
+      "lay_text": "No other insurance. No retiree plan, nothing from the VA.",
+      "reveal": "when_asked",
+      "topics": [
+        "other coverage",
+        "retiree",
+        "employer"
+      ]
+    }
+  ],
+  "outcomes": [
+    {
+      "outcome_id": "enroll-maple-choice",
+      "kind": "enroll",
+      "verdict": "acceptable",
+      "plan_ids": [
+        "TRN-1001-002"
+      ],
+      "required_checks": [
+        "provider_verified_at_location",
+        "drugs_checked",
+        "pharmacy_checked"
+      ],
+      "rationale": "Maple Choice PPO has Dr. Raman at the Northside office in network for 2027, covers all three drugs with no restrictions, and Alder Family Pharmacy is preferred. The $39 premium fits her budget. CANARY-A-PPO-4K9"
+    },
+    {
+      "outcome_id": "enroll-maple-value",
+      "kind": "enroll",
+      "verdict": "acceptable",
+      "plan_ids": [
+        "TRN-1001-001"
+      ],
+      "required_checks": [
+        "provider_verified_at_location",
+        "drugs_checked",
+        "pharmacy_checked",
+        "restriction_seen"
+      ],
+      "rationale": "Maple Value HMO has Dr. Raman at Northside in network for 2027 and a $0 premium, but apixaban 5 mg needs prior authorization. Acceptable only when the learner saw the restriction and explained it."
+    },
+    {
+      "outcome_id": "defer",
+      "kind": "defer",
+      "verdict": "acceptable",
+      "required_checks": [
+        "followup_created"
+      ],
+      "rationale": "If she wants time to decide, a follow-up before December 7 respects her choice."
+    },
+    {
+      "outcome_id": "keep-summit",
+      "kind": "keep_current",
+      "verdict": "excluded",
+      "rationale": "Summit Classic HMO drops Alder Heart Associates on 2027-01-01, so keeping it loses Dr. Raman."
+    },
+    {
+      "outcome_id": "enroll-riverbend",
+      "kind": "enroll",
+      "verdict": "excluded",
+      "plan_ids": [
+        "TRN-2002-001",
+        "TRN-2002-002"
+      ],
+      "rationale": "Riverbend has Dr. Raman in network only at the Lakeview office, which she does not use."
+    },
+    {
+      "outcome_id": "enroll-summit",
+      "kind": "enroll",
+      "verdict": "excluded",
+      "plan_ids": [
+        "TRN-3003-001",
+        "TRN-3003-002"
+      ],
+      "rationale": "Neither Summit plan has Dr. Raman in network for 2027."
+    }
+  ],
+  "traps": [
+    {
+      "trap_id": "other-office",
+      "description": "Riverbend networks list Dr. Raman, but only at the Lakeview office.",
+      "check_ids": [
+        "provider_verified_at_location",
+        "evidence_context_matches"
+      ],
+      "rationale": "The same doctor at another office is not a match. CANARY-A-LAKE-7P2"
+    },
+    {
+      "trap_id": "2026-network",
+      "description": "Summit's 2026 directory and any 2026 lookup still show Alder Heart Associates in network.",
+      "check_ids": [
+        "provider_verified_at_location",
+        "evidence_context_matches"
+      ],
+      "rationale": "Participation has to be checked for 2027, the year coverage starts."
+    },
+    {
+      "trap_id": "prior-auth",
+      "description": "Maple Value HMO puts apixaban 5 mg behind prior authorization.",
+      "check_ids": [
+        "restriction_seen",
+        "outcome_acceptable"
+      ],
+      "rationale": "A restriction on a drug she takes twice a day must be seen and explained before she decides."
+    },
+    {
+      "trap_id": "strength",
+      "description": "She remembers atorvastatin 20 mg; the bottle says 40 mg.",
+      "check_ids": [
+        "drugs_checked",
+        "needs_match_truth"
+      ],
+      "rationale": "Strength is part of a drug's identity. Checking the wrong strength checks the wrong drug."
+    },
+    {
+      "trap_id": "same-name",
+      "description": "Dr. Arjun Raman, a rheumatologist, shares her cardiologist's last name.",
+      "check_ids": [
+        "needs_match_truth"
+      ],
+      "rationale": "A last-name search returns two Dr. Ramans. Only the cardiologist at Northside is hers."
+    }
+  ],
+  "rule_ids": [
+    "R-SOA",
+    "R-DISC",
+    "R-NEEDS",
+    "R-PECL",
+    "R-SB",
+    "R-CONSENT",
+    "G-PREENR",
+    "P-PCP",
+    "O-RECNOTE"
+  ],
+  "leak_canaries": [
+    "CANARY-A-PPO-4K9",
+    "CANARY-A-LAKE-7P2"
+  ]
+}

@@ -1,0 +1,1825 @@
+{
+  "catalog_version": "2027-v1",
+  "plan_year": 2027,
+  "county": {
+    "county_id": "alder",
+    "name": "Alder County",
+    "state": "Fictional State",
+    "zips": [
+      "00041",
+      "00042",
+      "00043",
+      "00044",
+      "00045"
+    ]
+  },
+  "carriers": [
+    {
+      "carrier_id": "maple",
+      "name": "Maple Health Plans",
+      "customer_service_phone": "(555) 555-0110"
+    },
+    {
+      "carrier_id": "riverbend",
+      "name": "Riverbend Health",
+      "customer_service_phone": "(555) 555-0120"
+    },
+    {
+      "carrier_id": "summit",
+      "name": "Summit Crest Health",
+      "customer_service_phone": "(555) 555-0130"
+    }
+  ],
+  "plans": [
+    {
+      "plan_id": "TRN-1001-001",
+      "carrier_id": "maple",
+      "name": "Maple Value HMO",
+      "plan_type": "hmo",
+      "plan_year": 2027,
+      "county_id": "alder",
+      "network_id": "maple-hmo",
+      "formulary_id": "maple-hmo-f",
+      "pharmacy_network_id": "maple-rx",
+      "monthly_premium": "0.00",
+      "medical_deductible": "0.00",
+      "drug_deductible": "0.00",
+      "moop_in_network": "5900.00",
+      "pcp_required": true,
+      "referrals_required": true,
+      "benefits": [
+        {
+          "category": "pcp_visit",
+          "label": "Primary care visit",
+          "in_network": "$0 copay"
+        },
+        {
+          "category": "specialist_visit",
+          "label": "Specialist visit",
+          "in_network": "$35 copay",
+          "referral_required": true
+        },
+        {
+          "category": "inpatient",
+          "label": "Inpatient hospital stay",
+          "in_network": "$325 per day, days 1-5",
+          "prior_auth": true
+        },
+        {
+          "category": "emergency",
+          "label": "Emergency room",
+          "in_network": "$125 copay"
+        },
+        {
+          "category": "urgent_care",
+          "label": "Urgent care",
+          "in_network": "$40 copay"
+        },
+        {
+          "category": "lab",
+          "label": "Lab services",
+          "in_network": "$0 copay"
+        },
+        {
+          "category": "dental",
+          "label": "Comprehensive dental",
+          "in_network": "$1,500 annual maximum"
+        },
+        {
+          "category": "vision",
+          "label": "Eyewear",
+          "in_network": "$150 annual allowance"
+        },
+        {
+          "category": "hearing",
+          "label": "Hearing aids",
+          "in_network": "$499 copay per aid, up to 2 per year"
+        }
+      ],
+      "supplementals": [
+        {
+          "supplemental_id": "otc",
+          "name": "Over-the-counter allowance",
+          "description": "Card for eligible over-the-counter health items, ordered by mail or bought at participating stores.",
+          "amount_text": "$50 per quarter",
+          "conditional": false
+        }
+      ],
+      "drug_tiers": [
+        {
+          "tier": 1,
+          "preferred_retail_30": "0.00",
+          "standard_retail_30": "10.00",
+          "mail_90": "0.00"
+        },
+        {
+          "tier": 2,
+          "preferred_retail_30": "5.00",
+          "standard_retail_30": "15.00",
+          "mail_90": "10.00"
+        },
+        {
+          "tier": 3,
+          "preferred_retail_30": "47.00",
+          "standard_retail_30": "47.00",
+          "mail_90": "141.00"
+        },
+        {
+          "tier": 4,
+          "preferred_retail_30": "100.00",
+          "standard_retail_30": "100.00",
+          "mail_90": "300.00"
+        }
+      ]
+    },
+    {
+      "plan_id": "TRN-1001-002",
+      "carrier_id": "maple",
+      "name": "Maple Choice PPO",
+      "plan_type": "ppo",
+      "plan_year": 2027,
+      "county_id": "alder",
+      "network_id": "maple-ppo",
+      "formulary_id": "maple-ppo-f",
+      "pharmacy_network_id": "maple-rx",
+      "monthly_premium": "39.00",
+      "medical_deductible": "0.00",
+      "drug_deductible": "0.00",
+      "moop_in_network": "6700.00",
+      "moop_combined": "10100.00",
+      "pcp_required": false,
+      "referrals_required": false,
+      "benefits": [
+        {
+          "category": "pcp_visit",
+          "label": "Primary care visit",
+          "in_network": "$5 copay",
+          "out_of_network": "$45 copay"
+        },
+        {
+          "category": "specialist_visit",
+          "label": "Specialist visit",
+          "in_network": "$40 copay",
+          "out_of_network": "$70 copay"
+        },
+        {
+          "category": "inpatient",
+          "label": "Inpatient hospital stay",
+          "in_network": "$350 per day, days 1-5",
+          "out_of_network": "40% coinsurance",
+          "prior_auth": true
+        },
+        {
+          "category": "emergency",
+          "label": "Emergency room",
+          "in_network": "$125 copay",
+          "out_of_network": "$125 copay"
+        },
+        {
+          "category": "urgent_care",
+          "label": "Urgent care",
+          "in_network": "$45 copay",
+          "out_of_network": "$45 copay"
+        },
+        {
+          "category": "lab",
+          "label": "Lab services",
+          "in_network": "$0 copay",
+          "out_of_network": "40% coinsurance"
+        },
+        {
+          "category": "dental",
+          "label": "Comprehensive dental",
+          "in_network": "$2,000 annual maximum"
+        },
+        {
+          "category": "vision",
+          "label": "Eyewear",
+          "in_network": "$200 annual allowance"
+        },
+        {
+          "category": "hearing",
+          "label": "Hearing aids",
+          "in_network": "$399 copay per aid, up to 2 per year"
+        }
+      ],
+      "drug_tiers": [
+        {
+          "tier": 1,
+          "preferred_retail_30": "0.00",
+          "standard_retail_30": "10.00",
+          "mail_90": "0.00"
+        },
+        {
+          "tier": 2,
+          "preferred_retail_30": "8.00",
+          "standard_retail_30": "18.00",
+          "mail_90": "16.00"
+        },
+        {
+          "tier": 3,
+          "preferred_retail_30": "42.00",
+          "standard_retail_30": "47.00",
+          "mail_90": "126.00"
+        },
+        {
+          "tier": 4,
+          "preferred_retail_30": "95.00",
+          "standard_retail_30": "100.00",
+          "mail_90": "285.00"
+        }
+      ]
+    },
+    {
+      "plan_id": "TRN-2002-001",
+      "carrier_id": "riverbend",
+      "name": "Riverbend Essentials HMO",
+      "plan_type": "hmo",
+      "plan_year": 2027,
+      "county_id": "alder",
+      "network_id": "riverbend-hmo",
+      "formulary_id": "riverbend-f",
+      "pharmacy_network_id": "riverbend-rx",
+      "monthly_premium": "0.00",
+      "medical_deductible": "0.00",
+      "drug_deductible": "0.00",
+      "moop_in_network": "4900.00",
+      "pcp_required": true,
+      "referrals_required": true,
+      "benefits": [
+        {
+          "category": "pcp_visit",
+          "label": "Primary care visit",
+          "in_network": "$0 copay"
+        },
+        {
+          "category": "specialist_visit",
+          "label": "Specialist visit",
+          "in_network": "$30 copay",
+          "referral_required": true
+        },
+        {
+          "category": "inpatient",
+          "label": "Inpatient hospital stay",
+          "in_network": "$295 per day, days 1-5",
+          "prior_auth": true
+        },
+        {
+          "category": "emergency",
+          "label": "Emergency room",
+          "in_network": "$110 copay"
+        },
+        {
+          "category": "urgent_care",
+          "label": "Urgent care",
+          "in_network": "$35 copay"
+        },
+        {
+          "category": "lab",
+          "label": "Lab services",
+          "in_network": "$0 copay"
+        },
+        {
+          "category": "dental",
+          "label": "Comprehensive dental",
+          "in_network": "$1,000 annual maximum"
+        },
+        {
+          "category": "vision",
+          "label": "Eyewear",
+          "in_network": "$150 annual allowance"
+        },
+        {
+          "category": "hearing",
+          "label": "Hearing aids",
+          "in_network": "$599 copay per aid, up to 2 per year"
+        }
+      ],
+      "drug_tiers": [
+        {
+          "tier": 1,
+          "preferred_retail_30": "0.00",
+          "standard_retail_30": "8.00",
+          "mail_90": "0.00"
+        },
+        {
+          "tier": 2,
+          "preferred_retail_30": "4.00",
+          "standard_retail_30": "12.00",
+          "mail_90": "8.00"
+        },
+        {
+          "tier": 3,
+          "preferred_retail_30": "45.00",
+          "standard_retail_30": "47.00",
+          "mail_90": "135.00"
+        },
+        {
+          "tier": 4,
+          "preferred_retail_30": "99.00",
+          "standard_retail_30": "100.00",
+          "mail_90": "297.00"
+        }
+      ]
+    },
+    {
+      "plan_id": "TRN-2002-002",
+      "carrier_id": "riverbend",
+      "name": "Riverbend Select PPO",
+      "plan_type": "ppo",
+      "plan_year": 2027,
+      "county_id": "alder",
+      "network_id": "riverbend-ppo",
+      "formulary_id": "riverbend-f",
+      "pharmacy_network_id": "riverbend-rx",
+      "monthly_premium": "59.00",
+      "medical_deductible": "250.00",
+      "drug_deductible": "250.00",
+      "moop_in_network": "6000.00",
+      "moop_combined": "9500.00",
+      "pcp_required": false,
+      "referrals_required": false,
+      "benefits": [
+        {
+          "category": "pcp_visit",
+          "label": "Primary care visit",
+          "in_network": "$0 copay",
+          "out_of_network": "$40 copay"
+        },
+        {
+          "category": "specialist_visit",
+          "label": "Specialist visit",
+          "in_network": "$35 copay",
+          "out_of_network": "$60 copay"
+        },
+        {
+          "category": "inpatient",
+          "label": "Inpatient hospital stay",
+          "in_network": "$300 per day, days 1-6",
+          "out_of_network": "35% coinsurance",
+          "prior_auth": true
+        },
+        {
+          "category": "emergency",
+          "label": "Emergency room",
+          "in_network": "$115 copay",
+          "out_of_network": "$115 copay"
+        },
+        {
+          "category": "urgent_care",
+          "label": "Urgent care",
+          "in_network": "$40 copay",
+          "out_of_network": "$40 copay"
+        },
+        {
+          "category": "lab",
+          "label": "Lab services",
+          "in_network": "$0 copay",
+          "out_of_network": "35% coinsurance"
+        },
+        {
+          "category": "dental",
+          "label": "Comprehensive dental",
+          "in_network": "$2,500 annual maximum"
+        },
+        {
+          "category": "vision",
+          "label": "Eyewear",
+          "in_network": "$250 annual allowance"
+        },
+        {
+          "category": "hearing",
+          "label": "Hearing aids",
+          "in_network": "$399 copay per aid, up to 2 per year"
+        }
+      ],
+      "drug_tiers": [
+        {
+          "tier": 1,
+          "preferred_retail_30": "0.00",
+          "standard_retail_30": "8.00",
+          "mail_90": "0.00"
+        },
+        {
+          "tier": 2,
+          "preferred_retail_30": "4.00",
+          "standard_retail_30": "12.00",
+          "mail_90": "8.00"
+        },
+        {
+          "tier": 3,
+          "preferred_retail_30": "45.00",
+          "standard_retail_30": "47.00",
+          "mail_90": "135.00"
+        },
+        {
+          "tier": 4,
+          "preferred_retail_30": "99.00",
+          "standard_retail_30": "100.00",
+          "mail_90": "297.00"
+        }
+      ]
+    },
+    {
+      "plan_id": "TRN-3003-001",
+      "carrier_id": "summit",
+      "name": "Summit Classic HMO",
+      "plan_type": "hmo",
+      "plan_year": 2027,
+      "county_id": "alder",
+      "network_id": "summit-hmo",
+      "formulary_id": "summit-f",
+      "pharmacy_network_id": "summit-rx",
+      "monthly_premium": "0.00",
+      "medical_deductible": "0.00",
+      "drug_deductible": "0.00",
+      "moop_in_network": "5500.00",
+      "pcp_required": true,
+      "referrals_required": true,
+      "benefits": [
+        {
+          "category": "pcp_visit",
+          "label": "Primary care visit",
+          "in_network": "$0 copay"
+        },
+        {
+          "category": "specialist_visit",
+          "label": "Specialist visit",
+          "in_network": "$40 copay",
+          "referral_required": true
+        },
+        {
+          "category": "inpatient",
+          "label": "Inpatient hospital stay",
+          "in_network": "$310 per day, days 1-5",
+          "prior_auth": true
+        },
+        {
+          "category": "emergency",
+          "label": "Emergency room",
+          "in_network": "$120 copay"
+        },
+        {
+          "category": "urgent_care",
+          "label": "Urgent care",
+          "in_network": "$40 copay"
+        },
+        {
+          "category": "lab",
+          "label": "Lab services",
+          "in_network": "$0 copay"
+        },
+        {
+          "category": "dental",
+          "label": "Comprehensive dental",
+          "in_network": "$1,250 annual maximum"
+        },
+        {
+          "category": "vision",
+          "label": "Eyewear",
+          "in_network": "$125 annual allowance"
+        },
+        {
+          "category": "hearing",
+          "label": "Hearing aids",
+          "in_network": "$699 copay per aid, up to 2 per year"
+        }
+      ],
+      "drug_tiers": [
+        {
+          "tier": 1,
+          "preferred_retail_30": "0.00",
+          "standard_retail_30": "10.00",
+          "mail_90": "0.00"
+        },
+        {
+          "tier": 2,
+          "preferred_retail_30": "6.00",
+          "standard_retail_30": "16.00",
+          "mail_90": "12.00"
+        },
+        {
+          "tier": 3,
+          "preferred_retail_30": "47.00",
+          "standard_retail_30": "47.00",
+          "mail_90": "141.00"
+        },
+        {
+          "tier": 4,
+          "preferred_retail_30": "100.00",
+          "standard_retail_30": "100.00",
+          "mail_90": "300.00"
+        }
+      ]
+    },
+    {
+      "plan_id": "TRN-3003-002",
+      "carrier_id": "summit",
+      "name": "Summit Rewards HMO",
+      "plan_type": "hmo",
+      "plan_year": 2027,
+      "county_id": "alder",
+      "network_id": "summit-rewards",
+      "formulary_id": "summit-rewards-f",
+      "pharmacy_network_id": "summit-rx",
+      "monthly_premium": "0.00",
+      "medical_deductible": "0.00",
+      "drug_deductible": "395.00",
+      "moop_in_network": "6700.00",
+      "pcp_required": true,
+      "referrals_required": true,
+      "benefits": [
+        {
+          "category": "pcp_visit",
+          "label": "Primary care visit",
+          "in_network": "$0 copay"
+        },
+        {
+          "category": "specialist_visit",
+          "label": "Specialist visit",
+          "in_network": "$45 copay",
+          "referral_required": true
+        },
+        {
+          "category": "inpatient",
+          "label": "Inpatient hospital stay",
+          "in_network": "$395 per day, days 1-5",
+          "prior_auth": true
+        },
+        {
+          "category": "emergency",
+          "label": "Emergency room",
+          "in_network": "$130 copay"
+        },
+        {
+          "category": "urgent_care",
+          "label": "Urgent care",
+          "in_network": "$50 copay"
+        },
+        {
+          "category": "lab",
+          "label": "Lab services",
+          "in_network": "$10 copay"
+        },
+        {
+          "category": "dental",
+          "label": "Preventive dental",
+          "in_network": "Cleanings and exams covered; no comprehensive dental"
+        },
+        {
+          "category": "vision",
+          "label": "Eyewear",
+          "in_network": "$100 annual allowance"
+        },
+        {
+          "category": "hearing",
+          "label": "Hearing aids",
+          "in_network": "Not covered"
+        }
+      ],
+      "supplementals": [
+        {
+          "supplemental_id": "healthy-living",
+          "name": "Healthy Living Allowance",
+          "description": "Card for groceries and utilities for members who qualify.",
+          "amount_text": "$150 per month",
+          "conditional": true,
+          "eligibility_text": "Only for members with diabetes, chronic heart failure or COPD who join the plan's care-management program. Members without one of these conditions do not get the allowance."
+        }
+      ],
+      "drug_tiers": [
+        {
+          "tier": 1,
+          "preferred_retail_30": "3.00",
+          "standard_retail_30": "13.00",
+          "mail_90": "9.00"
+        },
+        {
+          "tier": 2,
+          "preferred_retail_30": "12.00",
+          "standard_retail_30": "22.00",
+          "mail_90": "36.00"
+        },
+        {
+          "tier": 3,
+          "preferred_retail_30": "47.00",
+          "standard_retail_30": "47.00",
+          "mail_90": "141.00"
+        },
+        {
+          "tier": 4,
+          "preferred_retail_30": "100.00",
+          "standard_retail_30": "100.00",
+          "mail_90": "300.00"
+        }
+      ]
+    }
+  ],
+  "providers": [
+    {
+      "provider_id": "priya-raman",
+      "name": "Priya Raman",
+      "specialty": "Cardiology",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "arjun-raman",
+      "name": "Arjun Raman",
+      "specialty": "Rheumatology",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "thomas-whitfield",
+      "name": "Thomas Whitfield",
+      "specialty": "Internal Medicine",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "samuel-okafor",
+      "name": "Samuel Okafor",
+      "specialty": "Family Medicine",
+      "credentials": "DO"
+    },
+    {
+      "provider_id": "michael-torres",
+      "name": "Michael Torres",
+      "specialty": "Family Medicine",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "grace-liu",
+      "name": "Grace Liu",
+      "specialty": "Endocrinology",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "naomi-fischer",
+      "name": "Naomi Fischer",
+      "specialty": "Cardiology",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "helen-park",
+      "name": "Helen Park",
+      "specialty": "Ophthalmology",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "robert-castillo",
+      "name": "Robert Castillo",
+      "specialty": "Orthopedic Surgery",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "james-whitaker",
+      "name": "James Whitaker",
+      "specialty": "Urology",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "ruth-adeyemi",
+      "name": "Ruth Adeyemi",
+      "specialty": "Pulmonology",
+      "credentials": "MD"
+    },
+    {
+      "provider_id": "lena-brooks",
+      "name": "Lena Brooks",
+      "specialty": "Dermatology",
+      "credentials": "MD"
+    }
+  ],
+  "locations": [
+    {
+      "location_id": "northside-heart",
+      "name": "Alder Heart Associates, Northside office",
+      "address": "410 Birch Avenue",
+      "city": "Northside",
+      "zip": "00041",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "lakeview-heart",
+      "name": "Alder Heart Associates, Lakeview office",
+      "address": "88 Shoreline Drive",
+      "city": "Lakeview",
+      "zip": "00043",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "alder-internal",
+      "name": "Alder Internal Medicine",
+      "address": "1200 Main Street",
+      "city": "Alder",
+      "zip": "00042",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "cedar-family",
+      "name": "Cedar Street Family Medicine",
+      "address": "35 Cedar Street",
+      "city": "Millbrook",
+      "zip": "00044",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "millbrook-clinic",
+      "name": "Millbrook Community Clinic",
+      "address": "700 Mill Road",
+      "city": "Millbrook",
+      "zip": "00044",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "valley-endo",
+      "name": "Alder Valley Endocrinology",
+      "address": "15 Valley Road",
+      "city": "Alder",
+      "zip": "00042",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "riverside-plaza",
+      "name": "Riverside Medical Plaza",
+      "address": "2200 River Road",
+      "city": "Alder",
+      "zip": "00042",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "northside-plaza",
+      "name": "Northside Plaza",
+      "address": "402 Birch Avenue",
+      "city": "Northside",
+      "zip": "00041",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "cedar-shops",
+      "name": "Cedar Street Shops",
+      "address": "41 Cedar Street",
+      "city": "Millbrook",
+      "zip": "00044",
+      "county_id": "alder"
+    },
+    {
+      "location_id": "millbrook-center",
+      "name": "Millbrook Center",
+      "address": "900 Mill Road",
+      "city": "Millbrook",
+      "zip": "00044",
+      "county_id": "alder"
+    }
+  ],
+  "practices": [
+    {
+      "practice_id": "raman-northside",
+      "provider_id": "priya-raman",
+      "location_id": "northside-heart",
+      "group_name": "Alder Heart Associates"
+    },
+    {
+      "practice_id": "raman-lakeview",
+      "provider_id": "priya-raman",
+      "location_id": "lakeview-heart",
+      "group_name": "Alder Heart Associates"
+    },
+    {
+      "practice_id": "araman-riverside",
+      "provider_id": "arjun-raman",
+      "location_id": "riverside-plaza",
+      "group_name": "Riverside Rheumatology"
+    },
+    {
+      "practice_id": "whitfield-alder",
+      "provider_id": "thomas-whitfield",
+      "location_id": "alder-internal",
+      "group_name": "Alder Internal Medicine"
+    },
+    {
+      "practice_id": "okafor-cedar",
+      "provider_id": "samuel-okafor",
+      "location_id": "cedar-family",
+      "group_name": "Cedar Street Family Medicine"
+    },
+    {
+      "practice_id": "torres-millbrook",
+      "provider_id": "michael-torres",
+      "location_id": "millbrook-clinic",
+      "group_name": "Millbrook Community Clinic"
+    },
+    {
+      "practice_id": "liu-valley",
+      "provider_id": "grace-liu",
+      "location_id": "valley-endo",
+      "group_name": "Alder Valley Endocrinology"
+    },
+    {
+      "practice_id": "fischer-riverside",
+      "provider_id": "naomi-fischer",
+      "location_id": "riverside-plaza",
+      "group_name": "Riverside Cardiology"
+    },
+    {
+      "practice_id": "park-riverside",
+      "provider_id": "helen-park",
+      "location_id": "riverside-plaza",
+      "group_name": "Riverside Eye Care"
+    },
+    {
+      "practice_id": "castillo-riverside",
+      "provider_id": "robert-castillo",
+      "location_id": "riverside-plaza",
+      "group_name": "Riverside Orthopedics"
+    },
+    {
+      "practice_id": "whitaker-riverside",
+      "provider_id": "james-whitaker",
+      "location_id": "riverside-plaza",
+      "group_name": "Riverside Urology"
+    },
+    {
+      "practice_id": "adeyemi-riverside",
+      "provider_id": "ruth-adeyemi",
+      "location_id": "riverside-plaza",
+      "group_name": "Riverside Lung Center"
+    },
+    {
+      "practice_id": "brooks-alder",
+      "provider_id": "lena-brooks",
+      "location_id": "alder-internal",
+      "group_name": "Alder Skin Clinic"
+    }
+  ],
+  "participation": [
+    {
+      "practice_id": "raman-northside",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "raman-lakeview",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "araman-riverside",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitfield-alder",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "okafor-cedar",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "torres-millbrook",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "liu-valley",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "fischer-riverside",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "park-riverside",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "castillo-riverside",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitaker-riverside",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "adeyemi-riverside",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "brooks-alder",
+      "network_id": "maple-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "raman-northside",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "raman-lakeview",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "araman-riverside",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitfield-alder",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "okafor-cedar",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "torres-millbrook",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "liu-valley",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "fischer-riverside",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "park-riverside",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "castillo-riverside",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitaker-riverside",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "adeyemi-riverside",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "brooks-alder",
+      "network_id": "maple-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "raman-lakeview",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "araman-riverside",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitfield-alder",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "okafor-cedar",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "torres-millbrook",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "liu-valley",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "fischer-riverside",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "park-riverside",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "castillo-riverside",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitaker-riverside",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "adeyemi-riverside",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "brooks-alder",
+      "network_id": "riverbend-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "raman-lakeview",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "araman-riverside",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitfield-alder",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "okafor-cedar",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "torres-millbrook",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "liu-valley",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "fischer-riverside",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "park-riverside",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "castillo-riverside",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitaker-riverside",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "adeyemi-riverside",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "brooks-alder",
+      "network_id": "riverbend-ppo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "araman-riverside",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitfield-alder",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "okafor-cedar",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "torres-millbrook",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "liu-valley",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "fischer-riverside",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "park-riverside",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "castillo-riverside",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "whitaker-riverside",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "adeyemi-riverside",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "brooks-alder",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "practice_id": "raman-northside",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01",
+      "effective_to": "2026-12-31"
+    },
+    {
+      "practice_id": "raman-lakeview",
+      "network_id": "summit-hmo",
+      "effective_from": "2025-01-01",
+      "effective_to": "2026-12-31"
+    },
+    {
+      "practice_id": "whitfield-alder",
+      "network_id": "summit-rewards",
+      "effective_from": "2027-01-01"
+    },
+    {
+      "practice_id": "torres-millbrook",
+      "network_id": "summit-rewards",
+      "effective_from": "2027-01-01"
+    },
+    {
+      "practice_id": "fischer-riverside",
+      "network_id": "summit-rewards",
+      "effective_from": "2027-01-01"
+    },
+    {
+      "practice_id": "park-riverside",
+      "network_id": "summit-rewards",
+      "effective_from": "2027-01-01"
+    },
+    {
+      "practice_id": "araman-riverside",
+      "network_id": "summit-rewards",
+      "effective_from": "2027-01-01"
+    },
+    {
+      "practice_id": "castillo-riverside",
+      "network_id": "summit-rewards",
+      "effective_from": "2027-01-01"
+    }
+  ],
+  "drugs": [
+    {
+      "drug_id": "apixaban-5mg-tab",
+      "name": "apixaban",
+      "strength": "5 mg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "apixaban-2-5mg-tab",
+      "name": "apixaban",
+      "strength": "2.5 mg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "metoprolol-succ-er-50mg-tab",
+      "name": "metoprolol succinate ER",
+      "strength": "50 mg",
+      "form": "extended-release tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "atorvastatin-40mg-tab",
+      "name": "atorvastatin",
+      "strength": "40 mg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "atorvastatin-20mg-tab",
+      "name": "atorvastatin",
+      "strength": "20 mg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "lisinopril-20mg-tab",
+      "name": "lisinopril",
+      "strength": "20 mg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "rosuvastatin-10mg-tab",
+      "name": "rosuvastatin",
+      "strength": "10 mg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "amlodipine-5mg-tab",
+      "name": "amlodipine",
+      "strength": "5 mg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "metformin-er-500mg-tab",
+      "name": "metformin ER",
+      "strength": "500 mg",
+      "form": "extended-release tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "sitagliptin-100mg-tab",
+      "name": "sitagliptin",
+      "strength": "100 mg",
+      "form": "tablet",
+      "generic": false
+    },
+    {
+      "drug_id": "levothyroxine-75mcg-tab",
+      "name": "levothyroxine",
+      "strength": "75 mcg",
+      "form": "tablet",
+      "generic": true
+    },
+    {
+      "drug_id": "omeprazole-20mg-cap",
+      "name": "omeprazole",
+      "strength": "20 mg",
+      "form": "delayed-release capsule",
+      "generic": true
+    }
+  ],
+  "formulary": [
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "apixaban-5mg-tab",
+      "tier": 3,
+      "prior_auth": true
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "apixaban-2-5mg-tab",
+      "tier": 3,
+      "prior_auth": true
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "metoprolol-succ-er-50mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "atorvastatin-40mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "atorvastatin-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "lisinopril-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "rosuvastatin-10mg-tab",
+      "tier": 2
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "amlodipine-5mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "metformin-er-500mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "sitagliptin-100mg-tab",
+      "tier": 3,
+      "step_therapy": true
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "levothyroxine-75mcg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-hmo-f",
+      "drug_id": "omeprazole-20mg-cap",
+      "tier": 2,
+      "quantity_limit": "30 capsules per 30 days"
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "apixaban-5mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "apixaban-2-5mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "metoprolol-succ-er-50mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "atorvastatin-40mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "atorvastatin-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "lisinopril-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "rosuvastatin-10mg-tab",
+      "tier": 2
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "amlodipine-5mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "metformin-er-500mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "sitagliptin-100mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "levothyroxine-75mcg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "maple-ppo-f",
+      "drug_id": "omeprazole-20mg-cap",
+      "tier": 2
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "apixaban-5mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "apixaban-2-5mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "metoprolol-succ-er-50mg-tab",
+      "tier": 2
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "atorvastatin-40mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "atorvastatin-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "lisinopril-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "rosuvastatin-10mg-tab",
+      "tier": 2
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "amlodipine-5mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "metformin-er-500mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "sitagliptin-100mg-tab",
+      "tier": 3,
+      "quantity_limit": "30 tablets per 30 days"
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "levothyroxine-75mcg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "riverbend-f",
+      "drug_id": "omeprazole-20mg-cap",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "apixaban-5mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "apixaban-2-5mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "metoprolol-succ-er-50mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "atorvastatin-40mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "atorvastatin-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "lisinopril-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "rosuvastatin-10mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "amlodipine-5mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "metformin-er-500mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "sitagliptin-100mg-tab",
+      "tier": 3
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "levothyroxine-75mcg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-f",
+      "drug_id": "omeprazole-20mg-cap",
+      "tier": 2
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "apixaban-5mg-tab",
+      "tier": 4,
+      "prior_auth": true
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "metoprolol-succ-er-50mg-tab",
+      "tier": 2
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "atorvastatin-40mg-tab",
+      "tier": 2
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "atorvastatin-20mg-tab",
+      "tier": 2
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "lisinopril-20mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "amlodipine-5mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "metformin-er-500mg-tab",
+      "tier": 1
+    },
+    {
+      "formulary_id": "summit-rewards-f",
+      "drug_id": "levothyroxine-75mcg-tab",
+      "tier": 1
+    }
+  ],
+  "pharmacies": [
+    {
+      "pharmacy_id": "alder-family-rx",
+      "name": "Alder Family Pharmacy",
+      "location_id": "northside-plaza"
+    },
+    {
+      "pharmacy_id": "cedar-street-rx",
+      "name": "Cedar Street Pharmacy",
+      "location_id": "cedar-shops"
+    },
+    {
+      "pharmacy_id": "valuemart-rx",
+      "name": "ValueMart Pharmacy #212",
+      "location_id": "millbrook-center"
+    },
+    {
+      "pharmacy_id": "homeward-mail",
+      "name": "Homeward Mail Pharmacy",
+      "mail_order": true
+    }
+  ],
+  "pharmacy_networks": [
+    {
+      "pharmacy_network_id": "maple-rx",
+      "pharmacy_id": "alder-family-rx",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "maple-rx",
+      "pharmacy_id": "cedar-street-rx",
+      "preferred": false
+    },
+    {
+      "pharmacy_network_id": "maple-rx",
+      "pharmacy_id": "valuemart-rx",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "maple-rx",
+      "pharmacy_id": "homeward-mail",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "riverbend-rx",
+      "pharmacy_id": "alder-family-rx",
+      "preferred": false
+    },
+    {
+      "pharmacy_network_id": "riverbend-rx",
+      "pharmacy_id": "cedar-street-rx",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "riverbend-rx",
+      "pharmacy_id": "valuemart-rx",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "riverbend-rx",
+      "pharmacy_id": "homeward-mail",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "summit-rx",
+      "pharmacy_id": "alder-family-rx",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "summit-rx",
+      "pharmacy_id": "valuemart-rx",
+      "preferred": true
+    },
+    {
+      "pharmacy_network_id": "summit-rx",
+      "pharmacy_id": "homeward-mail",
+      "preferred": true
+    }
+  ],
+  "documents": [
+    {
+      "document_id": "sob-maple-value-2027",
+      "kind": "summary_of_benefits",
+      "title": "Maple Value HMO Summary of Benefits 2027",
+      "plan_id": "TRN-1001-001",
+      "plan_year": 2027
+    },
+    {
+      "document_id": "pecl-maple-value-2027",
+      "kind": "pre_enrollment_checklist",
+      "title": "Maple Value HMO Pre-Enrollment Checklist 2027",
+      "plan_id": "TRN-1001-001",
+      "plan_year": 2027,
+      "checklist_items": [
+        "Review the Evidence of Coverage: it lists every benefit and cost, so check the services you use most.",
+        "Check that your doctors, specialists and hospitals are in the plan's network, at the offices you use. If they are not, you may need to find new ones.",
+        "Check that your pharmacies are in the plan's network and whether prices differ at preferred pharmacies.",
+        "Check that each of your prescriptions is on the plan's drug list at your strength, and note any prior authorization, step therapy or quantity limits.",
+        "Review the monthly premium, deductibles, copays and coinsurance, and understand that you must keep paying your Medicare Part B premium.",
+        "Benefits, premiums and copays can change on January 1 of each year.",
+        "Except in emergencies or for urgent care, services from doctors outside the network are not covered.",
+        "You must use the plan's network and generally need a referral from your primary care doctor to see specialists.",
+        "Coverage starts January 1, 2027. Joining this plan ends your enrollment in your current Medicare health or drug plan, and may affect other coverage such as employer or retiree coverage."
+      ]
+    },
+    {
+      "document_id": "sob-maple-choice-2027",
+      "kind": "summary_of_benefits",
+      "title": "Maple Choice PPO Summary of Benefits 2027",
+      "plan_id": "TRN-1001-002",
+      "plan_year": 2027
+    },
+    {
+      "document_id": "pecl-maple-choice-2027",
+      "kind": "pre_enrollment_checklist",
+      "title": "Maple Choice PPO Pre-Enrollment Checklist 2027",
+      "plan_id": "TRN-1001-002",
+      "plan_year": 2027,
+      "checklist_items": [
+        "Review the Evidence of Coverage: it lists every benefit and cost, so check the services you use most.",
+        "Check that your doctors, specialists and hospitals are in the plan's network, at the offices you use. You can see doctors outside the network, but it usually costs more.",
+        "Check that your pharmacies are in the plan's network and whether prices differ at preferred pharmacies.",
+        "Check that each of your prescriptions is on the plan's drug list at your strength, and note any prior authorization, step therapy or quantity limits.",
+        "Review the monthly premium, deductibles, copays and coinsurance, and understand that you must keep paying your Medicare Part B premium.",
+        "Benefits, premiums and copays can change on January 1 of each year.",
+        "Out-of-network care is covered at a higher cost, except in emergencies. Out-of-network doctors can choose not to treat you.",
+        "You do not need to choose a primary care doctor or get referrals to see specialists.",
+        "Coverage starts January 1, 2027. Joining this plan ends your enrollment in your current Medicare health or drug plan, and may affect other coverage such as employer or retiree coverage."
+      ]
+    },
+    {
+      "document_id": "sob-riverbend-essentials-2027",
+      "kind": "summary_of_benefits",
+      "title": "Riverbend Essentials HMO Summary of Benefits 2027",
+      "plan_id": "TRN-2002-001",
+      "plan_year": 2027
+    },
+    {
+      "document_id": "pecl-riverbend-essentials-2027",
+      "kind": "pre_enrollment_checklist",
+      "title": "Riverbend Essentials HMO Pre-Enrollment Checklist 2027",
+      "plan_id": "TRN-2002-001",
+      "plan_year": 2027,
+      "checklist_items": [
+        "Review the Evidence of Coverage: it lists every benefit and cost, so check the services you use most.",
+        "Check that your doctors, specialists and hospitals are in the plan's network, at the offices you use. If they are not, you may need to find new ones.",
+        "Check that your pharmacies are in the plan's network and whether prices differ at preferred pharmacies.",
+        "Check that each of your prescriptions is on the plan's drug list at your strength, and note any prior authorization, step therapy or quantity limits.",
+        "Review the monthly premium, deductibles, copays and coinsurance, and understand that you must keep paying your Medicare Part B premium.",
+        "Benefits, premiums and copays can change on January 1 of each year.",
+        "Except in emergencies or for urgent care, services from doctors outside the network are not covered.",
+        "You must use the plan's network and generally need a referral from your primary care doctor to see specialists.",
+        "Coverage starts January 1, 2027. Joining this plan ends your enrollment in your current Medicare health or drug plan, and may affect other coverage such as employer or retiree coverage."
+      ]
+    },
+    {
+      "document_id": "sob-riverbend-select-2027",
+      "kind": "summary_of_benefits",
+      "title": "Riverbend Select PPO Summary of Benefits 2027",
+      "plan_id": "TRN-2002-002",
+      "plan_year": 2027
+    },
+    {
+      "document_id": "pecl-riverbend-select-2027",
+      "kind": "pre_enrollment_checklist",
+      "title": "Riverbend Select PPO Pre-Enrollment Checklist 2027",
+      "plan_id": "TRN-2002-002",
+      "plan_year": 2027,
+      "checklist_items": [
+        "Review the Evidence of Coverage: it lists every benefit and cost, so check the services you use most.",
+        "Check that your doctors, specialists and hospitals are in the plan's network, at the offices you use. You can see doctors outside the network, but it usually costs more.",
+        "Check that your pharmacies are in the plan's network and whether prices differ at preferred pharmacies.",
+        "Check that each of your prescriptions is on the plan's drug list at your strength, and note any prior authorization, step therapy or quantity limits.",
+        "Review the monthly premium, deductibles, copays and coinsurance, and understand that you must keep paying your Medicare Part B premium.",
+        "Benefits, premiums and copays can change on January 1 of each year.",
+        "Out-of-network care is covered at a higher cost, except in emergencies. Out-of-network doctors can choose not to treat you.",
+        "You do not need to choose a primary care doctor or get referrals to see specialists.",
+        "Coverage starts January 1, 2027. Joining this plan ends your enrollment in your current Medicare health or drug plan, and may affect other coverage such as employer or retiree coverage."
+      ]
+    },
+    {
+      "document_id": "sob-summit-classic-2027",
+      "kind": "summary_of_benefits",
+      "title": "Summit Classic HMO Summary of Benefits 2027",
+      "plan_id": "TRN-3003-001",
+      "plan_year": 2027
+    },
+    {
+      "document_id": "pecl-summit-classic-2027",
+      "kind": "pre_enrollment_checklist",
+      "title": "Summit Classic HMO Pre-Enrollment Checklist 2027",
+      "plan_id": "TRN-3003-001",
+      "plan_year": 2027,
+      "checklist_items": [
+        "Review the Evidence of Coverage: it lists every benefit and cost, so check the services you use most.",
+        "Check that your doctors, specialists and hospitals are in the plan's network, at the offices you use. If they are not, you may need to find new ones.",
+        "Check that your pharmacies are in the plan's network and whether prices differ at preferred pharmacies.",
+        "Check that each of your prescriptions is on the plan's drug list at your strength, and note any prior authorization, step therapy or quantity limits.",
+        "Review the monthly premium, deductibles, copays and coinsurance, and understand that you must keep paying your Medicare Part B premium.",
+        "Benefits, premiums and copays can change on January 1 of each year.",
+        "Except in emergencies or for urgent care, services from doctors outside the network are not covered.",
+        "You must use the plan's network and generally need a referral from your primary care doctor to see specialists.",
+        "Coverage starts January 1, 2027. Joining this plan ends your enrollment in your current Medicare health or drug plan, and may affect other coverage such as employer or retiree coverage."
+      ]
+    },
+    {
+      "document_id": "sob-summit-rewards-2027",
+      "kind": "summary_of_benefits",
+      "title": "Summit Rewards HMO Summary of Benefits 2027",
+      "plan_id": "TRN-3003-002",
+      "plan_year": 2027
+    },
+    {
+      "document_id": "pecl-summit-rewards-2027",
+      "kind": "pre_enrollment_checklist",
+      "title": "Summit Rewards HMO Pre-Enrollment Checklist 2027",
+      "plan_id": "TRN-3003-002",
+      "plan_year": 2027,
+      "checklist_items": [
+        "Review the Evidence of Coverage: it lists every benefit and cost, so check the services you use most.",
+        "Check that your doctors, specialists and hospitals are in the plan's network, at the offices you use. If they are not, you may need to find new ones.",
+        "Check that your pharmacies are in the plan's network and whether prices differ at preferred pharmacies.",
+        "Check that each of your prescriptions is on the plan's drug list at your strength, and note any prior authorization, step therapy or quantity limits.",
+        "Review the monthly premium, deductibles, copays and coinsurance, and understand that you must keep paying your Medicare Part B premium.",
+        "Benefits, premiums and copays can change on January 1 of each year.",
+        "Except in emergencies or for urgent care, services from doctors outside the network are not covered.",
+        "You must use the plan's network and generally need a referral from your primary care doctor to see specialists.",
+        "Coverage starts January 1, 2027. Joining this plan ends your enrollment in your current Medicare health or drug plan, and may affect other coverage such as employer or retiree coverage."
+      ]
+    },
+    {
+      "document_id": "anoc-summit-classic-2027",
+      "kind": "annual_notice_of_change",
+      "title": "Summit Classic HMO Annual Notice of Change 2027",
+      "plan_id": "TRN-3003-001",
+      "plan_year": 2027,
+      "body_markdown": "## Important changes for 2027\n\n- **Provider network.** Alder Heart Associates, including its Northside and Lakeview offices, will no longer be in the Summit Classic HMO network starting January 1, 2027. If you see a doctor in this group, you will need a new in-network cardiologist or a different plan to keep seeing them at in-network cost.\n- **Specialist visits.** Your specialist copay for 2027 is $40.\n- **Premium.** Your monthly plan premium stays at $0.\n\nYou can change plans during the Annual Election Period, October 15 through December 7."
+    },
+    {
+      "document_id": "dir-summit-classic-2026",
+      "kind": "provider_directory",
+      "title": "Summit Classic HMO Provider Directory 2026 (cardiology excerpt)",
+      "plan_id": "TRN-3003-001",
+      "plan_year": 2026,
+      "body_markdown": "## Cardiology\n\n| Provider | Office | Status |\n|---|---|---|\n| Priya Raman, MD | Alder Heart Associates, 410 Birch Avenue, Northside | In network |\n| Priya Raman, MD | Alder Heart Associates, 88 Shoreline Drive, Lakeview | In network |\n| Naomi Fischer, MD | Riverside Cardiology, 2200 River Road, Alder | In network |\n",
+      "seeded_defect": "Wrong-year directory: it is the 2026 edition and still lists Alder Heart Associates, which leaves the Summit Classic HMO network on 2027-01-01. CANARY-DOC-DIR26-5X3"
+    }
+  ]
+}

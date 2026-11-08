@@ -36,13 +36,13 @@ the conversation and the research on one screen and grades both.
 
 ## Status
 
-Pre-alpha. The design is settled; the build is underway.
+Pre-alpha. The content and the deterministic core are in; the call screen is next.
 
 | Milestone | What lands | State |
 |---|---|---|
 | M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold, CI | Done |
-| M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Next |
-| M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer | Planned |
+| M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done; voice spike pending |
+| M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer | Next |
 | M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, retry | Planned |
 | M4 Voice | LiveKit agent worker on Gemini Live | Planned |
 | M5 Hardening | Resilience tests, demo script | Planned |
@@ -91,6 +91,25 @@ records; the AI judge reads the transcript and must cite utterance ids. Text and
 customer prompt and one utterance contract, so the text mode tests the same actor the voice mode
 runs.
 
+## API
+
+The backend serves the learner API under `/api`; FastAPI's interactive docs are at
+http://localhost:8000/docs. Every research call, record save and application step appends an
+event to the session's log, and each research response returns its `event_seq` so the call
+screen can pin it as evidence.
+
+| Group | Endpoints |
+|---|---|
+| Sessions | `GET /scenarios`, `POST /sessions`, `GET /sessions/{id}`, `POST .../start`, `.../end`, `.../hold` |
+| Conversation | `POST .../utterances` (learner text turns only), `GET .../transcript`, `GET .../events` |
+| Research | `.../research/plans`, `plans/{plan_id}`, `providers`, `providers/network`, `drugs`, `formulary`, `pharmacies`, `pharmacies/network`, `POST .../research/compare`, `.../documents` |
+| Records | `GET .../record`, `PUT .../record/{section}`, `POST .../scope`, `.../evidence`, `.../followups` |
+| Applications | `POST .../applications`, `PUT .../applications/{app_id}`, then `.../pecl`, `.../consent`, `.../submit` (idempotent), `.../withdraw` |
+| Review | `GET .../answer-key`, `GET .../findings`: both return 403 until the call ends |
+
+Findings come from 18 deterministic checks over the event log, transcript and saved records.
+Each one cites the event sequence numbers or utterance ids it relied on.
+
 ## Documentation
 
 | Doc | What's in it |
@@ -104,7 +123,8 @@ runs.
 
 ```
 docs/       proposal, rule register
-content/    versioned rules, fictional catalog, scenarios, rubric (JSON, schema-validated)
+content/    versioned rules, fictional catalog, scenarios, rubric (JSON, schema-validated and
+            cross-checked at startup)
 backend/    Python 3.12, FastAPI, pydantic v2, SQLite, uv
 frontend/   Vite, React, strict TypeScript
 ```
@@ -122,7 +142,9 @@ cd frontend && npm ci && npm run dev
 ```
 
 Open http://localhost:5173. The page reads "API: ok" once the backend is up. The backend
-validates every content file at startup, so a broken rule or catalog file stops it right away.
+validates every content file at startup, and checks the files against each other (every plan a
+case names exists, the disclaimer numbers match the catalog, customer knowledge has no agent
+jargon), so a broken file stops it right away. Sessions are stored in `simulator.db`.
 
 The checks CI runs on every pull request:
 

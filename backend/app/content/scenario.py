@@ -105,7 +105,10 @@ class OtherCoverage(ContentModel):
 
 
 class Truth(ContentModel):
-    current_plan_id: PlanId
+    current_plan_id: PlanId | None = None
+    """None means Original Medicare, with or without other coverage."""
+    residence_zip: FictionalZip
+    pcp_practice_id: Id | None = None
     must_keep_practices: tuple[Id, ...] = ()
     drugs: tuple[DrugNeed, ...] = ()
     pharmacy_id: Id
@@ -158,6 +161,9 @@ class Scenario(ContentModel):
     scenario_id: Id
     version: int = Field(ge=1)
     title: str
+    """Author-facing. Names the lesson, so it never reaches the learner before the call ends."""
+    learner_title: str
+    """What the learner sees when picking a case. Must not hint at the trap."""
     frame_id: Id
     catalog_version: str
     persona: Persona

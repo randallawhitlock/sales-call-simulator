@@ -49,7 +49,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2264](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2264) |
-| Check | Deterministic `scope_before_plan_discussion`: a `scope_recorded` event (products selected) exists before the first lookup on any plan other than the current one. The judge confirms the learner asked for the scope instead of assuming it. |
+| Check | Deterministic `scope_before_plan_discussion`: a `scope_recorded` event whose products include Medicare Advantage exists before the first lookup or document open on any plan other than the current one. The judge confirms the learner asked for the scope instead of assuming it. |
 | Grading | High weight, not critical. No penalty depends on the time between scope and appointment. |
 
 ### R-DISC: TPMO disclaimer
@@ -62,7 +62,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267), [eCFR 422.2274](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2274) |
-| Check | Element match on learner utterances for the three elements (not every plan; represents [#] organizations offering [#] products; Medicare.gov or 1-800-MEDICARE), with the numbers taken from the MVP catalog. The match must come before the first benefit-discussion utterance. The judge backs up the match for paraphrases. |
+| Check | Deterministic `disclaimer_before_benefits`: element match on heard learner speech for the three elements (not every plan; represents [#] organizations offering [#] products; Medicare.gov or 1-800-MEDICARE), with the numbers taken from the call frame, which startup validation ties to the catalog. All elements must be heard before the first learner utterance that discusses benefits (premiums, copays, deductibles, dental, allowances and similar words; agency and office names excluded). The judge backs up the match for paraphrases. |
 | Grading | High weight |
 
 ### R-NEEDS: Pre-enrollment needs discussion
@@ -87,7 +87,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267) |
-| Check | Deterministic `pecl_complete_before_submit`: every checklist item is marked before `simulated_submitted`. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. |
+| Check | Deterministic `pecl_complete_before_submit`: every item on the submitted plan's checklist is marked before the `application_submitted` event. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. |
 | Grading | Critical if skipped on an enrollment |
 
 ### R-SB: Summary of Benefits
@@ -147,7 +147,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Organization |
 | Status | approved as organization policy |
 | Source | [eCFR 422.2274](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2274) for the federal recording duty |
-| Check | Element match on an early learner utterance |
+| Check | Deterministic `recording_notice_given`: a learner utterance among the first three mentions that the call is recorded |
 | Grading | Low weight, labeled organization policy in the debrief |
 
 ## Out of MVP

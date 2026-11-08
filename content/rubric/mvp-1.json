@@ -1,0 +1,369 @@
+{
+  "rubric_id": "mvp",
+  "version": 1,
+  "criteria": [
+    {
+      "criterion_id": "disc-doctors",
+      "dimension": "discovery",
+      "title": "Asked which doctors and specialists the customer must keep, and where they see them",
+      "points": 3,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "judged_spec": "The learner asked about current doctors and specialists, which ones matter most, and which office the customer visits."
+    },
+    {
+      "criterion_id": "disc-drugs",
+      "dimension": "discovery",
+      "title": "Gathered every prescription with strength and dose",
+      "points": 3,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "judged_spec": "The learner asked for each prescription's name, strength and how often it is taken, and confirmed uncertain strengths."
+    },
+    {
+      "criterion_id": "disc-pharmacy",
+      "dimension": "discovery",
+      "title": "Asked which pharmacy the customer uses",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "judged_spec": "The learner asked which pharmacy or mail-order service the customer uses."
+    },
+    {
+      "criterion_id": "disc-coverage",
+      "dimension": "discovery",
+      "title": "Asked about current and other coverage, including employer or retiree coverage",
+      "points": 3,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "G-PREENR"
+      ],
+      "judged_spec": "The learner asked about the current plan and any other coverage such as employer, retiree, Medigap, Medicaid, VA or TRICARE, and how a change would affect it."
+    },
+    {
+      "criterion_id": "disc-health-needs",
+      "dimension": "discovery",
+      "title": "Asked about specific health care needs",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "judged_spec": "The learner asked about conditions, upcoming care and services the customer uses often."
+    },
+    {
+      "criterion_id": "disc-needs-recorded",
+      "dimension": "discovery",
+      "title": "Recorded needs match what the customer said",
+      "points": 2,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "check_id": "needs_match_truth"
+    },
+    {
+      "criterion_id": "elig-scope",
+      "dimension": "eligibility",
+      "title": "Scope of Appointment recorded before discussing other plans",
+      "points": 4,
+      "method": "hybrid",
+      "evidence_policy": "both",
+      "rule_ids": [
+        "R-SOA"
+      ],
+      "check_id": "scope_before_plan_discussion",
+      "judged_spec": "The learner asked which products the customer wanted to discuss rather than assuming it."
+    },
+    {
+      "criterion_id": "elig-disclaimer",
+      "dimension": "eligibility",
+      "title": "TPMO disclaimer before any benefit discussion",
+      "points": 5,
+      "method": "hybrid",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-DISC"
+      ],
+      "check_id": "disclaimer_before_benefits",
+      "judged_spec": "The learner gave all three disclaimer elements, with the right numbers, before discussing any benefits. Use this to confirm paraphrases the element match missed."
+    },
+    {
+      "criterion_id": "elig-recording",
+      "dimension": "eligibility",
+      "title": "Told the caller the call is recorded",
+      "points": 1,
+      "method": "deterministic",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "O-RECNOTE"
+      ],
+      "check_id": "recording_notice_given"
+    },
+    {
+      "criterion_id": "elig-other-coverage",
+      "dimension": "eligibility",
+      "title": "Did not enroll while other coverage could be lost",
+      "points": 3,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "check_id": "no_enroll_with_unresolved_other_coverage"
+    },
+    {
+      "criterion_id": "elig-timing",
+      "dimension": "eligibility",
+      "title": "Confirmed the election period and coverage start date",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "judged_spec": "The learner explained that changes made now take effect January 1, 2027, and that the Annual Election Period ends December 7."
+    },
+    {
+      "criterion_id": "ver-provider",
+      "dimension": "verification",
+      "title": "Must-keep practice verified in network, at the right office, on the outcome plan for 2027",
+      "points": 7,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "check_id": "provider_verified_at_location"
+    },
+    {
+      "criterion_id": "ver-drugs",
+      "dimension": "verification",
+      "title": "Every prescription checked on the outcome plan at the right strength",
+      "points": 5,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "check_id": "drugs_checked"
+    },
+    {
+      "criterion_id": "ver-restrictions",
+      "dimension": "verification",
+      "title": "Drug restrictions on the outcome plan seen and explained",
+      "points": 3,
+      "method": "hybrid",
+      "evidence_policy": "both",
+      "check_id": "restriction_seen",
+      "judged_spec": "The learner told the customer about prior authorization, step therapy or quantity limits on their drugs and what they mean."
+    },
+    {
+      "criterion_id": "ver-pharmacy",
+      "dimension": "verification",
+      "title": "Pharmacy network status checked on the outcome plan",
+      "points": 3,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "check_id": "pharmacy_checked"
+    },
+    {
+      "criterion_id": "ver-claims",
+      "dimension": "verification",
+      "title": "Every coverage claim was backed by a lookup made before the claim",
+      "points": 2,
+      "method": "hybrid",
+      "evidence_policy": "both",
+      "critical": true,
+      "check_id": "coverage_claims_backed",
+      "judged_spec": "Find each statement that a provider, drug or pharmacy is covered or in network on a plan. Cite the utterance."
+    },
+    {
+      "criterion_id": "rec-outcome",
+      "dimension": "recommendation",
+      "title": "Outcome is acceptable for this customer",
+      "points": 8,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "critical": true,
+      "check_id": "outcome_acceptable"
+    },
+    {
+      "criterion_id": "rec-tradeoffs",
+      "dimension": "recommendation",
+      "title": "Compared the current plan with alternatives and stated gains and losses",
+      "points": 4,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "judged_spec": "The learner compared the current plan with any alternative and named what the customer would gain and give up."
+    },
+    {
+      "criterion_id": "rec-service-costs",
+      "dimension": "recommendation",
+      "title": "Discussed costs of health care services",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "judged_spec": "The learner discussed copays or coinsurance for services the customer uses."
+    },
+    {
+      "criterion_id": "rec-premiums",
+      "dimension": "recommendation",
+      "title": "Discussed premiums",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "judged_spec": "The learner stated the plan premium and that the Part B premium continues."
+    },
+    {
+      "criterion_id": "rec-benefits",
+      "dimension": "recommendation",
+      "title": "Discussed benefits accurately, including conditions on supplemental benefits",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-NEEDS"
+      ],
+      "judged_spec": "The learner described benefits accurately and explained any eligibility conditions on supplemental benefits."
+    },
+    {
+      "criterion_id": "rec-needs-based",
+      "dimension": "recommendation",
+      "title": "Tied the recommendation to the customer's needs",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "judged_spec": "The learner explained the recommendation in terms of the customer's doctors, drugs, pharmacy, costs and priorities, without calling any plan best in general."
+    },
+    {
+      "criterion_id": "doc-evidence",
+      "dimension": "documentation",
+      "title": "Pinned evidence matches the plan, year and office",
+      "points": 3,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "check_id": "evidence_context_matches"
+    },
+    {
+      "criterion_id": "doc-sob",
+      "dimension": "documentation",
+      "title": "Summary of Benefits for the submitted plan opened before submission",
+      "points": 2,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "rule_ids": [
+        "R-SB"
+      ],
+      "check_id": "sob_for_submitted_plan"
+    },
+    {
+      "criterion_id": "doc-pecl",
+      "dimension": "documentation",
+      "title": "Pre-Enrollment Checklist reviewed before submission",
+      "points": 4,
+      "method": "hybrid",
+      "evidence_policy": "both",
+      "critical": true,
+      "rule_ids": [
+        "R-PECL"
+      ],
+      "check_id": "pecl_complete_before_submit",
+      "judged_spec": "The learner went through the checklist items with the customer rather than only opening the document."
+    },
+    {
+      "criterion_id": "doc-consent",
+      "dimension": "documentation",
+      "title": "Enrollment consent documented from a heard customer yes",
+      "points": 3,
+      "method": "deterministic",
+      "evidence_policy": "both",
+      "critical": true,
+      "rule_ids": [
+        "R-CONSENT"
+      ],
+      "check_id": "consent_before_submit"
+    },
+    {
+      "criterion_id": "doc-application",
+      "dimension": "documentation",
+      "title": "Application matches the customer record",
+      "points": 2,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "check_id": "application_matches_record"
+    },
+    {
+      "criterion_id": "doc-pcp",
+      "dimension": "documentation",
+      "title": "PCP collected exactly when the plan requires one",
+      "points": 1,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "rule_ids": [
+        "P-PCP"
+      ],
+      "check_id": "pcp_matches_plan_rule"
+    },
+    {
+      "criterion_id": "com-plain",
+      "dimension": "communication",
+      "title": "Used plain language and checked understanding",
+      "points": 4,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "judged_spec": "The learner avoided jargon or explained it, and checked that the customer understood key points."
+    },
+    {
+      "criterion_id": "com-choice",
+      "dimension": "communication",
+      "title": "Respected the customer's choice without pressure",
+      "points": 4,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "rule_ids": [
+        "R-CONSENT"
+      ],
+      "judged_spec": "The learner presented options and let the customer decide, including keeping the current plan or waiting."
+    },
+    {
+      "criterion_id": "com-misconceptions",
+      "dimension": "communication",
+      "title": "Corrected misconceptions",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "transcript",
+      "judged_spec": "The learner noticed and gently corrected anything the customer misremembered or misunderstood."
+    },
+    {
+      "criterion_id": "comp-followup",
+      "dimension": "completion",
+      "title": "Follow-up scheduled before the deadline when the decision was deferred",
+      "points": 3,
+      "method": "deterministic",
+      "evidence_policy": "event",
+      "check_id": "followup_created"
+    },
+    {
+      "criterion_id": "comp-notes",
+      "dimension": "completion",
+      "title": "Notes record the reason, rationale and next steps",
+      "points": 2,
+      "method": "judged",
+      "evidence_policy": "event",
+      "judged_spec": "The saved notes state why the customer called, what was found, the decision and its rationale, and next steps."
+    }
+  ]
+}

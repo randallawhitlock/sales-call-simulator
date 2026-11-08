@@ -1,0 +1,271 @@
+{
+  "scenario_id": "case-b-ad-allowance",
+  "version": 1,
+  "title": "The ad promised money",
+  "learner_title": "Inbound call: Harold Pruitt",
+  "frame_id": "aep-2027",
+  "catalog_version": "2027-v1",
+  "persona": {
+    "first_name": "Harold",
+    "last_name": "Pruitt",
+    "age": 68,
+    "speaking_style": "Brisk, a little skeptical, quotes the TV ad word for word, warms up when someone explains things straight.",
+    "moods": [
+      "impatient",
+      "curious"
+    ],
+    "voices": [
+      "gravel-baritone",
+      "dry-tenor"
+    ]
+  },
+  "crm_seed": {
+    "customer_name": "Harold Pruitt",
+    "phone": "(555) 555-0147",
+    "zip": "00044",
+    "lead_source": "Inbound call from a TV ad"
+  },
+  "truth": {
+    "current_plan_id": "TRN-2002-001",
+    "residence_zip": "00044",
+    "pcp_practice_id": "okafor-cedar",
+    "must_keep_practices": [
+      "okafor-cedar"
+    ],
+    "drugs": [
+      {
+        "drug_id": "lisinopril-20mg-tab",
+        "days_supply": 90
+      },
+      {
+        "drug_id": "rosuvastatin-10mg-tab",
+        "days_supply": 90
+      },
+      {
+        "drug_id": "amlodipine-5mg-tab",
+        "days_supply": 90
+      }
+    ],
+    "pharmacy_id": "cedar-street-rx",
+    "ad_claim": "Everyone with Medicare can get $150 a month for groceries."
+  },
+  "knowledge": [
+    {
+      "item_id": "ad",
+      "lay_text": "I saw a TV ad that said everybody with Medicare can get $150 a month for groceries. I want that.",
+      "reveal": "volunteer",
+      "topics": [
+        "reason for call",
+        "allowance",
+        "ad"
+      ],
+      "misconception": true
+    },
+    {
+      "item_id": "current-plan",
+      "lay_text": "I'm on Riverbend Essentials HMO. Honestly, it's been fine. No complaints.",
+      "reveal": "when_asked",
+      "topics": [
+        "current coverage",
+        "current plan"
+      ]
+    },
+    {
+      "item_id": "pcp",
+      "lay_text": "My doctor is Dr. Samuel Okafor at Cedar Street Family Medicine in Millbrook. Twelve years.",
+      "reveal": "when_asked",
+      "topics": [
+        "doctors",
+        "primary care"
+      ]
+    },
+    {
+      "item_id": "must-keep",
+      "lay_text": "I'm not changing doctors. Dr. Okafor knows me.",
+      "reveal": "when_asked",
+      "topics": [
+        "doctors",
+        "priorities",
+        "what matters most"
+      ]
+    },
+    {
+      "item_id": "lisinopril",
+      "lay_text": "Lisinopril for blood pressure, 20 milligrams. I get three months at a time.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "rosuvastatin",
+      "lay_text": "Rosuvastatin for cholesterol, 10 milligrams, also three months at a time.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "amlodipine",
+      "lay_text": "Amlodipine, 5 milligrams. That's my other blood pressure pill.",
+      "reveal": "when_asked",
+      "topics": [
+        "prescriptions",
+        "medications"
+      ]
+    },
+    {
+      "item_id": "pharmacy",
+      "lay_text": "Cedar Street Pharmacy, right next door to Dr. Okafor.",
+      "reveal": "when_asked",
+      "topics": [
+        "pharmacy"
+      ]
+    },
+    {
+      "item_id": "conditions",
+      "lay_text": "Just blood pressure and cholesterol. No diabetes, no heart failure, nothing wrong with my lungs.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "health conditions",
+        "diabetes",
+        "heart failure",
+        "COPD"
+      ]
+    },
+    {
+      "item_id": "medicare",
+      "lay_text": "Part A and Part B. No Medicaid, no Extra Help.",
+      "reveal": "when_asked",
+      "topics": [
+        "Medicare",
+        "Medicaid",
+        "eligibility"
+      ]
+    },
+    {
+      "item_id": "address",
+      "lay_text": "12 Orchard Lane, Millbrook, 00044.",
+      "reveal": "when_asked",
+      "topics": [
+        "address",
+        "where you live"
+      ]
+    },
+    {
+      "item_id": "no-other-coverage",
+      "lay_text": "No other insurance.",
+      "reveal": "when_asked",
+      "topics": [
+        "other coverage",
+        "retiree",
+        "employer"
+      ]
+    },
+    {
+      "item_id": "dental",
+      "lay_text": "I did use the dental this year. Got a crown. Cost me a bit out of pocket.",
+      "reveal": "only_if_specific",
+      "topics": [
+        "dental",
+        "services used"
+      ]
+    }
+  ],
+  "outcomes": [
+    {
+      "outcome_id": "keep",
+      "kind": "keep_current",
+      "verdict": "acceptable",
+      "required_checks": [
+        "provider_verified_at_location",
+        "drugs_checked"
+      ],
+      "rationale": "Riverbend Essentials HMO keeps Dr. Okafor at Cedar Street for 2027, covers all three drugs, and Cedar Street Pharmacy is preferred. CANARY-B-KEEP-2M8"
+    },
+    {
+      "outcome_id": "enroll-maple-value",
+      "kind": "enroll",
+      "verdict": "acceptable",
+      "plan_ids": [
+        "TRN-1001-001"
+      ],
+      "required_checks": [
+        "provider_verified_at_location",
+        "drugs_checked",
+        "pharmacy_checked"
+      ],
+      "rationale": "A real gain: a $50 quarterly over-the-counter allowance with no conditions and a larger dental maximum. The learner must state the losses: Cedar Street Pharmacy is standard rather than preferred, so drug copays rise, and specialist copays are higher."
+    },
+    {
+      "outcome_id": "defer",
+      "kind": "defer",
+      "verdict": "acceptable",
+      "required_checks": [
+        "followup_created"
+      ],
+      "rationale": "If he wants to think it over, a follow-up before December 7 is fine."
+    },
+    {
+      "outcome_id": "enroll-summit-rewards",
+      "kind": "enroll",
+      "verdict": "excluded",
+      "plan_ids": [
+        "TRN-3003-002"
+      ],
+      "rationale": "The $150 allowance requires diabetes, chronic heart failure or COPD, which he does not have. Dr. Okafor and Cedar Street Pharmacy are out of network and rosuvastatin 10 mg is not covered. CANARY-B-COND-3R6"
+    },
+    {
+      "outcome_id": "enroll-other",
+      "kind": "enroll",
+      "verdict": "excluded",
+      "plan_ids": [
+        "TRN-1001-002",
+        "TRN-2002-002",
+        "TRN-3003-001"
+      ],
+      "rationale": "Higher premiums or a lost pharmacy for no gain he values."
+    }
+  ],
+  "traps": [
+    {
+      "trap_id": "conditional",
+      "description": "The advertised allowance is conditional on chronic conditions he does not have.",
+      "check_ids": [
+        "outcome_acceptable"
+      ],
+      "rationale": "A conditional supplemental benefit is not a benefit everyone gets."
+    },
+    {
+      "trap_id": "narrow-network",
+      "description": "Summit Rewards HMO's network leaves out Dr. Okafor.",
+      "check_ids": [
+        "provider_verified_at_location"
+      ],
+      "rationale": "The allowance plan costs him his doctor of twelve years."
+    },
+    {
+      "trap_id": "everyone-gets",
+      "description": "He believes everyone with Medicare gets $150 a month.",
+      "check_ids": [],
+      "rationale": "A misconception to correct plainly, without talking down to him."
+    }
+  ],
+  "rule_ids": [
+    "R-SOA",
+    "R-DISC",
+    "R-NEEDS",
+    "R-PECL",
+    "R-SB",
+    "R-CONSENT",
+    "G-PREENR",
+    "P-PCP",
+    "O-RECNOTE"
+  ],
+  "leak_canaries": [
+    "CANARY-B-KEEP-2M8",
+    "CANARY-B-COND-3R6"
+  ]
+}
