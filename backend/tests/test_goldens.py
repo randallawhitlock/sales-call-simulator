@@ -335,13 +335,21 @@ def test_a_consent_must_be_a_heard_customer_yes(
     call, app_id = enroll_to_consent(client)
     if script == "learner":
         utt = call.say("Yes, I'll enroll you now.")
+        # The API refuses a learner line as consent; the grader still catches one that gets
+        # into a log some other way.
+        body = call.post(f"/applications/{app_id}/consent", {"utt_id": utt}, expect=422)
+        assert "not the customer's" in body["detail"]
+        call.service.log(
+            call.sid, EventType.CONSENT_MARKED, {"application_id": app_id, "utt_id": utt}
+        )
     elif script == "interrupted":
         utt = call.hear("Yes, go ahead and sign me up.", heard="Yes, go", interrupted=True)
     elif script == "refusal":
         utt = call.hear("No, not yet. I want to think about it.")
     else:
         utt = call.hear("Yes, sign me up.")
-    call.consent(app_id, utt)
+    if script != "learner":
+        call.consent(app_id, utt)
     if script == "objection":
         call.hear("Wait, hold on. I want to ask my daughter first.")
     call.submit(app_id)

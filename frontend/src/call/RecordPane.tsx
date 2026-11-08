@@ -125,6 +125,7 @@ function ContactSection() {
   const { base, record } = useCall()
   const [c, setC] = useSection<NonNullable<CustomerRecord['contact']>>((r) => r.contact, {
     residence_zip: null, mailing_same_as_residence: true, mailing_zip: null, helper_name: null, authorized_representative: null,
+    source_utt_id: null,
   })
   const set = (patch: Partial<typeof c>) => setC({ ...c, ...patch })
   return (
@@ -136,6 +137,7 @@ function ContactSection() {
       )}
       <Field label="Someone helping on the call"><input value={c.helper_name ?? ''} onChange={(e) => set({ helper_name: e.target.value || null })} /></Field>
       <Field label="Authorized representative"><input value={c.authorized_representative ?? ''} onChange={(e) => set({ authorized_representative: e.target.value || null })} /></Field>
+      <CiteButton value={c.source_utt_id} onChange={(id) => set({ source_utt_id: id })} />
     </Section>
   )
 }
@@ -225,13 +227,15 @@ function DrugsSection() {
   )
 }
 
-function PharmacySection() {
+export function PharmacySection() {
   const { base, record, seen } = useCall()
-  const [p, setP] = useSection<NonNullable<CustomerRecord['pharmacy']>>((r) => r.pharmacy, { pharmacy_id: null, name_reported: null })
-  const [cite, setCite] = useState<string | null>(null)
+  // One state object for the whole section, citation included, so a resave keeps it.
+  const [p, setP] = useSection<NonNullable<CustomerRecord['pharmacy']>>((r) => r.pharmacy, {
+    pharmacy_id: null, name_reported: null, source_utt_id: null,
+  })
   return (
     <Section title="Pharmacy" savedSeq={record?.saved_seq['pharmacy']}
-      onSave={() => put(`${base}/record/pharmacy`, { ...p, source_utt_id: cite }).then(() => {})}>
+      onSave={() => put(`${base}/record/pharmacy`, p).then(() => {})}>
       <Field label="Pharmacy">
         <select value={p.pharmacy_id ?? ''} onChange={(e) => setP({ ...p, pharmacy_id: e.target.value || null })}>
           <option value="">Not identified yet</option>
@@ -239,7 +243,7 @@ function PharmacySection() {
         </select>
       </Field>
       <Field label="As the customer said it"><input value={p.name_reported ?? ''} onChange={(e) => setP({ ...p, name_reported: e.target.value || null })} /></Field>
-      <CiteButton value={cite} onChange={setCite} />
+      <CiteButton value={p.source_utt_id} onChange={(id) => setP({ ...p, source_utt_id: id })} />
     </Section>
   )
 }
@@ -250,6 +254,7 @@ function CoverageSection() {
   const { base, record, seen } = useCall()
   const [c, setC] = useSection<NonNullable<CustomerRecord['coverage']>>((r) => r.coverage, {
     current_plan_id: null, original_medicare: null, medicare_parts: [], medicaid: 'unknown', other_coverage: [],
+    source_utt_id: null,
   })
   const kinds = c.other_coverage.map((o) => o.kind)
   return (
@@ -288,6 +293,7 @@ function CoverageSection() {
           </label>
         ))}
       </fieldset>
+      <CiteButton value={c.source_utt_id} onChange={(id) => setC({ ...c, source_utt_id: id })} />
     </Section>
   )
 }

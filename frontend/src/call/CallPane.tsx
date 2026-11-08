@@ -120,7 +120,8 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
       <div className="row controls">
         <button
           type="button"
-          disabled={!live || control.busy}
+          disabled={!live || control.busy || waiting}
+          title={waiting ? `Wait for ${customer} to finish` : undefined}
           onClick={() =>
             void control.run(async () => {
               await post<LogEvent>(`${base}/hold`, { on: !onHold })
@@ -133,7 +134,7 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
         <button
           type="button"
           className="danger"
-          disabled={!live || control.busy}
+          disabled={!live || control.busy || waiting}
           onClick={() => {
             if (!window.confirm('End the call? The debrief opens and the call cannot resume.')) return
             void control.run(async () => onSession(await post<Session>(`${base}/end`)))

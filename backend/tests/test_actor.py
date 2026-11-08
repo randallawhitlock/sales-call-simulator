@@ -1,6 +1,7 @@
 """The AI customer: prompt, leak guard, actors and the turn endpoint."""
 
 import os
+import threading
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -25,7 +26,8 @@ from app.actor.prompt import (
 )
 from app.content.loader import load_bundle
 from app.content.scenario import Reveal
-from app.engine.events import Speaker
+from app.engine.events import EventType, Speaker
+from app.engine.session import TurnIn
 from tests.harness import Call
 
 BUNDLE = load_bundle()
@@ -317,3 +319,132 @@ def test_live_gemini_customer_stays_in_lay_words() -> None:
     assert reply
     problems = prompt_problems(replace(prompt, text=reply), BUNDLE)
     assert problems == [], problems
+
+
+# Turn coordination
+
+
+class BlockingActor(ScriptedActor):
+    """Blocks inside its first reply until released, to overlap requests deterministically."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+
+    def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
+        self.calls += 1
+        if self.calls == 1:
+            self.entered.set()
+            assert self.release.wait(5)
+        return super().reply(prompt, history, seed)
+
+
+def in_thread(fn: Any) -> tuple[threading.Thread, dict[str, Any]]:
+    out: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            out["value"] = fn()
+        except Exception as exc:  # surfaced by the asserting test
+            out["error"] = exc
+
+    t = threading.Thread(target=run)
+    t.start()
+    return t, out
+
+
+def blocked_turn(call: Call, text: str = "What medications do you take?") -> Any:
+    actor = BlockingActor()
+    call.service.actor = actor
+    first = in_thread(
+        lambda: call.service.take_turn(call.sid, TurnIn(client_utt_id="turn-first-0001", text=text))
+    )
+    assert actor.entered.wait(5)
+    return actor, first
+
+
+def speakers(call: Call) -> list[str]:
+    return [u.speaker.value for u in call.service.transcript(call.sid)]
+
+
+def test_overlapping_turns_are_answered_in_order(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    actor, (t1, first) = blocked_turn(call)
+    t2, second = in_thread(
+        lambda: call.service.take_turn(
+            call.sid, TurnIn(client_utt_id="turn-second-001", text="What pharmacy do you use?")
+        )
+    )
+    t2.join(0.3)
+    assert t2.is_alive(), "the second turn waits for the first reply"
+    assert speakers(call) == ["learner"]
+    actor.release.set()
+    t1.join(5)
+    t2.join(5)
+    assert speakers(call) == ["learner", "customer", "learner", "customer"]
+    assert "apixaban" in first["value"].customer.text
+    assert "Alder Family Pharmacy" in second["value"].customer.text
+
+
+def test_a_reply_overtaken_by_a_newer_line_is_dropped(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    actor, (t1, first) = blocked_turn(call)
+    call.say("Actually, never mind that. Let me start over.")  # bypasses the turn lock
+    actor.release.set()
+    t1.join(5)
+    assert first["value"].customer is None
+    assert speakers(call) == ["learner", "learner"]
+
+
+@pytest.mark.parametrize("action", ["hold", "end"])
+def test_hold_and_end_wait_for_a_reply_in_flight(client: TestClient, action: str) -> None:
+    call = Call(client, CASE_A).start()
+    actor, (t1, first) = blocked_turn(call)
+    act = (
+        (lambda: call.service.hold(call.sid, True))
+        if action == "hold"
+        else (lambda: call.service.end(call.sid))
+    )
+    t2, _ = in_thread(act)
+    t2.join(0.3)
+    assert t2.is_alive(), f"{action} waits for the reply"
+    actor.release.set()
+    t1.join(5)
+    t2.join(5)
+    assert first["value"].customer is not None
+    events = call.service.events(call.sid)
+    reply_seq = next(e.seq for e in events if e.utt_id == first["value"].customer.utt_id)
+    marker = EventType.HOLD_STARTED if action == "hold" else EventType.CALL_ENDED
+    assert reply_seq < next(e.seq for e in events if e.type is marker)
+
+
+def test_a_reply_after_a_hold_that_slipped_in_is_dropped(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    actor, (t1, first) = blocked_turn(call)
+    call.service.log(call.sid, EventType.HOLD_STARTED)  # bypasses the turn lock
+    actor.release.set()
+    t1.join(5)
+    assert first["value"].customer is None
+    assert speakers(call) == ["learner"]
+
+
+def test_reusing_a_turn_id_for_a_different_line_is_refused(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    call.post("/turns", {"client_utt_id": "turn-reused-001", "text": "Hello?"})
+    body = call.post("/turns", {"client_utt_id": "turn-reused-001", "text": "Bye."}, expect=409)
+    assert "different line" in body["detail"]
+    utt = {"client_utt_id": "turn-reused-001", "speaker": "learner", "channel": "text"}
+    call.post("/utterances", utt | {"text": "Something else"}, expect=409)
+    assert len(call.get("/transcript")) == 2
+
+
+def test_consent_must_cite_the_customers_heard_words(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    app_id = call.apply("TRN-1001-002", "Loretta Banks", "00041")
+    mine = call.say("Yes, I'll enroll you.")
+    cut = call.hear("Yes.", heard="", interrupted=True)
+    for utt, reason in [(mine, "not the customer's"), (cut, "cut off")]:
+        body = call.post(f"/applications/{app_id}/consent", {"utt_id": utt}, expect=422)
+        assert reason in body["detail"]
+    call.consent(app_id, call.hear("Yes, go ahead."))

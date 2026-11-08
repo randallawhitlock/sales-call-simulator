@@ -291,13 +291,14 @@ export interface DrugEntry {
 export interface CustomerRecord {
   doctors: { doctors: DoctorEntry[] } | null
   drugs: { status: 'listed' | 'none' | 'unknown'; drugs: DrugEntry[] } | null
-  pharmacy: { pharmacy_id: string | null; name_reported: string | null } | null
+  pharmacy: { pharmacy_id: string | null; name_reported: string | null; source_utt_id: string | null } | null
   coverage: {
     current_plan_id: string | null
     original_medicare: boolean | null
     medicare_parts: ('a' | 'b')[]
     medicaid: 'yes' | 'no' | 'unknown'
     other_coverage: { kind: string }[]
+    source_utt_id: string | null
   } | null
   contact: {
     residence_zip: string | null
@@ -305,6 +306,7 @@ export interface CustomerRecord {
     mailing_zip: string | null
     helper_name: string | null
     authorized_representative: string | null
+    source_utt_id: string | null
   } | null
   notes: Record<string, string> | null
   disposition: { outcome: string; plan_id: string | null; rationale: string } | null

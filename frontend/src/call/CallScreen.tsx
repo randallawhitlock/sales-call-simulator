@@ -13,42 +13,39 @@ import { CallPane } from './CallPane.tsx'
 import { RecordPane } from './RecordPane.tsx'
 import { ResearchPane } from './ResearchPane.tsx'
 import { Review } from './Review.tsx'
+import { useLatest } from './useLatest.ts'
 
 const EMPTY_SEEN: Seen = { plans: [], providers: [], drugs: [], pharmacies: [] }
 
 export function CallScreen({ initial, actor, onExit }: { initial: Session; actor: string; onExit: () => void }) {
   const [session, setSession] = useState(initial)
   const [transcript, setTranscriptState] = useState<Utterance[]>([])
-  const [record, setRecord] = useState<CustomerRecord | null>(null)
-  const [applications, setApplications] = useState<ApplicationView[]>([])
-  const [evidence, setEvidence] = useState<LogEvent[]>([])
   const [source, setSource] = useState<Utterance | null>(null)
   const [seen, setSeen] = useState<Seen>(EMPTY_SEEN)
   const [toast, setToast] = useState<string | null>(null)
   const base = `/sessions/${session.session_id}`
   const live = session.status === 'active'
 
-  const refreshRecord = useCallback(async () => setRecord(await get<CustomerRecord>(`${base}/record`)), [base])
-  const refreshApplications = useCallback(
-    async () => setApplications(await get<ApplicationView[]>(`${base}/applications`)),
-    [base],
+  // Each resource keeps only its newest response, so the initial load below can't overwrite
+  // what a save fetched while it was still in flight.
+  const [record, refreshRecord] = useLatest(
+    useCallback(() => get<CustomerRecord>(`${base}/record`), [base]),
+    null as CustomerRecord | null,
   )
-  const refreshEvidence = useCallback(async () => setEvidence(await get<LogEvent[]>(`${base}/evidence`)), [base])
+  const [applications, refreshApplications] = useLatest(
+    useCallback(() => get<ApplicationView[]>(`${base}/applications`), [base]),
+    [] as ApplicationView[],
+  )
+  const [evidence, refreshEvidence] = useLatest(
+    useCallback(() => get<LogEvent[]>(`${base}/evidence`), [base]),
+    [] as LogEvent[],
+  )
 
   useEffect(() => {
-    void Promise.all([
-      get<Utterance[]>(`${base}/transcript`),
-      get<CustomerRecord>(`${base}/record`),
-      get<ApplicationView[]>(`${base}/applications`),
-      get<LogEvent[]>(`${base}/evidence`),
-    ]).then(([t, r, a, e]) => {
-      // Merge, don't replace: a turn sent while this load was in flight must survive it.
-      setTranscriptState((prev) => mergeTranscript(prev, t))
-      setRecord(r)
-      setApplications(a)
-      setEvidence(e)
-    })
-  }, [base])
+    // Merge, don't replace: a turn sent while this load was in flight must survive it.
+    void get<Utterance[]>(`${base}/transcript`).then((t) => setTranscriptState((prev) => mergeTranscript(prev, t)))
+    void Promise.resolve().then(() => Promise.all([refreshRecord(), refreshApplications(), refreshEvidence()]))
+  }, [base, refreshRecord, refreshApplications, refreshEvidence])
 
   useEffect(() => {
     if (!toast) return
