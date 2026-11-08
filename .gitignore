@@ -169,3 +169,6 @@ recordings/
 # os / editors
 .DS_Store
 .idea/
+
+# Claude Code personal settings
+.claude/settings.local.json

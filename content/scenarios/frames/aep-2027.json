@@ -1,0 +1,12 @@
+{
+  "frame_id": "aep-2027",
+  "call_date": "2026-11-12",
+  "plan_year": 2027,
+  "election_period": "aep",
+  "direction": "inbound",
+  "county_id": "alder",
+  "agency_name": "Larkspur Benefits Group",
+  "learner_role": "Licensed agent at a third-party marketing organization appointed with 3 of the county's Medicare Advantage organizations",
+  "carriers_represented": 3,
+  "products_offered": 6
+}

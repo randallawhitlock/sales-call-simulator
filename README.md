@@ -1,5 +1,7 @@
 # Medicare Sales Call Simulator
 
+[![CI](https://github.com/randallawhitlock/sales-call-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/randallawhitlock/sales-call-simulator/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/randallawhitlock/sales-call-simulator/badge)](https://scorecard.dev/viewer/?uri=github.com/randallawhitlock/sales-call-simulator)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB.svg?logo=python&logoColor=white)](backend/pyproject.toml)
@@ -38,8 +40,8 @@ Pre-alpha. The design is settled; the build is underway.
 
 | Milestone | What lands | State |
 |---|---|---|
-| M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold | In progress |
-| M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Planned |
+| M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold, CI | Done |
+| M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Next |
 | M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer | Planned |
 | M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, retry | Planned |
 | M4 Voice | LiveKit agent worker on Gemini Live | Planned |
@@ -96,6 +98,7 @@ runs.
 | [Product proposal v2.1](docs/PROPOSAL.md) | MVP definition, architecture, scoring, risks, roadmap |
 | [Rule register](docs/rule-register.md) | Every graded rule with its cite, authority, status and check |
 | [Proposal v2.0](docs/proposal-v2.0.md) | The original proposal, kept for the record |
+| [Contributing](.github/CONTRIBUTING.md) | Branches, commits, pull requests, checks |
 
 ## Repository layout
 
@@ -106,7 +109,47 @@ backend/    Python 3.12, FastAPI, pydantic v2, SQLite, uv
 frontend/   Vite, React, strict TypeScript
 ```
 
-Local setup instructions land with the M0 scaffold.
+## Local setup
+
+You need Python 3.12 with [uv](https://docs.astral.sh/uv/), and Node 22 or newer.
+
+```bash
+cd backend && uv sync && uv run uvicorn app.main:app --reload
+```
+
+```bash
+cd frontend && npm ci && npm run dev
+```
+
+Open http://localhost:5173. The page reads "API: ok" once the backend is up. The backend
+validates every content file at startup, so a broken rule or catalog file stops it right away.
+
+The checks CI runs on every pull request:
+
+```bash
+cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q
+```
+
+```bash
+cd frontend && npm run lint && npm run typecheck && npm run build
+```
+
+### Environment variables
+
+Nothing so far needs a key. Later milestones read these from the environment or from a local
+`.env`, which git ignores. Never commit real values.
+
+| Variable | Used for | From |
+|---|---|---|
+| `SIM_CONTENT_DIR` | Point the backend at another content directory | M0 |
+| `SIM_DB_PATH` | SQLite file for sessions and event logs (default `simulator.db`) | M1 |
+| `GEMINI_API_KEY` | Text actor, and Gemini Live for voice | M2 |
+| `SIM_ACTOR_MODEL` | Text actor model id | M2 |
+| `ANTHROPIC_API_KEY` | Judge | M3 |
+| `SIM_JUDGE_MODEL` | Judge model id (default `claude-opus-5-5`) | M3 |
+| `SIM_LIVE_MODEL` | Gemini Live model id, always pinned | M4 |
+| `LIVEKIT_URL` | LiveKit server (default `ws://localhost:7880`) | M4 |
+| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | LiveKit credentials; `livekit-server --dev` prints its own | M4 |
 
 ## Disclaimer
 
