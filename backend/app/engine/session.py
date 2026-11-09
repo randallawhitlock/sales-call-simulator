@@ -291,6 +291,11 @@ class SessionService:
     def state(self, session_id: str) -> SessionState:
         return SessionState.fold(self.events(session_id))
 
+    def turn_pending(self, session_id: str) -> bool:
+        """A customer reply is being generated for this session right now. A call screen that
+        reloads mid-turn uses it to wait for the reply instead of offering a new line."""
+        return session_id in self._inflight
+
     # Utterances
 
     def add_utterance(self, session_id: str, body: UtteranceIn) -> Utterance:

@@ -183,6 +183,7 @@ are git-ignored. Never commit real values.
 | `SIM_ACTOR_MODEL` | Text actor model id. Required with a key; never defaulted, so each session records the exact model | M2 |
 | `SIM_ACTOR` | `gemini` or `scripted` (default: `gemini` when a key is set) | M2 |
 | `SIM_ACTOR_TIMEOUT_S` | Seconds one customer reply may take before the turn fails and can be retried (0.1 to 600, default 30) | M2 |
+| `SIM_API_URL` | Backend the frontend dev server proxies `/api` to (default `http://127.0.0.1:8000`), for running a second checkout side by side | M2 |
 | `ANTHROPIC_API_KEY` | Judge | M3 |
 | `SIM_JUDGE_MODEL` | Judge model id (default `claude-opus-5-5`) | M3 |
 | `SIM_LIVE_MODEL` | Gemini Live model id, always pinned | M4 |

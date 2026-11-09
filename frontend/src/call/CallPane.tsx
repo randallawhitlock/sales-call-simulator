@@ -4,14 +4,18 @@ import { ErrorNote } from '../ui.tsx'
 import { clock, errorText, useAction } from '../util.ts'
 import { mergeTranscript, useCall } from './context.tsx'
 
+const REJOIN_POLL_MS = 1000
+
 export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
   const { session, base, live, transcript, setTranscript, source, setSource } = useCall()
   const [draft, setDraft] = useState('')
-  const [waiting, setWaiting] = useState(false)
+  // Both start from the server, so a reload mid-call shows the call as it really is.
+  const [waiting, setWaiting] = useState(session.turn_pending)
   const [failed, setFailed] = useState<{ id: string; text: string; error: string } | null>(null)
   const [dropped, setDropped] = useState(false)
-  const [onHold, setOnHold] = useState(false)
+  const [onHold, setOnHold] = useState(session.on_hold)
   const [now, setNow] = useState(() => Date.now())
+  const [rejoinedMidTurn] = useState(session.turn_pending)
   const control = useAction()
   const bottom = useRef<HTMLLIElement>(null)
   const customer = session.crm_seed.customer_name.split(' ')[0] ?? 'Customer'
@@ -24,6 +28,29 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' })
   }, [transcript.length, waiting])
+
+  useEffect(() => {
+    // Reloaded while the customer was answering: the reply is still being generated on the
+    // server. Wait for it to finish (or be cut off), then pick it up from the transcript.
+    if (!rejoinedMidTurn) return
+    let stopped = false
+    void (async () => {
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, REJOIN_POLL_MS))
+        if (stopped) return
+        const s = await get<Session>(base).catch(() => null)
+        if (stopped) return
+        if (s && !s.turn_pending) break
+      }
+      const saved = await get<Utterance[]>(`${base}/transcript`).catch(() => null)
+      if (stopped) return
+      if (saved) setTranscript((prev) => mergeTranscript(prev, saved))
+      setWaiting(false)
+    })()
+    return () => {
+      stopped = true
+    }
+  }, [rejoinedMidTurn, base, setTranscript])
 
   async function send(id: string, text: string): Promise<void> {
     setWaiting(true)

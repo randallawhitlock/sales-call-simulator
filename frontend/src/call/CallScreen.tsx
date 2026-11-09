@@ -8,7 +8,7 @@ import {
   type Session,
   type Utterance,
 } from '../api.ts'
-import { CallContext, mergeById, mergeTranscript, type CallContextValue, type Seen } from './context.tsx'
+import { CallContext, mergeSeen, mergeTranscript, type CallContextValue, type Seen } from './context.tsx'
 import { CallPane } from './CallPane.tsx'
 import { RecordPane } from './RecordPane.tsx'
 import { ResearchPane } from './ResearchPane.tsx'
@@ -44,6 +44,8 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
   useEffect(() => {
     // Merge, don't replace: a turn sent while this load was in flight must survive it.
     void get<Utterance[]>(`${base}/transcript`).then((t) => setTranscriptState((prev) => mergeTranscript(prev, t)))
+    // After a reload, offer again what earlier searches found, so record pickers still work.
+    void get<Seen>(`${base}/found`).then((f) => setSeen((prev) => mergeSeen(prev, f)))
     void Promise.resolve().then(() => Promise.all([refreshRecord(), refreshApplications(), refreshEvidence()]))
   }, [base, refreshRecord, refreshApplications, refreshEvidence])
 
@@ -74,13 +76,7 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
       source,
       setSource,
       seen,
-      remember: (found) =>
-        setSeen((prev) => ({
-          plans: mergeById(prev.plans, found.plans ?? [], (p) => p.plan_id),
-          providers: mergeById(prev.providers, found.providers ?? [], (p) => p.provider_id),
-          drugs: mergeById(prev.drugs, found.drugs ?? [], (d) => d.drug_id),
-          pharmacies: mergeById(prev.pharmacies, found.pharmacies ?? [], (p) => p.pharmacy_id),
-        })),
+      remember: (found) => setSeen((prev) => mergeSeen(prev, found)),
       notify: setToast,
     }),
     [session, base, live, transcript, record, refreshRecord, applications, refreshApplications, evidence, refreshEvidence, source, seen],

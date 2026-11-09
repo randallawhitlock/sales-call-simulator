@@ -59,6 +59,7 @@ def sweep(call: Call) -> None:
     call.get("/record")
     call.get("/transcript")
     call.get("/events")
+    call.get("/found")
 
 
 def assert_clean(call: Call, canaries: list[str]) -> None:

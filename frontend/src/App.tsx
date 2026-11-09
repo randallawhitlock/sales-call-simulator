@@ -4,14 +4,54 @@ import { CallScreen } from './call/CallScreen.tsx'
 import { ErrorNote } from './ui.tsx'
 import { errorText, useAction } from './util.ts'
 
+const SESSION_PARAM = 'session'
+
+/** The open call lives in the URL, so a reload rejoins it instead of dropping the learner back
+ * at the case picker. */
+function sessionInUrl(): string | null {
+  return new URLSearchParams(window.location.search).get(SESSION_PARAM)
+}
+
+function putSessionInUrl(sessionId: string | null): void {
+  const url = new URL(window.location.href)
+  if (sessionId) url.searchParams.set(SESSION_PARAM, sessionId)
+  else url.searchParams.delete(SESSION_PARAM)
+  window.history.replaceState(null, '', url)
+}
+
 export function App() {
   const [health, setHealth] = useState<Health | null | 'down'>(null)
-  const [session, setSession] = useState<Session | null>(null)
+  const [session, setSessionState] = useState<Session | null>(null)
+  const [incoming, setIncoming] = useState<Session | null>(null)
+  const [rejoining, setRejoining] = useState(() => sessionInUrl() !== null)
+  const [rejoinError, setRejoinError] = useState<string | null>(null)
 
   useEffect(() => {
     get<Health>('/health').then(setHealth, () => setHealth('down'))
   }, [])
 
+  useEffect(() => {
+    const id = sessionInUrl()
+    if (!id) return
+    get<Session>(`/sessions/${id}`)
+      .then(
+        (s) => (s.status === 'created' ? setIncoming(s) : setSessionState(s)),
+        (err: unknown) => {
+          putSessionInUrl(null)
+          setRejoinError(`Couldn't reopen that call: ${errorText(err)}`)
+        },
+      )
+      .finally(() => setRejoining(false))
+  }, [])
+
+  function setSession(s: Session | null): void {
+    putSessionInUrl(s?.session_id ?? null)
+    setSessionState(s)
+  }
+
+  if (rejoining) {
+    return <main className="home muted">Rejoining the call…</main>
+  }
   if (session) {
     return <CallScreen initial={session} actor={health && health !== 'down' ? health.actor : ''} onExit={() => setSession(null)} />
   }
@@ -29,20 +69,26 @@ export function App() {
           case's facts by topic. It is not a realistic caller.
         </p>
       )}
-      <CasePicker onReady={setSession} />
+      <ErrorNote error={rejoinError} />
+      <CasePicker initial={incoming} onReady={setSession} />
     </main>
   )
 }
 
-function CasePicker({ onReady }: { onReady: (s: Session) => void }) {
+function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s: Session) => void }) {
   const [cases, setCases] = useState<ScenarioCard[]>([])
-  const [pending, setPending] = useState<Session | null>(null)
+  const [pending, setPendingState] = useState<Session | null>(initial)
   const [loadError, setLoadError] = useState<string | null>(null)
   const { busy, error, run } = useAction()
 
   useEffect(() => {
     get<ScenarioCard[]>('/scenarios').then(setCases, (err: unknown) => setLoadError(errorText(err)))
   }, [])
+
+  function setPending(s: Session | null): void {
+    putSessionInUrl(s?.session_id ?? null)
+    setPendingState(s)
+  }
 
   if (pending) {
     const crm = pending.crm_seed

@@ -5,6 +5,7 @@ scenario truth. Compare estimates use the drugs and pharmacy the learner entered
 entry produces a wrong estimate, as it would in real quoting software.
 """
 
+from collections.abc import Callable, Iterable
 from datetime import date
 from decimal import Decimal
 from typing import Literal
@@ -212,33 +213,34 @@ def plan_detail(catalog: Catalog, plan_id: str) -> PlanDetail:
     )
 
 
+def provider_result(catalog: Catalog, provider_id: str) -> ProviderResult:
+    provider = catalog.provider(provider_id)
+    practices = [
+        PracticeView(
+            practice_id=pr.practice_id,
+            group_name=pr.group_name,
+            location=catalog.location(pr.location_id),
+        )
+        for pr in catalog.practices
+        if pr.provider_id == provider.provider_id
+    ]
+    return ProviderResult(
+        provider_id=provider.provider_id,
+        name=provider.name,
+        specialty=provider.specialty,
+        credentials=provider.credentials,
+        practices=practices,
+    )
+
+
 def search_providers(catalog: Catalog, q: str = "", specialty: str = "") -> list[ProviderResult]:
     needle, spec = q.strip().casefold(), specialty.strip().casefold()
-    results = []
-    for provider in catalog.providers:
-        if needle and needle not in provider.name.casefold():
-            continue
-        if spec and spec not in provider.specialty.casefold():
-            continue
-        practices = [
-            PracticeView(
-                practice_id=pr.practice_id,
-                group_name=pr.group_name,
-                location=catalog.location(pr.location_id),
-            )
-            for pr in catalog.practices
-            if pr.provider_id == provider.provider_id
-        ]
-        results.append(
-            ProviderResult(
-                provider_id=provider.provider_id,
-                name=provider.name,
-                specialty=provider.specialty,
-                credentials=provider.credentials,
-                practices=practices,
-            )
-        )
-    return results
+    return [
+        provider_result(catalog, provider.provider_id)
+        for provider in catalog.providers
+        if (not needle or needle in provider.name.casefold())
+        and (not spec or spec in provider.specialty.casefold())
+    ]
 
 
 def provider_network(catalog: Catalog, practice_id: str, plan_id: str, year: int) -> NetworkStatus:
@@ -330,6 +332,40 @@ def pharmacy_network(catalog: Catalog, plan_id: str, pharmacy_id: str) -> Pharma
         preferred=entry is not None and entry.preferred,
         channel=None if entry is None else _channel(view.mail_order, entry.preferred),
     )
+
+
+class Found(BaseModel):
+    """Catalog items the learner's searches have returned, in first-seen order. A reloaded
+    call screen rebuilds its record pickers from this. Catalog data only."""
+
+    plans: list[PlanSummary] = []
+    providers: list[ProviderResult] = []
+    drugs: list[Drug] = []
+    pharmacies: list[PharmacyView] = []
+
+
+def found(catalog: Catalog, searches: Iterable[tuple[str, Iterable[str]]]) -> Found:
+    """``searches`` is (kind, result ids) per search event. Ids the catalog no longer has are
+    skipped, since this only restores what the screen showed."""
+    builders: dict[str, Callable[[str], BaseModel]] = {
+        "plans": lambda i: plan_summary(catalog, catalog.plan(i)),
+        "providers": lambda i: provider_result(catalog, i),
+        "drugs": catalog.drug,
+        "pharmacies": lambda i: pharmacy_view(catalog, i),
+    }
+    out: dict[str, dict[str, BaseModel]] = {kind: {} for kind in builders}
+    for kind, ids in searches:
+        build = builders.get(kind)
+        if build is None:
+            continue
+        for item_id in ids:
+            if item_id in out[kind]:
+                continue
+            try:
+                out[kind][item_id] = build(item_id)
+            except KeyError:
+                continue
+    return Found.model_validate({kind: list(items.values()) for kind, items in out.items()})
 
 
 def _channel(mail_order: bool, preferred: bool) -> PharmacyChannel:

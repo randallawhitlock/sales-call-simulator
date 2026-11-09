@@ -5,6 +5,7 @@ truth, customer knowledge, persona rolls and seeded document defects stay server
 the call ends, when the answer key and findings unlock.
 """
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Annotated, Any
 
@@ -72,6 +73,10 @@ class SessionView(BaseModel):
     created_at: datetime
     started_at: datetime | None
     ended_at: datetime | None
+    on_hold: bool
+    """The customer is on hold. Live state, so a reloaded call screen shows it correctly."""
+    turn_pending: bool
+    """A customer reply is being generated right now."""
 
 
 class CreateSession(BaseModel):
@@ -137,6 +142,8 @@ def session_view(service: SessionService, row: SessionRow) -> SessionView:
         created_at=row.created_at,
         started_at=row.started_at,
         ended_at=row.ended_at,
+        on_hold=row.status is SessionStatus.ACTIVE and service.state(row.session_id).on_hold,
+        turn_pending=service.turn_pending(row.session_id),
     )
 
 
@@ -202,6 +209,22 @@ def transcript(session_id: str, service: Service) -> list[Utterance]:
 @router.get("/sessions/{session_id}/events")
 def events(session_id: str, service: Service) -> list[Event]:
     return service.events(session_id)
+
+
+@router.get("/sessions/{session_id}/found")
+def found(session_id: str, service: Service) -> research.Found:
+    """What the learner's searches have returned so far, rebuilt from the event log for a
+    reloaded call screen. Reading it logs nothing."""
+    searches = [
+        (str(e.payload.get("kind")), [str(i) for i in _ids(e.payload.get("result_ids"))])
+        for e in service.events(session_id)
+        if e.type is EventType.SEARCH
+    ]
+    return research.found(service.content.catalog, searches)
+
+
+def _ids(value: object) -> Sequence[object]:
+    return value if isinstance(value, list) else []
 
 
 # Research

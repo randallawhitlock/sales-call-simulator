@@ -93,8 +93,12 @@ export interface Session {
   status: SessionStatus
   frame: Frame
   crm_seed: CrmSeed
+  created_at: string
   started_at: string | null
   ended_at: string | null
+  /** Live state, so a reloaded call screen shows hold and a reply in flight correctly. */
+  on_hold: boolean
+  turn_pending: boolean
 }
 
 export interface Utterance {

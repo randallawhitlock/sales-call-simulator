@@ -7,7 +7,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        // SIM_API_URL lets a second checkout run its own backend on another port.
+        target: process.env['SIM_API_URL'] ?? 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },
