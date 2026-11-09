@@ -11,6 +11,7 @@ import {
 import { CallContext, mergeSeen, mergeTranscript, type CallContextValue, type Seen } from './context.tsx'
 import { CallPane } from './CallPane.tsx'
 import { RecordPane } from './RecordPane.tsx'
+import { ReferenceButton } from './ReferenceDrawer.tsx'
 import { ResearchPane } from './ResearchPane.tsx'
 import { Review } from './Review.tsx'
 import { useLatest } from './useLatest.ts'
@@ -95,6 +96,7 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
           </div>
           <div className="row">
             {actor && <span className={`badge ${actor === 'scripted' ? 'warn' : 'info'}`}>Customer: {actor}</span>}
+            <ReferenceButton />
             <button type="button" className="small" onClick={onExit}>
               Leave
             </button>

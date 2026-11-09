@@ -82,6 +82,10 @@ class Rule(ContentModel):
     grading_effect: GradingEffect
     check_ids: tuple[CheckId, ...] = ()
     notes: str | None = None
+    standard_text: str | None = None
+    """CMS-standardized wording the agent must say, exactly as published, with ``{organizations}``
+    and ``{products}`` as fill-ins. The reference drawer shows it apart from the app's own
+    wording. Only approved, verified rules may carry it."""
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
@@ -92,6 +96,16 @@ class Rule(ContentModel):
             )
         if self.status is RuleStatus.APPROVED and self.verified_as_of is None:
             raise ValueError(f"{self.rule_id}: approved rules need verified_as_of")
+        if self.standard_text is not None:
+            if self.status is not RuleStatus.APPROVED:
+                raise ValueError(f"{self.rule_id}: only approved rules carry standard_text")
+            try:
+                self.standard_text.format(organizations=0, products=0)
+            except (KeyError, IndexError, ValueError) as exc:
+                raise ValueError(
+                    f"{self.rule_id}: standard_text fill-ins are {{organizations}} and "
+                    f"{{products}} only ({exc!r})"
+                ) from exc
         if (
             self.effective_from is not None
             and self.effective_to is not None

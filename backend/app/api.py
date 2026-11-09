@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 from app.actor.prompt import build_customer_prompt
 from app.content.catalog import Drug
-from app.content.common import Id, PlanId
+from app.content.common import Authority, Id, PlanId
+from app.content.rules import RuleStatus
 from app.content.scenario import CrmSeed, ElectionPeriod, Scenario
 from app.engine import research
 from app.engine.checks import CheckResult, run_checks
@@ -108,6 +109,40 @@ class ApplicationView(BaseModel):
     warnings: list[str]
 
 
+class StandardText(BaseModel):
+    """Wording CMS publishes and the agent must say, filled in for this call."""
+
+    rule_id: str
+    title: str
+    text: str
+    citation: str
+    source_urls: list[str]
+    verified_as_of: date | None
+
+
+class RuleReference(BaseModel):
+    """A requirement in this app's own words, with where it comes from."""
+
+    rule_id: str
+    title: str
+    requirement: str
+    authority: Authority
+    citation: str
+    source_urls: list[str]
+    status: RuleStatus
+    verified_as_of: date | None
+
+
+class Reference(BaseModel):
+    """The reference drawer. Standardized CMS text stays apart from the app's own wording.
+    General requirements only: nothing here is about a case."""
+
+    ruleset_version: str
+    verified_as_of: date
+    standard: list[StandardText]
+    rules: list[RuleReference]
+
+
 class AnswerKey(BaseModel):
     scenario: Scenario
     document_defects: dict[str, str]
@@ -166,6 +201,41 @@ def _found(fn: Any, *args: Any) -> Any:
 
 
 # Sessions
+
+
+@router.get("/reference")
+def reference(service: Service) -> Reference:
+    ruleset, frame = service.content.ruleset, service.content.frame
+    fill = {"organizations": frame.carriers_represented, "products": frame.products_offered}
+    return Reference(
+        ruleset_version=ruleset.ruleset_version,
+        verified_as_of=ruleset.verified_as_of,
+        standard=[
+            StandardText(
+                rule_id=r.rule_id,
+                title=r.title,
+                text=r.standard_text.format(**fill),
+                citation=r.citation,
+                source_urls=[str(u) for u in r.source_urls],
+                verified_as_of=r.verified_as_of,
+            )
+            for r in ruleset.rules
+            if r.standard_text is not None
+        ],
+        rules=[
+            RuleReference(
+                rule_id=r.rule_id,
+                title=r.title,
+                requirement=r.requirement,
+                authority=r.authority,
+                citation=r.citation,
+                source_urls=[str(u) for u in r.source_urls],
+                status=r.status,
+                verified_as_of=r.verified_as_of,
+            )
+            for r in ruleset.rules
+        ],
+    )
 
 
 @router.get("/scenarios")

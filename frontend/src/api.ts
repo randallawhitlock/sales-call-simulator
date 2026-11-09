@@ -51,6 +51,37 @@ export function clientId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`
 }
 
+// Reference
+
+export type Authority = 'regulatory' | 'cms_guidance' | 'plan' | 'organization' | 'training'
+
+export interface StandardText {
+  rule_id: string
+  title: string
+  text: string
+  citation: string
+  source_urls: string[]
+  verified_as_of: string | null
+}
+
+export interface RuleReference {
+  rule_id: string
+  title: string
+  requirement: string
+  authority: Authority
+  citation: string
+  source_urls: string[]
+  status: 'approved' | 'unverified' | 'retired' | 'disputed'
+  verified_as_of: string | null
+}
+
+export interface Reference {
+  ruleset_version: string
+  verified_as_of: string
+  standard: StandardText[]
+  rules: RuleReference[]
+}
+
 // Sessions
 
 export interface Health {

@@ -271,6 +271,31 @@ ul.plain li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
   font-size: 0.9rem;
 }
 
+/* Reference drawer: beside the call, not over it, so the panes stay usable. */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(30rem, 100vw);
+  overflow: auto;
+  padding: 0.75rem 1rem 1.5rem;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.15);
+  z-index: 10;
+}
+.drawer-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.drawer section { margin-top: 1rem; }
+.standard-text {
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--accent);
+  background: var(--bg);
+  font-size: 0.95rem;
+}
+
 .review { padding: 1rem; overflow: auto; max-width: 70rem; margin: 0 auto; width: 100%; }
 
 .markdown table { font-size: 0.85rem; }

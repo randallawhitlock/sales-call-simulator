@@ -21,6 +21,7 @@ DEFECTS = [d.seeded_defect for d in BUNDLE.catalog.documents if d.seeded_defect]
 def sweep(call: Call) -> None:
     """Touch every learner endpoint once."""
     call.responses.append(call.c.get("/api/scenarios").text)
+    call.responses.append(call.c.get("/api/reference").text)
     call.get("")
     call.get("/research/plans", zip="00042")
     for plan in BUNDLE.catalog.plans:
