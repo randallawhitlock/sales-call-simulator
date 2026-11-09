@@ -125,16 +125,18 @@ class GeminiActor:
             ),
             self._event_loop(),
         )
-        while True:
-            try:
-                response = request.result(timeout=CANCEL_POLL_S)
-                break
-            except concurrent.futures.TimeoutError:
-                if cancel is not None and cancel.is_set():
-                    request.cancel()  # cancels the task, which closes the HTTP request
-                    raise ActorError(f"{self.name} request cancelled") from None
-            except Exception as exc:  # network, quota, safety: all mean "no reply this time"
-                raise ActorError(f"{self.name} failed: {exc}") from exc
+        # Wait on the future rather than catching result()'s timeout: since Python 3.11 that
+        # is the same class as a TimeoutError the request itself raises, and confusing the
+        # two would poll a finished request forever.
+        while not request.done():
+            concurrent.futures.wait([request], timeout=CANCEL_POLL_S)
+            if not request.done() and cancel is not None and cancel.is_set():
+                request.cancel()  # cancels the task, which closes the HTTP request
+                raise ActorError(f"{self.name} request cancelled")
+        try:
+            response = request.result()
+        except Exception as exc:  # network, quota, safety, timeouts: "no reply this time"
+            raise ActorError(f"{self.name} failed: {exc}") from exc
         text = (getattr(response, "text", None) or "").strip()
         if not text:
             raise ActorError(f"{self.name} returned an empty reply")

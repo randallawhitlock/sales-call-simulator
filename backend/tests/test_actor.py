@@ -236,6 +236,17 @@ def test_gemini_failures_become_actor_errors(reply: Any) -> None:
         actor.reply(prompt_for(), [Turn(L, "Hi.")], seed=1)
 
 
+def test_a_timeout_raised_by_the_gemini_request_fails_fast() -> None:
+    """TimeoutError from the request itself must not read as "still waiting": since Python
+    3.11 it is the same class as the poll timeout, and mixing them up spun forever."""
+    actor, _ = gemini(TimeoutError("timed out"))
+    t, out = in_thread(lambda: actor.reply(prompt_for(), [Turn(L, "Hi.")], seed=1))
+    t.join(5)
+    assert not t.is_alive(), "reply returned instead of spinning"
+    assert isinstance(out.get("error"), ActorError)
+    assert "timed out" in str(out["error"])
+
+
 def test_cancelling_stops_the_gemini_request_itself() -> None:
     """Giving up on the wait and stopping the provider call are separate; this is the second."""
     actor, models = gemini("never sent", hang=True)
@@ -403,7 +414,7 @@ def in_thread(fn: Any) -> tuple[threading.Thread, dict[str, Any]]:
         except Exception as exc:  # surfaced by the asserting test
             out["error"] = exc
 
-    t = threading.Thread(target=run)
+    t = threading.Thread(target=run, daemon=True)  # a stuck thread fails a test, not the run
     t.start()
     return t, out
 
