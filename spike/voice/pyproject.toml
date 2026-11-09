@@ -1,0 +1,16 @@
+[project]
+name = "voice-spike"
+version = "0.0.0"
+description = "Throwaway M4 voice spike: LiveKit agent worker + Gemini Live playing Case A"
+requires-python = ">=3.12"
+dependencies = [
+    "livekit-agents[google]~=1.8",
+    "livekit>=1.0",
+    "livekit-api>=1.0",
+    "numpy>=2.0",
+    "pydantic>=2.14.3",
+    "pyyaml>=6.0.3",
+]
+
+[tool.uv]
+package = false

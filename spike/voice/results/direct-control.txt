@@ -1,0 +1,40 @@
+[00] +1.32s  false starts 0  Thank you for calling Larkspur Benefits Group, thi
+[01] +1.44s  false starts 1  I'm sorry that worried you. We'll look at it toget
+[02] +0.93s  false starts 0  Thank you, Loretta. What's the address where you l
+[03] +1.57s  false starts 1  Do you have Medicare Part A and Part B?
+[04] +0.97s  false starts 0  And what plan do you have right now?
+[05] +0.22s  false starts 0  Who is your heart doctor?
+[06] +1.17s  false starts 0  And who's your regular doctor?
+[07] +1.04s  false starts 0  Is keeping Doctor Raman the most important thing f
+[08] +1.39s  false starts 0  What prescriptions do you take?
+[09] +1.48s  false starts 0  Could you check the bottle on the atorvastatin for
+[10] +0.82s  false starts 0  Which pharmacy do you use?
+[11] +1.34s  false starts 0  Do you have any other insurance, like a retiree pl
+[12] +0.23s  false starts 0  What could you manage for a monthly premium?
+[13] +0.87s  false starts 0  Does Doctor Raman see patients at more than one of
+[14] +1.21s  false starts 0  Sorry, I think the line dropped for a second. Can 
+[15] +0.57s  false starts 0  Thanks. Do you get any help paying for your medici
+[16] +0.51s  false starts 0  You cut out for a moment there. What were you sayi
+[17] +0.77s  false starts 0  Is there anything else you'd like me to look at to
+
+direct, gemini-3.8-live, silence 500 ms: 18 turns, median 1.00s, p95 1.57s, max 1.57s; replies that began before the line ended: 0; cancelled false starts: 2
+[00] +1.50s  false starts 0  Thank you for calling Larkspur Benefits Group, thi
+[01] +1.28s  false starts 0  I'm sorry that worried you. We'll look at it toget
+[02] +1.10s  false starts 0  Thank you, Loretta. What's the address where you l
+[03] +0.82s  false starts 0  Do you have Medicare Part A and Part B?
+[04] +0.86s  false starts 0  And what plan do you have right now?
+[05] +0.71s  false starts 0  Who is your heart doctor?
+[06] +1.10s  false starts 0  And who's your regular doctor?
+[07] -0.06s  false starts 0  Is keeping Doctor Raman the most important thing f
+[08] +1.16s  false starts 0  What prescriptions do you take?
+[09] +2.01s  false starts 0  Could you check the bottle on the atorvastatin for
+[10] +1.94s  false starts 0  Which pharmacy do you use?
+[11] +1.29s  false starts 0  Do you have any other insurance, like a retiree pl
+[12] +1.48s  false starts 0  What could you manage for a monthly premium?
+[13] +1.81s  false starts 0  Does Doctor Raman see patients at more than one of
+[14] +2.08s  false starts 0  Sorry, I think the line dropped for a second. Can 
+[15] +1.70s  false starts 0  Thanks. Do you get any help paying for your medici
+[16] +2.19s  false starts 0  You cut out for a moment there. What were you sayi
+[17] +1.64s  false starts 0  Is there anything else you'd like me to look at to
+
+direct, gemini-3.1-flash-live-preview, silence 500 ms: 17 turns, median 1.48s, p95 2.19s, max 2.19s; replies that began before the line ended: 1; cancelled false starts: 0
