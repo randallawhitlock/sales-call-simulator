@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.actor.actors import (
+    REQUEST_TIMEOUT_MS,
     ActorConfigError,
     ActorError,
     GeminiActor,
@@ -221,6 +222,7 @@ def test_gemini_actor_sends_prompt_history_and_seed() -> None:
     assert call["model"] == "test-model"
     assert call["config"].system_instruction == prompt.text
     assert call["config"].seed == 42
+    assert call["config"].http_options.timeout == REQUEST_TIMEOUT_MS
     roles = [(c.role, c.parts[0].text) for c in call["contents"]]
     assert roles == [
         ("user", "Thanks for calling."),

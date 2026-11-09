@@ -37,6 +37,10 @@ MIN_TIMEOUT_S = 0.1
 MAX_TIMEOUT_S = 600.0
 CANCEL_POLL_S = 0.05
 
+# Without a timeout a stalled Gemini request holds the turn open forever. A timeout raises like
+# any other failure, so the learner gets an ActorError and can retry the same turn.
+REQUEST_TIMEOUT_MS = 30_000
+
 
 @dataclass(frozen=True)
 class Turn:
@@ -117,7 +121,10 @@ class GeminiActor:
             for role, text in _merged_roles(history)
         ]
         config = types.GenerateContentConfig(
-            system_instruction=prompt.text, temperature=0.9, seed=seed
+            system_instruction=prompt.text,
+            temperature=0.9,
+            seed=seed,
+            http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
         )
         request = asyncio.run_coroutine_threadsafe(
             self._client.aio.models.generate_content(
