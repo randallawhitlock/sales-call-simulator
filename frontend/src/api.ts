@@ -352,3 +352,18 @@ export interface CheckResult {
 export interface Findings {
   results: CheckResult[]
 }
+
+/** Content QA on the AI customer. Never scored. */
+export interface ConsistencyFlag {
+  utt_id: string
+  kind: 'doctor' | 'drug' | 'amount'
+  said: string
+  text: string
+}
+
+export interface ActorQa {
+  session_id: string
+  actor: string | null
+  prompt_version: string | null
+  flags: ConsistencyFlag[]
+}

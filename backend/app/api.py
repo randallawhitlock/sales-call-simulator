@@ -12,11 +12,13 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Query, Request
 from pydantic import BaseModel, Field
 
+from app.actor.prompt import build_customer_prompt
 from app.content.catalog import Drug
 from app.content.common import Id, PlanId
 from app.content.scenario import CrmSeed, ElectionPeriod, Scenario
 from app.engine import research
 from app.engine.checks import CheckResult, run_checks
+from app.engine.consistency import ConsistencyFlag, check_consistency
 from app.engine.events import Event, EventType, Utterance, UtteranceIn
 from app.engine.records import (
     Application,
@@ -109,6 +111,15 @@ class ApplicationView(BaseModel):
 class AnswerKey(BaseModel):
     scenario: Scenario
     document_defects: dict[str, str]
+
+
+class ActorQa(BaseModel):
+    """Content QA on the AI customer: what it said that nothing gave it. Never scored."""
+
+    session_id: str
+    actor: str | None
+    prompt_version: str | None
+    flags: list[ConsistencyFlag]
 
 
 class Findings(BaseModel):
@@ -561,4 +572,17 @@ def findings(session_id: str, service: Service) -> Findings:
         catalog_version=row.catalog_version,
         ruleset_version=row.ruleset_version,
         results=results,
+    )
+
+
+@router.get("/sessions/{session_id}/actor-qa")
+def actor_qa(session_id: str, service: Service) -> ActorQa:
+    """Doctors, drugs and dollar amounts the customer said that neither its prompt nor the
+    agent gave it. For content authors; a flag never counts against the learner."""
+    row = service.require_ended(session_id)
+    content = service.pinned_content(row)
+    prompt = build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)
+    flags = check_consistency(prompt.text, content.catalog, service.store.utterances(session_id))
+    return ActorQa(
+        session_id=session_id, actor=row.actor, prompt_version=row.prompt_version, flags=flags
     )

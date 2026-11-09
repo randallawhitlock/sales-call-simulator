@@ -80,6 +80,7 @@ def test_no_truth_reaches_the_learner(client: TestClient, scenario_id: str) -> N
     sweep(call)
     call.get("/answer-key", expect=403)
     call.get("/findings", expect=403)
+    call.get("/actor-qa", expect=403)
     call.end()
     call.get("")
     call.get("/record")
