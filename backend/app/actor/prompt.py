@@ -13,12 +13,34 @@ import re
 from dataclasses import dataclass
 
 from app.content.loader import ContentBundle, internal_ids, jargon_in
-from app.content.scenario import CallFrame, KnowledgeItem, Reveal, Scenario
+from app.content.scenario import (
+    CallFrame,
+    KnowledgeItem,
+    Objection,
+    ObjectionTrigger,
+    Reveal,
+    Scenario,
+)
 
-PROMPT_VERSION = "customer-v1"
+PROMPT_VERSION = "customer-v2"
 """Bump when the template changes. Sessions pin it, so an old call keeps the customer it had."""
 
 _PLAN_CODE = re.compile(r"TRN-\d{4}-\d{3}", re.IGNORECASE)
+
+TRIGGER_TEXT = {
+    ObjectionTrigger.RUSHED: "If the agent rushes, piles on a lot at once, or talks past your "
+    "questions",
+    ObjectionTrigger.JARGON: "If the agent uses an insurance word you don't know and doesn't "
+    "explain it",
+    ObjectionTrigger.EARLY_PITCH: "If the agent pushes a particular plan before asking about "
+    "your doctors, your medicines and what matters to you",
+    ObjectionTrigger.PRESSURE: "If the agent pressures you to decide or sign up today",
+    ObjectionTrigger.ASKED_TO_WAIT: "If the agent tells you to hold off, wait, or check with "
+    "someone before you decide",
+    ObjectionTrigger.PERSONAL_INFO: "If the agent asks for your Medicare number, Social "
+    "Security number or bank details",
+}
+"""Fixed lay wording for each trigger, so every case describes the same event the same way."""
 
 
 @dataclass(frozen=True)
@@ -85,6 +107,7 @@ def build_customer_prompt(scenario: Scenario, frame: CallFrame, mood: str) -> Cu
                 "If the agent rushes you or talks over your questions, say so.",
             ],
         ),
+        _objections(scenario.objections),
         _bullets(
             "Never",
             [
@@ -116,6 +139,20 @@ def _knowledge(title: str, items: tuple[KnowledgeItem, ...], reveal: Reveal) -> 
         )
         lines.append(f"{prefix}{k.lay_text}{note}")
     return _bullets(title, lines)
+
+
+def _objections(objections: tuple[Objection, ...]) -> str:
+    if not objections:
+        return ""
+    lines = []
+    for o in objections:
+        settle = (
+            f"You let it go once {o.settles_when}."
+            if o.settles_when
+            else "You hold to this for the rest of the call, even if the agent pushes."
+        )
+        lines.append(f'{TRIGGER_TEXT[o.trigger]}, you say something like: "{o.lay_text}" {settle}')
+    return _bullets("How you react", lines)
 
 
 def prompt_problems(prompt: CustomerPrompt, content: ContentBundle) -> list[str]:

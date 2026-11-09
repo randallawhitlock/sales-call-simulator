@@ -148,9 +148,14 @@ right. "Pin to record" saves a research result as evidence; "Use as source" on a
 lets a record field or the enrollment consent cite it. Ending the call shows the rule-check
 findings.
 
+Each case also lists objections: how the customer reacts if you rush, use insurance words,
+pitch a plan before asking about their doctors, pressure them, tell them to wait, or ask for
+their Medicare number. Some settle once you fix what caused them, and some refusals hold for
+the rest of the call. They live in the customer's prompt, so text and voice react the same way.
+
 Without `GEMINI_API_KEY` the customer is an offline scripted stand-in that answers from the
-case's facts by topic and reveal rule. It is enough to click through a call, not to practice
-one.
+case's facts by topic and reveal rule, and raises an objection when it spots a simple trigger.
+It is enough to click through a call, not to practice one.
 
 The backend validates every content file at startup, and checks the files against each other
 (every plan a case names exists, the disclaimer numbers match the catalog, customer knowledge

@@ -20,12 +20,13 @@ import math
 import os
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.actor.prompt import CustomerPrompt
-from app.content.scenario import KnowledgeItem, Reveal
+from app.content.loader import jargon_in
+from app.content.scenario import KnowledgeItem, Objection, ObjectionTrigger, Reveal
 from app.engine.events import Speaker
 
 ACTOR_ENV = "SIM_ACTOR"
@@ -167,11 +168,14 @@ _CONSENT_ASK = re.compile(
     r"go ahead and enroll|want to enroll|like to enroll)\b"
 )
 MAX_ITEMS_PER_REPLY = 2
+RUSHED_WORDS = 90
+"""A learner line longer than this counts as piling on, for the scripted customer."""
 
 
 class ScriptedActor:
-    """Offline stand-in. Volunteers ``volunteer`` items one per turn, answers questions with
-    the items whose topics the question mentions, and says yes when asked to enroll."""
+    """Offline stand-in. Raises each of the case's objections once when it spots the trigger,
+    volunteers ``volunteer`` items one per turn, answers questions with the items whose topics
+    the question mentions, and says yes when asked to enroll."""
 
     name = "scripted"
 
@@ -186,6 +190,9 @@ class ScriptedActor:
         said = " ".join(t.text for t in history if t.speaker is Speaker.CUSTOMER)
         last = _fold(history[-1].text) if history else ""
         asked = _is_question(last)
+        objection = _objection_for(prompt.scenario.objections, last, history, said)
+        if objection is not None:
+            return objection.lay_text
         if asked and _CONSENT_ASK.search(last):
             return "Yes, go ahead."
 
@@ -203,6 +210,52 @@ class ScriptedActor:
         if not lines:
             return "Hmm, I'm not sure about that." if asked else "Okay."
         return " ".join(lines)
+
+
+_PERSONAL_INFO = re.compile(
+    r"\b(medicare (number|card)|social security number|ssn|bank (account|details|information)|"
+    r"routing number|account number|card number)\b"
+)
+_PRESSURE = re.compile(
+    r"\b(decide|sign (you )?up|enroll|lock (it|this|you) in|commit)\b[^.?!]{0,40}"
+    r"\b(today|right now|tonight)\b|\bact (fast|now)\b|\blimited time\b|\bwon't last\b"
+)
+_EXPLAINED = re.compile(r"\b(means|meaning|which is|that is|in other words|basically)\b")
+_PITCH = re.compile(
+    r"\b(i'?d recommend|i would recommend|i recommend|you should (switch|go with|enroll|join|"
+    r"pick|take)|best plan for you|the plan for you|i'?ll (sign|enroll) you)\b"
+)
+_NEEDS_ASKED = re.compile(
+    r"\b(doctors?|physicians?|medications?|medicines?|prescriptions?|pills?)\b"
+)
+_WAIT = re.compile(
+    r"\b(hold off|wait (on|before|until)|don'?t (switch|sign|enroll|change)|"
+    r"before you (switch|decide|sign)|check with|talk to (your|the) (benefits|retiree|hr))\b"
+)
+
+
+def _objection_for(
+    objections: Sequence[Objection], last: str, history: Sequence[Turn], said: str
+) -> Objection | None:
+    """The first objection whose trigger the learner's latest line sets off and that the
+    customer hasn't raised yet. Simple patterns; the real actor reads the prompt instead."""
+    earlier = [_fold(t.text) for t in history[:-1] if t.speaker is Speaker.LEARNER]
+    detectors: dict[ObjectionTrigger, Callable[[], bool]] = {
+        ObjectionTrigger.PERSONAL_INFO: lambda: bool(_PERSONAL_INFO.search(last)),
+        ObjectionTrigger.PRESSURE: lambda: bool(_PRESSURE.search(last)),
+        ObjectionTrigger.JARGON: lambda: bool(jargon_in(last)) and not _EXPLAINED.search(last),
+        ObjectionTrigger.RUSHED: lambda: len(last.split()) > RUSHED_WORDS,
+        ObjectionTrigger.EARLY_PITCH: lambda: (
+            bool(_PITCH.search(last)) and not any(_NEEDS_ASKED.search(e) for e in earlier)
+        ),
+        ObjectionTrigger.ASKED_TO_WAIT: lambda: bool(_WAIT.search(last)),
+    }
+    by_trigger = {o.trigger: o for o in objections}
+    for trigger, fires in detectors.items():
+        o = by_trigger.get(trigger)
+        if o is not None and o.lay_text not in said and fires():
+            return o
+    return None
 
 
 def _is_question(text: str) -> bool:
