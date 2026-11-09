@@ -9,6 +9,7 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
   const [draft, setDraft] = useState('')
   const [waiting, setWaiting] = useState(false)
   const [failed, setFailed] = useState<{ id: string; text: string; error: string } | null>(null)
+  const [dropped, setDropped] = useState(false)
   const [onHold, setOnHold] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const control = useAction()
@@ -27,9 +28,12 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
   async function send(id: string, text: string): Promise<void> {
     setWaiting(true)
     setFailed(null)
+    setDropped(false)
     try {
       const out = await post<TurnOut>(`${base}/turns`, { client_utt_id: id, text })
       setTranscript((prev) => mergeTranscript(prev, [out.learner, ...(out.customer ? [out.customer] : [])]))
+      // The server drops a reply overtaken by a hold, the end of the call or a newer line.
+      setDropped(out.customer === null)
     } catch (err) {
       setFailed({ id, text, error: errorText(err) })
       if (err instanceof ApiError && err.status === 502) {
@@ -93,12 +97,21 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
           )
         })}
         {waiting && <li className="muted hint">{customer} is answering…</li>}
+        {dropped && !waiting && (
+          <li className="muted hint">{customer} was cut off before answering that line.</li>
+        )}
         <li ref={bottom} aria-hidden="true" />
       </ol>
       {failed && (
         <div className="error" role="alert">
           {failed.error}{' '}
-          <button type="button" className="small" onClick={() => void send(failed.id, failed.text)} disabled={waiting}>
+          <button
+            type="button"
+            className="small"
+            onClick={() => void send(failed.id, failed.text)}
+            disabled={waiting || !live || onHold}
+            title={onHold ? `Take ${customer} off hold first` : undefined}
+          >
             Retry
           </button>
         </div>
@@ -120,8 +133,7 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
       <div className="row controls">
         <button
           type="button"
-          disabled={!live || control.busy || waiting}
-          title={waiting ? `Wait for ${customer} to finish` : undefined}
+          disabled={!live || control.busy}
           onClick={() =>
             void control.run(async () => {
               await post<LogEvent>(`${base}/hold`, { on: !onHold })
@@ -134,7 +146,7 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
         <button
           type="button"
           className="danger"
-          disabled={!live || control.busy || waiting}
+          disabled={!live || control.busy}
           onClick={() => {
             if (!window.confirm('End the call? The debrief opens and the call cannot resume.')) return
             void control.run(async () => onSession(await post<Session>(`${base}/end`)))

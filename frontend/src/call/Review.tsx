@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { get, type CheckResult, type Findings } from '../api.ts'
+import { get, type CheckResult, type Findings, type Utterance } from '../api.ts'
 import { Badge, ErrorNote } from '../ui.tsx'
 import { errorText } from '../util.ts'
-import { useCall } from './context.tsx'
+import { mergeTranscript, useCall } from './context.tsx'
 
 const TONE: Record<CheckResult['status'], 'good' | 'bad' | 'warn' | 'info'> = {
   pass: 'good',
@@ -15,7 +15,7 @@ const TONE: Record<CheckResult['status'], 'good' | 'bad' | 'warn' | 'info'> = {
 /** Deterministic findings after the call. The evidence-linked debrief and the judge land in
  * M3; this lists what the rule checks found. */
 export function Review() {
-  const { base, transcript } = useCall()
+  const { base, transcript, setTranscript } = useCall()
   const [findings, setFindings] = useState<CheckResult[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -24,7 +24,13 @@ export function Review() {
       (f) => setFindings(f.results),
       (err: unknown) => setError(errorText(err)),
     )
-  }, [base])
+    // The call may have ended while a turn was in flight; show the transcript that was
+    // graded, not whatever the call screen last had.
+    get<Utterance[]>(`${base}/transcript`).then(
+      (t) => setTranscript((prev) => mergeTranscript(prev, t)),
+      () => {},
+    )
+  }, [base, setTranscript])
 
   return (
     <div className="review">
