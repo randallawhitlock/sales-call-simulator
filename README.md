@@ -169,7 +169,11 @@ The checks CI runs on every pull request:
 cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q
 ```
 
-`uv run pytest -m live` runs the opt-in tests that call a real model (needs `GEMINI_API_KEY` and `SIM_ACTOR_MODEL`).
+`uv run pytest -m live` runs the opt-in tests that call a real model (needs `GEMINI_API_KEY`
+and `SIM_ACTOR_MODEL`). They talk to the customer over three seeds per case and fail with a
+report of every early reveal, invented fact, leak or character break, including under lines
+that try to pull the customer out of its role. Every build runs the same checks against the
+scripted stand-in.
 
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm run build
