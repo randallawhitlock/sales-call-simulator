@@ -59,7 +59,7 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
       base,
       live,
       transcript,
-      setTranscript: (update) => setTranscriptState(update),
+      setTranscript: setTranscriptState,
       record,
       refreshRecord,
       applications,

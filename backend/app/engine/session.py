@@ -92,10 +92,32 @@ class TurnOut(BaseModel):
 EVIDENCE_SOURCES = {EventType.LOOKUP, EventType.DOCUMENT_OPENED}
 
 
+MAX_ACTOR_CALLS = 8
+"""Actor calls that may run at once across all sessions, counting ones a turn gave up on that
+haven't stopped yet. A model that ignores cancellation can't pile up threads past this."""
+
+
 class _TurnLock:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.users = 0
+
+
+class _InFlight:
+    """One customer reply being generated, for one learner line. Hold and end trip this turn's
+    token; a later turn gets its own, so a cut-off never leaks into it."""
+
+    def __init__(self, learner_utt_id: str, start_seq: int) -> None:
+        self.learner_utt_id = learner_utt_id
+        self.start_seq = start_seq
+        """Last event seq when generation started. A hold or end after it voids the reply."""
+        self.cancel = threading.Event()
+        """Tells the actor to stop its provider request."""
+        self.wake = threading.Event()
+        """Wakes the waiting turn: the reply finished, or the turn was cut off."""
+        self.cut_off = False
+        self.text: str | None = None
+        self.error: ActorError | None = None
 
 
 class SessionService:
@@ -106,6 +128,7 @@ class SessionService:
         clock: Clock = utc_now,
         actor: Actor | None = None,
         actor_deadline_s: float = DEFAULT_TIMEOUT_S,
+        max_actor_calls: int = MAX_ACTOR_CALLS,
     ) -> None:
         self.store = store
         self.content = content
@@ -114,6 +137,8 @@ class SessionService:
         self.actor_deadline_s = actor_deadline_s
         self._turn_locks: dict[str, _TurnLock] = {}
         self._turn_locks_guard = threading.Lock()
+        self._inflight: dict[str, _InFlight] = {}
+        self._actor_slots = threading.BoundedSemaphore(max_actor_calls)
 
     @contextmanager
     def turn_lock(self, session_id: str) -> Iterator[None]:
@@ -183,9 +208,9 @@ class SessionService:
         return row
 
     def end(self, session_id: str, reason: str = "learner_ended") -> SessionRow:
-        """Takes effect at once, even while the customer model is still answering; that late
-        reply is then dropped. The event and the status change commit together, so a reply
-        being checked never sees a half-ended call."""
+        """Takes effect at once, even while the customer model is still answering: the turn
+        waiting on it is cut off and returns. The event and the status change commit together,
+        so a reply being checked never sees a half-ended call."""
         with self.store.transaction():
             row = self.require_active(session_id)
             now = self.clock()
@@ -198,6 +223,7 @@ class SessionService:
             )
             row = row.model_copy(update={"status": SessionStatus.ENDED, "ended_at": now})
             self.store.put_session(row)
+            self._cut_off(session_id)
             return row
 
     def require_active(self, session_id: str) -> SessionRow:
@@ -302,78 +328,122 @@ class SessionService:
         ``client_utt_id`` returns the same pair; if the customer model failed last time, it is
         asked again.
 
-        Turns are serialized per session, and the reply is checked again before it is saved:
-        if a newer learner line, a hold or the end of the call arrived while the model was
-        thinking, the reply is dropped instead of landing out of order."""
+        Turns are serialized per session. The checks that the call is live and the learner's
+        line commit in one transaction, so a hold or end can't slip between them. While the
+        model works, a hold or end cuts the turn off at once. Before a reply is saved it is
+        checked again, and dropped if a newer learner line arrived or a hold or end happened
+        at any point after generation started, even one already resumed."""
         with self.turn_lock(session_id):
-            row = self.require_active(session_id)
-            if self.state(session_id).on_hold:
-                raise Conflict("the customer is on hold and can't hear you")
-            learner = self.add_learner_text(
-                session_id,
-                UtteranceIn(
-                    client_utt_id=body.client_utt_id,
-                    speaker=Speaker.LEARNER,
-                    channel=Channel.TEXT,
-                    text=body.text,
-                ),
-            )
-            reply_key = f"reply-{learner.utt_id}"
-            existing = self.store.utterance_by_client_id(session_id, reply_key)
-            if existing is not None:
-                return TurnOut(learner=learner, customer=existing)
-            transcript = self.store.utterances(session_id)
-            if not self._still_current(session_id, learner):
-                return TurnOut(learner=learner, customer=None)
-            prompt = self.customer_prompt(row)
-            history = [Turn(u.speaker, u.heard_text) for u in transcript if u.delivered]
-            text = self._reply_within_deadline(prompt, history, row.seed)
             with self.store.transaction():
-                if not self._still_current(session_id, learner):
-                    return TurnOut(learner=learner, customer=None)
-                customer = self.add_utterance(
+                row = self.require_active(session_id)
+                if self.state(session_id).on_hold:
+                    raise Conflict("the customer is on hold and can't hear you")
+                prompt = self.customer_prompt(row)
+                learner = self.add_learner_text(
                     session_id,
                     UtteranceIn(
-                        client_utt_id=reply_key,
-                        speaker=Speaker.CUSTOMER,
+                        client_utt_id=body.client_utt_id,
+                        speaker=Speaker.LEARNER,
                         channel=Channel.TEXT,
-                        text=text,
+                        text=body.text,
                     ),
                 )
-            return TurnOut(learner=learner, customer=customer)
+                reply_key = f"reply-{learner.utt_id}"
+                existing = self.store.utterance_by_client_id(session_id, reply_key)
+                if existing is not None:
+                    return TurnOut(learner=learner, customer=existing)
+                if not self._still_current(session_id, learner):
+                    return TurnOut(learner=learner, customer=None)
+                transcript = self.store.utterances(session_id)
+                flight = _InFlight(learner.utt_id, self.events(session_id)[-1].seq)
+                with self._turn_locks_guard:
+                    self._inflight[session_id] = flight
+            try:
+                history = [Turn(u.speaker, u.heard_text) for u in transcript if u.delivered]
+                text = self._await_reply(flight, prompt, history, row.seed)
+                if text is None:
+                    return TurnOut(learner=learner, customer=None)
+                with self.store.transaction():
+                    if flight.cut_off or not self._still_current(
+                        session_id, learner, since=flight.start_seq
+                    ):
+                        return TurnOut(learner=learner, customer=None)
+                    customer = self.add_utterance(
+                        session_id,
+                        UtteranceIn(
+                            client_utt_id=reply_key,
+                            speaker=Speaker.CUSTOMER,
+                            channel=Channel.TEXT,
+                            text=text,
+                        ),
+                    )
+                return TurnOut(learner=learner, customer=customer)
+            finally:
+                with self._turn_locks_guard:
+                    if self._inflight.get(session_id) is flight:
+                        del self._inflight[session_id]
 
-    def _reply_within_deadline(self, prompt: CustomerPrompt, history: list[Turn], seed: int) -> str:
-        """The actor's reply, or ActorUnavailable once the deadline passes. The call runs on
-        its own thread so a hung model can't hold the turn lock past the deadline; a reply
-        that arrives later is discarded."""
-        result: dict[str, str | ActorError] = {}
+    def _await_reply(
+        self, flight: _InFlight, prompt: CustomerPrompt, history: list[Turn], seed: int
+    ) -> str | None:
+        """The actor's reply; None if the turn was cut off by a hold or the end of the call,
+        which returns at once rather than at the deadline. Past the deadline the actor is told
+        to stop and the turn fails with ActorUnavailable.
+
+        The call runs on its own thread and holds one of the shared actor slots until it
+        really finishes, so calls a turn gave up on are counted, not forgotten."""
+        if flight.cut_off:
+            return None
+        if not self._actor_slots.acquire(blocking=False):
+            raise ActorUnavailable(
+                "the customer model is still busy with earlier replies; try again shortly"
+            )
 
         def call() -> None:
             try:
-                result["text"] = self.actor.reply(prompt, history, seed)
+                flight.text = self.actor.reply(prompt, history, seed, flight.cancel)
             except ActorError as exc:
-                result["error"] = exc
+                flight.error = exc
             except Exception as exc:  # an actor bug still has to end the turn cleanly
-                result["error"] = ActorError(f"{self.actor.name} failed: {exc}")
+                flight.error = ActorError(f"{self.actor.name} failed: {exc}")
+            finally:
+                self._actor_slots.release()
+                flight.wake.set()
 
-        worker = threading.Thread(target=call, name="customer-reply", daemon=True)
-        worker.start()
-        worker.join(self.actor_deadline_s)
-        if worker.is_alive():
+        threading.Thread(target=call, name="customer-reply", daemon=True).start()
+        answered = flight.wake.wait(self.actor_deadline_s)
+        if flight.cut_off:
+            return None
+        if not answered:
+            flight.cancel.set()
             raise ActorUnavailable(
                 f"the customer model didn't answer within {self.actor_deadline_s:g}s"
             )
-        error = result.get("error")
-        if isinstance(error, ActorError):
-            raise ActorUnavailable(str(error)) from error
-        return str(result["text"])
+        if flight.error is not None:
+            raise ActorUnavailable(str(flight.error)) from flight.error
+        return flight.text
 
-    def _still_current(self, session_id: str, learner: Utterance) -> bool:
+    def _cut_off(self, session_id: str) -> None:
+        """Hold or end: stop the turn in flight, if any, now."""
+        with self._turn_locks_guard:
+            flight = self._inflight.get(session_id)
+        if flight is not None:
+            flight.cut_off = True
+            flight.cancel.set()
+            flight.wake.set()
+
+    def _still_current(self, session_id: str, learner: Utterance, since: int | None = None) -> bool:
         """Whether a reply to ``learner`` may still be said: the call is active, the customer
-        is not on hold, and no learner line came after this one."""
+        is not on hold, no learner line came after this one, and (given ``since``) no hold or
+        end happened after that event."""
         row = self.get(session_id)
         state = self.state(session_id)
         if row.status is not SessionStatus.ACTIVE or state.call_ended_seq or state.on_hold:
+            return False
+        if since is not None and any(
+            e.seq > since and e.type in (EventType.HOLD_STARTED, EventType.CALL_ENDED)
+            for e in self.events(session_id)
+        ):
             return False
         latest = next(
             (
@@ -437,12 +507,15 @@ class SessionService:
         return self.log(session_id, EventType.FOLLOWUP_CREATED, body.model_dump(mode="json"))
 
     def hold(self, session_id: str, on: bool) -> Event:
-        """Takes effect at once; a reply still being generated is dropped (see turn_lock)."""
+        """Takes effect at once. Putting the customer on hold cuts off a reply in flight."""
         with self.store.transaction():
             state = self.state(session_id)
             if state.on_hold == on:
                 raise Conflict("already on hold" if on else "not on hold")
-            return self.log(session_id, EventType.HOLD_STARTED if on else EventType.HOLD_ENDED)
+            event = self.log(session_id, EventType.HOLD_STARTED if on else EventType.HOLD_ENDED)
+            if on:
+                self._cut_off(session_id)
+            return event
 
     # Applications
 

@@ -105,7 +105,13 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
       {failed && (
         <div className="error" role="alert">
           {failed.error}{' '}
-          <button type="button" className="small" onClick={() => void send(failed.id, failed.text)} disabled={waiting}>
+          <button
+            type="button"
+            className="small"
+            onClick={() => void send(failed.id, failed.text)}
+            disabled={waiting || !live || onHold}
+            title={onHold ? `Take ${customer} off hold first` : undefined}
+          >
             Retry
           </button>
         </div>

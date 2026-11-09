@@ -14,8 +14,12 @@ Configuration:
   waiting at this deadline, and the Gemini client's own HTTP timeout matches it.
 """
 
+import asyncio
+import concurrent.futures
+import math
 import os
 import re
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -29,6 +33,9 @@ MODEL_ENV = "SIM_ACTOR_MODEL"
 KEY_ENV = "GEMINI_API_KEY"
 TIMEOUT_ENV = "SIM_ACTOR_TIMEOUT_S"
 DEFAULT_TIMEOUT_S = 30.0
+MIN_TIMEOUT_S = 0.1
+MAX_TIMEOUT_S = 600.0
+CANCEL_POLL_S = 0.05
 
 
 @dataclass(frozen=True)
@@ -48,8 +55,18 @@ class Actor(Protocol):
         """Pinned on each session, e.g. ``scripted`` or ``gemini:<model>``."""
         ...
 
-    def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
-        """The customer's next line. ``history`` ends with the learner's latest turn."""
+    def reply(
+        self,
+        prompt: CustomerPrompt,
+        history: Sequence[Turn],
+        seed: int,
+        cancel: threading.Event | None = None,
+    ) -> str:
+        """The customer's next line. ``history`` ends with the learner's latest turn.
+
+        ``cancel`` is set when nobody is waiting for the reply any more (a hold, the end of the
+        call, or the deadline). An actor that calls a provider should abort that request and
+        raise ActorError, so the call stops costing time and money."""
         ...
 
 
@@ -69,12 +86,30 @@ class GeminiActor:
             )
         self.model = model
         self._client = client
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_guard = threading.Lock()
 
     @property
     def name(self) -> str:
         return f"gemini:{self.model}"
 
-    def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
+    def _event_loop(self) -> asyncio.AbstractEventLoop:
+        """One long-lived loop for the async client, so its HTTP connections stay on one loop
+        and a request can be cancelled from the waiting thread."""
+        with self._loop_guard:
+            if self._loop is None:
+                loop = asyncio.new_event_loop()
+                threading.Thread(target=loop.run_forever, name="gemini-loop", daemon=True).start()
+                self._loop = loop
+            return self._loop
+
+    def reply(
+        self,
+        prompt: CustomerPrompt,
+        history: Sequence[Turn],
+        seed: int,
+        cancel: threading.Event | None = None,
+    ) -> str:
         from google.genai import types
 
         contents = [
@@ -84,12 +119,22 @@ class GeminiActor:
         config = types.GenerateContentConfig(
             system_instruction=prompt.text, temperature=0.9, seed=seed
         )
-        try:
-            response = self._client.models.generate_content(
+        request = asyncio.run_coroutine_threadsafe(
+            self._client.aio.models.generate_content(
                 model=self.model, contents=contents, config=config
-            )
-        except Exception as exc:  # network, quota, safety: all mean "no reply this time"
-            raise ActorError(f"{self.name} failed: {exc}") from exc
+            ),
+            self._event_loop(),
+        )
+        while True:
+            try:
+                response = request.result(timeout=CANCEL_POLL_S)
+                break
+            except concurrent.futures.TimeoutError:
+                if cancel is not None and cancel.is_set():
+                    request.cancel()  # cancels the task, which closes the HTTP request
+                    raise ActorError(f"{self.name} request cancelled") from None
+            except Exception as exc:  # network, quota, safety: all mean "no reply this time"
+                raise ActorError(f"{self.name} failed: {exc}") from exc
         text = (getattr(response, "text", None) or "").strip()
         if not text:
             raise ActorError(f"{self.name} returned an empty reply")
@@ -128,7 +173,13 @@ class ScriptedActor:
 
     name = "scripted"
 
-    def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
+    def reply(
+        self,
+        prompt: CustomerPrompt,
+        history: Sequence[Turn],
+        seed: int,
+        cancel: threading.Event | None = None,
+    ) -> str:
         knowledge = prompt.scenario.knowledge
         said = " ".join(t.text for t in history if t.speaker is Speaker.CUSTOMER)
         last = _fold(history[-1].text) if history else ""
@@ -203,7 +254,10 @@ def actor_timeout_from_env(env: dict[str, str] | None = None) -> float:
     try:
         value = float(raw)
     except ValueError:
-        value = 0.0
-    if not 0 < value <= 600:
-        raise ActorConfigError(f"{TIMEOUT_ENV} must be seconds between 0 and 600, not {raw!r}")
+        value = math.nan
+    if not (math.isfinite(value) and MIN_TIMEOUT_S <= value <= MAX_TIMEOUT_S):
+        raise ActorConfigError(
+            f"{TIMEOUT_ENV} must be seconds from {MIN_TIMEOUT_S:g} to {MAX_TIMEOUT_S:g}, "
+            f"not {raw!r}"
+        )
     return value

@@ -1,7 +1,9 @@
 """The AI customer: prompt, leak guard, actors and the turn endpoint."""
 
+import asyncio
 import os
 import threading
+import time
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -170,25 +172,38 @@ def test_scripted_customer_answers_consent_and_unknowns() -> None:
 
 
 class FakeModels:
-    def __init__(self, reply: Any) -> None:
-        self.reply = reply
-        self.calls: list[dict[str, Any]] = []
+    """Stands in for ``client.aio.models``. With ``hang`` the request never finishes unless
+    cancelled, like a stuck provider call."""
 
-    def generate_content(self, **kwargs: Any) -> Any:
+    def __init__(self, reply: Any, hang: bool = False) -> None:
+        self.reply = reply
+        self.hang = hang
+        self.calls: list[dict[str, Any]] = []
+        self.cancelled = threading.Event()
+
+    async def generate_content(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
+        if self.hang:
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
         if isinstance(self.reply, Exception):
             raise self.reply
         return type("Response", (), {"text": self.reply})()
 
 
 class FakeClient:
-    def __init__(self, reply: Any) -> None:
-        self.models = FakeModels(reply)
+    def __init__(self, reply: Any, hang: bool = False) -> None:
+        self.aio = type("Aio", (), {})()
+        self.aio.models = FakeModels(reply, hang)
 
 
-def gemini(reply: Any) -> tuple[GeminiActor, FakeModels]:
-    client = FakeClient(reply)
-    return GeminiActor(model="test-model", api_key="unused", client=client), client.models
+def gemini(reply: Any, hang: bool = False) -> tuple[GeminiActor, FakeModels]:
+    client = FakeClient(reply, hang)
+    actor = GeminiActor(model="test-model", api_key="unused", client=client)
+    return actor, client.aio.models
 
 
 def test_gemini_actor_sends_prompt_history_and_seed() -> None:
@@ -219,6 +234,18 @@ def test_gemini_failures_become_actor_errors(reply: Any) -> None:
     actor, _ = gemini(reply)
     with pytest.raises(ActorError):
         actor.reply(prompt_for(), [Turn(L, "Hi.")], seed=1)
+
+
+def test_cancelling_stops_the_gemini_request_itself() -> None:
+    """Giving up on the wait and stopping the provider call are separate; this is the second."""
+    actor, models = gemini("never sent", hang=True)
+    cancel = threading.Event()
+    threading.Timer(0.1, cancel.set).start()
+    started = time.monotonic()
+    with pytest.raises(ActorError, match="cancelled"):
+        actor.reply(prompt_for(), [Turn(L, "Hi.")], seed=1, cancel=cancel)
+    assert time.monotonic() - started < 2
+    assert models.cancelled.wait(2), "the HTTP request task was cancelled"
 
 
 def test_actor_selection_from_env() -> None:
@@ -265,7 +292,13 @@ class FlakyActor(ScriptedActor):
     def __init__(self) -> None:
         self.fail = True
 
-    def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
+    def reply(
+        self,
+        prompt: CustomerPrompt,
+        history: Sequence[Turn],
+        seed: int,
+        cancel: threading.Event | None = None,
+    ) -> str:
         if self.fail:
             raise ActorError("model down")
         return super().reply(prompt, history, seed)
@@ -326,19 +359,39 @@ def test_live_gemini_customer_stays_in_lay_words() -> None:
 
 
 class BlockingActor(ScriptedActor):
-    """Blocks inside its first reply until released, to overlap requests deterministically."""
+    """Blocks inside its first reply (every reply with ``block_all``) until released, to
+    overlap requests deterministically. With ``honors_cancel`` it stops when told to, like the
+    Gemini actor; without, it behaves like a provider that ignores cancellation."""
 
-    def __init__(self) -> None:
+    def __init__(self, honors_cancel: bool = True, block_all: bool = False) -> None:
+        self.honors_cancel = honors_cancel
+        self.block_all = block_all
         self.entered = threading.Event()
         self.release = threading.Event()
+        self.cancel_seen: threading.Event | None = None
         self.calls = 0
 
-    def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
+    def reply(
+        self,
+        prompt: CustomerPrompt,
+        history: Sequence[Turn],
+        seed: int,
+        cancel: threading.Event | None = None,
+    ) -> str:
         self.calls += 1
-        if self.calls == 1:
+        if self.calls == 1 or self.block_all:
+            self.cancel_seen = cancel
             self.entered.set()
-            assert self.release.wait(5)
+            give_up = time.monotonic() + 10
+            while not self.release.wait(0.01):
+                if self.honors_cancel and cancel is not None and cancel.is_set():
+                    raise ActorError("cancelled")
+                assert time.monotonic() < give_up, "never released"
         return super().reply(prompt, history, seed)
+
+
+def customer_reply_threads() -> int:
+    return sum(1 for t in threading.enumerate() if t.name == "customer-reply")
 
 
 def in_thread(fn: Any) -> tuple[threading.Thread, dict[str, Any]]:
@@ -400,8 +453,10 @@ def test_a_reply_overtaken_by_a_newer_line_is_dropped(client: TestClient) -> Non
 
 @pytest.mark.parametrize("action", ["hold", "end"])
 def test_hold_and_end_cut_off_a_reply_in_flight(client: TestClient, action: str) -> None:
-    """Neither waits for the model; the reply being generated is dropped instead."""
+    """Both return at once, and so does the turn waiting on the model: it doesn't sit out
+    the deadline. The actor is told to stop its request."""
     call = Call(client, CASE_A).start()
+    call.service.actor_deadline_s = 30
     actor, (t1, first) = blocked_turn(call)
     act = (
         (lambda: call.service.hold(call.sid, True))
@@ -412,12 +467,110 @@ def test_hold_and_end_cut_off_a_reply_in_flight(client: TestClient, action: str)
     t2.join(2)
     assert not t2.is_alive(), f"{action} doesn't wait for the model"
     assert "error" not in done
+    t1.join(2)
+    assert not t1.is_alive(), "the waiting turn is cut off, not left until the deadline"
+    assert first["value"].customer is None
+    assert actor.cancel_seen is not None and actor.cancel_seen.is_set()
+    assert speakers(call) == ["learner"]
+    if action == "end":
+        assert call.service.get(call.sid).status.value == "ended"
+    actor.release.set()
+
+
+def test_after_hold_and_resume_the_next_turn_does_not_wait_for_the_old_one(
+    client: TestClient,
+) -> None:
+    call = Call(client, CASE_A).start()
+    call.service.actor_deadline_s = 30
+    actor = BlockingActor(honors_cancel=False)  # a provider that keeps going regardless
+    call.service.actor = actor
+    t1, first = in_thread(
+        lambda: call.service.take_turn(
+            call.sid, TurnIn(client_utt_id="turn-first-0001", text="What medications?")
+        )
+    )
+    assert actor.entered.wait(5)
+    call.service.hold(call.sid, True)
+    t1.join(2)
+    assert not t1.is_alive() and first["value"].customer is None
+    call.service.hold(call.sid, False)
+    call.service.actor = ScriptedActor()
+    second = call.service.take_turn(
+        call.sid, TurnIn(client_utt_id="turn-second-001", text="What pharmacy do you use?")
+    )
+    assert second.customer is not None and "Alder Family Pharmacy" in second.customer.text
+    actor.release.set()  # the old call finishes late; its reply is never saved
+    assert speakers(call) == ["learner", "learner", "customer"]
+
+
+def test_a_reply_whose_generation_overlapped_a_hold_is_dropped_even_after_resume(
+    client: TestClient,
+) -> None:
+    call = Call(client, CASE_A).start()
+    actor, (t1, first) = blocked_turn(call)
+    # Hold and resume written straight to the log, so only the overlap check can catch it.
+    call.service.log(call.sid, EventType.HOLD_STARTED)
+    call.service.log(call.sid, EventType.HOLD_ENDED)
     actor.release.set()
     t1.join(5)
     assert first["value"].customer is None
     assert speakers(call) == ["learner"]
-    if action == "end":
-        assert call.service.get(call.sid).status.value == "ended"
+    # Retrying the same line after the resume starts a fresh generation, which may answer.
+    retry = call.service.take_turn(
+        call.sid, TurnIn(client_utt_id="turn-first-0001", text="What medications do you take?")
+    )
+    assert retry.customer is not None and "apixaban" in retry.customer.text
+
+
+def test_end_cannot_slip_between_the_turn_checks_and_the_learner_line(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live-call checks and the learner line commit together; an end that arrives in
+    between waits for them, so the line never lands after the call ended."""
+    call = Call(client, CASE_A).start()
+    service = call.service
+    write = service.add_learner_text
+    ender: dict[str, threading.Thread] = {}
+
+    def racing_write(session_id: str, body: Any) -> Any:
+        t, _ = in_thread(lambda: service.end(session_id))
+        t.join(0.3)
+        assert t.is_alive(), "end waits for the turn's transaction"
+        ender["t"] = t
+        return write(session_id, body)
+
+    monkeypatch.setattr(service, "add_learner_text", racing_write)
+    out = service.take_turn(call.sid, TurnIn(client_utt_id="turn-race-00001", text="Hello?"))
+    ender["t"].join(5)
+    events = service.events(call.sid)
+    said = next(e.seq for e in events if e.utt_id == out.learner.utt_id)
+    ended = next(e.seq for e in events if e.type is EventType.CALL_ENDED)
+    assert said < ended
+    assert service.get(call.sid).status.value == "ended"
+
+
+def test_retries_against_a_hung_model_are_bounded(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    service = call.service
+    service._actor_slots = threading.BoundedSemaphore(2)
+    service.actor_deadline_s = 0.1
+    actor = BlockingActor(honors_cancel=False, block_all=True)
+    service.actor = actor
+    before = customer_reply_threads()
+    body = {"client_utt_id": "turn-hung-00001", "text": "What medications do you take?"}
+    for _ in range(2):
+        assert "didn't answer within" in call.post("/turns", body, expect=502)["detail"]
+    busy = call.post("/turns", body, expect=502)
+    assert "still busy" in busy["detail"]
+    assert customer_reply_threads() - before <= 2
+    actor.release.set()
+    for _ in range(200):
+        if customer_reply_threads() == before:
+            break
+        time.sleep(0.01)
+    assert customer_reply_threads() == before, "slots come back when the calls finish"
+    service.actor = ScriptedActor()
+    assert "apixaban" in call.post("/turns", body)["customer"]["text"]
 
 
 def test_a_hung_model_times_out_and_the_turn_can_be_retried(client: TestClient) -> None:
@@ -428,8 +581,8 @@ def test_a_hung_model_times_out_and_the_turn_can_be_retried(client: TestClient) 
     body = {"client_utt_id": "turn-hung-00001", "text": "What medications do you take?"}
     failed = call.post("/turns", body, expect=502)
     assert "didn't answer within 0.2s" in failed["detail"]
-    assert actor.entered.is_set()
-    actor.release.set()  # the late reply is discarded, not saved
+    assert actor.cancel_seen is not None and actor.cancel_seen.is_set()
+    actor.release.set()
     assert speakers(call) == ["learner"]
     call.service.actor = ScriptedActor()
     assert "apixaban" in call.post("/turns", body)["customer"]["text"]
@@ -438,30 +591,39 @@ def test_a_hung_model_times_out_and_the_turn_can_be_retried(client: TestClient) 
 
 def test_an_actor_bug_ends_the_turn_cleanly(client: TestClient) -> None:
     class Broken(ScriptedActor):
-        def reply(self, prompt: CustomerPrompt, history: Sequence[Turn], seed: int) -> str:
+        def reply(
+            self,
+            prompt: CustomerPrompt,
+            history: Sequence[Turn],
+            seed: int,
+            cancel: threading.Event | None = None,
+        ) -> str:
             raise KeyError("oops")
 
     call = Call(client, CASE_A).start()
     call.service.actor = Broken()
     assert "failed" in call.turn("Hello?", expect=502)["detail"]
     assert call.service._turn_locks == {}
+    assert call.service._inflight == {}
 
 
 def test_turn_locks_live_only_while_a_turn_is_in_flight(client: TestClient) -> None:
     call = Call(client, CASE_A).start()
     call.turn("Hello?")
-    assert call.service._turn_locks == {}
+    assert call.service._turn_locks == {} and call.service._inflight == {}
     actor, (t1, _) = blocked_turn(call)
     assert set(call.service._turn_locks) == {call.sid}
+    assert set(call.service._inflight) == {call.sid}
     actor.release.set()
     t1.join(5)
-    assert call.service._turn_locks == {}
+    assert call.service._turn_locks == {} and call.service._inflight == {}
 
 
 def test_actor_timeout_from_env() -> None:
     assert actor_timeout_from_env({}) == 30.0
     assert actor_timeout_from_env({"SIM_ACTOR_TIMEOUT_S": "12.5"}) == 12.5
-    for bad in ("0", "-1", "abc", "601"):
+    assert actor_timeout_from_env({"SIM_ACTOR_TIMEOUT_S": "0.1"}) == 0.1
+    for bad in ("0", "0.05", "-1", "abc", "601", "inf", "nan"):
         with pytest.raises(ActorConfigError, match="SIM_ACTOR_TIMEOUT_S"):
             actor_timeout_from_env({"SIM_ACTOR_TIMEOUT_S": bad})
 
