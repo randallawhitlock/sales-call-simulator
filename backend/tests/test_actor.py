@@ -12,7 +12,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.actor.actors import (
-    REQUEST_TIMEOUT_MS,
     ActorConfigError,
     ActorError,
     GeminiActor,
@@ -201,14 +200,17 @@ class FakeClient:
         self.aio.models = FakeModels(reply, hang)
 
 
-def gemini(reply: Any, hang: bool = False) -> tuple[GeminiActor, FakeModels]:
+def gemini(
+    reply: Any, hang: bool = False, timeout_s: float | None = None
+) -> tuple[GeminiActor, FakeModels]:
     client = FakeClient(reply, hang)
-    actor = GeminiActor(model="test-model", api_key="unused", client=client)
+    kwargs: dict[str, Any] = {} if timeout_s is None else {"timeout_s": timeout_s}
+    actor = GeminiActor(model="test-model", api_key="unused", client=client, **kwargs)
     return actor, client.aio.models
 
 
 def test_gemini_actor_sends_prompt_history_and_seed() -> None:
-    actor, models = gemini("  Hello there.  ")
+    actor, models = gemini("  Hello there.  ", timeout_s=12.5)
     history: Sequence[Turn] = [
         Turn(L, "Thanks for calling."),
         Turn(C, "Hi."),
@@ -222,7 +224,7 @@ def test_gemini_actor_sends_prompt_history_and_seed() -> None:
     assert call["model"] == "test-model"
     assert call["config"].system_instruction == prompt.text
     assert call["config"].seed == 42
-    assert call["config"].http_options.timeout == REQUEST_TIMEOUT_MS
+    assert call["config"].http_options.timeout == 12_500
     roles = [(c.role, c.parts[0].text) for c in call["contents"]]
     assert roles == [
         ("user", "Thanks for calling."),

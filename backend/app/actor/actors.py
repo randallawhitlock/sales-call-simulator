@@ -37,10 +37,6 @@ MIN_TIMEOUT_S = 0.1
 MAX_TIMEOUT_S = 600.0
 CANCEL_POLL_S = 0.05
 
-# Without a timeout a stalled Gemini request holds the turn open forever. A timeout raises like
-# any other failure, so the learner gets an ActorError and can retry the same turn.
-REQUEST_TIMEOUT_MS = 30_000
-
 
 @dataclass(frozen=True)
 class Turn:
@@ -81,12 +77,13 @@ class GeminiActor:
     def __init__(
         self, model: str, api_key: str, client: Any = None, timeout_s: float = DEFAULT_TIMEOUT_S
     ) -> None:
+        self._timeout_ms = int(timeout_s * 1000)
         if client is None:
             from google import genai
             from google.genai import types
 
             client = genai.Client(
-                api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout_s * 1000))
+                api_key=api_key, http_options=types.HttpOptions(timeout=self._timeout_ms)
             )
         self.model = model
         self._client = client
@@ -124,7 +121,8 @@ class GeminiActor:
             system_instruction=prompt.text,
             temperature=0.9,
             seed=seed,
-            http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS),
+            # Per-request so an injected client is bounded too, not only the one built above.
+            http_options=types.HttpOptions(timeout=self._timeout_ms),
         )
         request = asyncio.run_coroutine_threadsafe(
             self._client.aio.models.generate_content(
