@@ -5,16 +5,25 @@ in [`spike/voice/`](../spike/voice/README.md). It's throwaway and isn't wired in
 
 ## Decision
 
-**Build M4 on the server-hosted LiveKit worker, with `gemini-3.8-live`.** The spike ran Case A end
-to end through a local LiveKit server and a Python agent. Latency passed the p95 target and
-missed the median target by 0.07 s. Barge-in cut the customer off within half a second every
-time. A forced model disconnect recovered without losing the conversation in every call where
-the reconnect was set up properly.
+**Proceed with the server-hosted LiveKit worker and `gemini-3.8-live` as the leading candidate
+for M4.** This is a provisional call from a short local spike with a bot caller, not acceptance.
+The voice path isn't done until it passes the [M4 acceptance gate](#m4-acceptance-gate).
 
-Nothing failed that browser-direct would have avoided. The worker path cost about 0.25 s over
-talking to Gemini directly, and the model accounts for the rest. The serious failure (a fast
-reconnect that kills the session) is a race on Google's side that a browser client would hit too.
-The worker lets us fix it once, on the server.
+The spike ran Case A end to end through a local LiveKit server and a Python agent. In a single
+call, latency passed the p95 target and missed the median target by 0.07 s. Barge-in cut the
+customer off within 0.6 s in 18 of 18 tries. With a fresh Gemini session and LiveKit replaying its
+history, 4 of 4 forced drops reconnected, answered the next line within 2 s, recalled a number
+given before the drop and answered the line after that. With the plugin's default retry, only 3
+of 8 drops survived.
+
+Nothing in the spike pointed to browser-direct. The worker runs had a higher median than the
+direct control (1.27 s against 1.00 s at the same end-of-speech setting), but the two measure
+different endpoints, so that gap doesn't isolate LiveKit's overhead (see
+[Latency](#latency-target-median--12-s-p95--25-s)). The serious failure, a fast reconnect that
+kills the session, comes from how the client reconnects, not where it runs: Google rejects a
+resume that arrives before it has noticed the old socket died. A browser client would need the
+same fix. The worker lets us write it once, on the server, next to the evidence log and the
+heard-only notes.
 
 M4 has four things to fix. See [What M4 must do](#what-m4-must-do).
 
@@ -30,11 +39,11 @@ M4 has four things to fix. See [What M4 must do](#what-m4-must-do).
 | Customer | `scenario-101` (Loretta Banks), mood `worried`, prompt from `build_customer_prompt` (`customer-v1`); `prompt_problems` clean |
 | Caller | A bot rep: macOS `say` (Samantha, 48 kHz) on a real-time-paced mic track, loudness detection on the customer's track |
 
-I can't talk into a microphone, so a bot played the rep. That made runs repeatable (19 calls,
-about 150 rep lines, 18 barge-ins, 18 forced disconnects), but it flatters the system: synthesized
-speech has clean pauses and no "um", there's no echo, and everything ran on one machine. The
-numbers cover the model, LiveKit and the worker. They don't cover a real network or a browser's
-playout buffer.
+I can't talk into a microphone, so a bot played the rep. That made runs repeatable (17 calls
+kept and 2 discarded, 154 rep lines, 18 barge-ins, 18 forced disconnects), but it flatters the
+system: synthesized speech has clean pauses and no "um", there's no echo, and everything ran on
+one machine. The numbers cover the model, LiveKit and the worker. They don't cover a real network
+or a browser's playout buffer.
 
 ## Model choice
 
@@ -78,11 +87,25 @@ p95 passes for a single call with either setting. The median misses by 0.07 s wi
 window and by 0.26 s with Google's default. Three calls at once on the free tier pushed p95 past
 the target. Repeat that on the paid tier before planning for a class running together.
 
-The control sent the same audio straight to Gemini over one WebSocket. It's the shape of the
-browser-direct path, minus the browser. So the model plus end-of-speech detection takes about
-1.0 s, and the worker, both LiveKit hops and audio playout add about 0.25 s on localhost.
-Browser-direct could win back some of that 0.25 s. It can't touch the 1.0 s. (The plugin reports
-no model-only time to first token for this model, `ttft=-1`, so this control is the only split.)
+The control sent the same audio straight to Gemini over one WebSocket, roughly the shape of the
+browser-direct path minus the browser. Its median was 1.00 s against 1.27 s for worker run B at
+the same setting. That 0.27 s gap is not a measure of LiveKit's overhead, because the two scripts
+time different things:
+
+| | Control (`direct.py` as run) | Worker (`caller.py`) |
+|---|---|---|
+| Clock starts | Estimated end of the line (send start plus clip length), not observed | Last voiced sample handed to the caller's WebRTC track |
+| Clock stops | First audio chunk received, loud or not | First frame above the loudness threshold, after real-time playout through the worker and LiveKit |
+| Sample | 18 turns, one session, nothing but plain turns | 15 turns in one call, mixed with barge-ins and probes |
+
+They also ran at different times on a shared free tier. What the control does show is that the
+model and its end-of-speech detection took about a second on their own before any audio came
+back, so moving the client wouldn't get this setup far under the 1.2 s median target.
+`direct.py` now records the real send time of the last chunk and a "first audible" time on the
+caller's threshold, but it hasn't been rerun yet. A like-for-like comparison, with control and
+worker calls alternating in the same window, is part of the
+[acceptance gate](#m4-acceptance-gate). (The plugin reports no model-only time to first
+token for this model, `ttft=-1`, so there's no split from inside the worker either.)
 
 **The 500 ms window clips numbers.** In 125 rep lines at 500 ms, Gemini lost the end of the line
 twice, both times the spaced-out "my extension is four four one seven". The transcripts read
@@ -100,10 +123,10 @@ The bot let the customer talk for 2.5 s, then spoke over her.
 | Rep starts talking until her audio stops | 0.14 to 0.60 s | median 0.45 s (0.19 to 0.55) |
 | Rep stops talking until her reply | 1.66 to 2.37 s | median 1.36 s (1.14 to 1.55) |
 
-Every interruption stopped her mid-sentence, with no tail and no resumed sentence, and she
+All 18 interruptions stopped her mid-sentence, with no tail and no resumed sentence, and she
 answered the new question.
 
-**Heard-only text works locally, but Gemini remembers the rest.** LiveKit adds the interrupted
+**Heard-only text works locally, but Gemini keeps the rest.** LiveKit adds the interrupted
 turn to its history trimmed to what actually played (`interrupted=True`). It estimates the cut by
 pacing the transcript against audio playout. Gemini's own transcript of the same turn is the whole
 sentence. Gemini streams audio faster than real time, and Google's docs say the session keeps "the
@@ -113,11 +136,25 @@ information already sent to the client." For example:
 - Generated: "I have three wonderful grandkids. They live in Ohio, so I don't get to see them as
   often as I'd like, but they keep me very busy."
 
-Right after each interruption the bot asked, "What was the last thing you told me about your
-grandkids?" In 15 of 15 calls she answered with details from the part the rep never heard. For
-the example above, she said "I was just saying they live in Ohio." The plugin can't fix this.
-Gemini Live has no truncate or delete (`message_truncation=False`, and the plugin logs "Gemini
-Live does not support removing messages").
+Right after each of the 15 interruptions in the reconnect rounds, the bot asked, "What was the
+last thing you told me about your grandkids?" `summarize.py` lists the content words in each
+answer that appear only in the part Gemini generated after the cut, and nowhere in what was
+heard, the rep's lines or her prompt:
+
+- In 1 of 15 the answer held a detail that could only have come from the unheard part. For the
+  example above, she said "I was just saying they live in Ohio."
+- In 12 more the answer reused words from the unheard part, but they're the model's stock
+  phrases. "A few towns over" turns up in 7 of the 15 cut-off replies and "keeps me busy" in 4,
+  so she may have said the same thing again rather than remembered it.
+- In 2 she reused nothing. One went back to her doctor, and one said "Northside", which is in
+  her prompt.
+
+So the spike shows one clear case and a pattern consistent with it, not a rate. The mechanism
+matches Google's description of the session, and the plugin can't change it: Gemini Live has no
+truncate or delete (`message_truncation=False`, and the plugin logs "Gemini Live does not support
+removing messages"). Measuring it properly needs a fixture where the unheard part holds something
+that exists nowhere else. For example, ask her to make up a four-digit number, cut her off after
+two digits, then compare her answer with Gemini's own transcript of the cut turn.
 
 ### Forced reconnect
 
@@ -125,11 +162,23 @@ The worker aborted the Gemini WebSocket's TCP connection mid-call. That's the fa
 the worker knows at once and Google doesn't. Then the bot asked "what was my extension?" about a
 number it had given just before the drop.
 
-| Reconnect setup | Drops | Survived | Model back after | Next turn | Remembered the extension |
+A reconnected socket isn't a recovered call, so `summarize.py` checks each drop separately:
+did Gemini connect again, did the caller hear a reply to the next line within 5 s, did exactly
+one customer turn land between that line ending and the next line starting (so a late answer
+can't be credited to the wrong question), did she recall the number, and did every line after
+that get an answer.
+
+| Reconnect setup | Drops | Reconnected (back after) | Answered the next line within 5 s | Recalled the extension | Answered every later line |
 |---|---|---|---|---|---|
-| Plugin default: retry after 0.1 s, resume with Gemini's handle | 8 | **3** | 1.18 to 1.32 s | 1.45 to 1.79 s | 2 of 2 asked |
-| Retry after 1.5 s, resume with the handle | 6 | **6** | 2.14 to 2.52 s | 1.06 to 5.03 s | 4 of 4 that heard the number (2 lost the digits to clipping before the drop) |
-| Fresh session, LiveKit replays its history | 4 | **4** | 0.64 to 0.74 s | 1.25 to 1.93 s | 4 of 4 |
+| Plugin default: retry after 0.1 s, resume with Gemini's handle | 8 | **3** (1.18 to 1.32 s) | 3 (1.45 to 1.79 s) | 2 of 2 asked | 3 of 8 |
+| Retry after 1.5 s, resume with the handle | 6 | **6** (2.14 to 2.52 s) | 5 (1.06 to 1.84 s; the sixth took 5.03 s) | 4 of 4 whose number reached Gemini (2 lost the digits to clipping before the drop) | 6 of 6 |
+| Fresh session, LiveKit replays its history | 4 | **4** (0.64 to 0.74 s) | 4 (1.25 to 1.93 s) | 4 of 4 | 4 of 4 |
+
+Every reply the caller heard passed the attribution check. "Later lines" is one line in the
+short reconnect script and two to eight in the full script, so it shows the session kept
+working for a few turns, not for a whole call. In this data every drop that reconnected also
+answered and kept going. The checks are split so M4's tests can catch one that doesn't.
+`results/reconnects.txt` has the per-drop rows.
 
 What happened in the failures: the plugin retries 0.1 s after a drop and resumes with Gemini's
 session handle. Google answers `1008 BidiGenerateContent session is already connected to an
@@ -178,12 +227,33 @@ which"). Asked "what were you saying?", she picked the thought back up.
 2. **Tell the model what wasn't heard.** After an interruption, Gemini believes it said the whole
    sentence. Send a short note with what was actually heard (from LiveKit's interrupted item) so
    the customer doesn't refer back to words the rep never got. The earlier prototype did this
-   with director notes.
+   with director notes. Check it with the made-up-number fixture above, not with grandkid
+   questions.
 3. **Tune end-of-speech with real speech, number-heavy lines included.** 500 ms bought 0.2 s on the
    median and clipped spoken digits twice in 125 lines. Try 700 ms with real people and take the
    lowest window that never clips a Medicare number or a date of birth.
 4. **Pin the API version and the key variable** as above, and use the paid tier for anything a
    person talks into.
+
+## M4 acceptance gate
+
+The spike picks a direction. It doesn't accept one, and a short run with a bot caller isn't a
+substitute for testing the real thing. M4's voice path is done when one setup passes all of
+this on the paid tier, with a person on a real microphone in a browser:
+
+- **A 60-minute call** that goes through every GoAway (about one per 10 minutes) plus at least two
+  forced drops. After each transition the customer answers the next line within 5 s, stays in
+  character, and recalls something said before it.
+- **Interruptions throughout**, each logged with what was heard and what was generated, and the
+  made-up-number fixture showing she doesn't refer back to unheard words.
+- **A complete evidence log**, ordered by audio time across every transition, with no turn missing
+  or duplicated.
+- **Latency on target** (median ≤ 1.2 s, p95 ≤ 2.5 s) with an end-of-speech setting that clips no
+  number-heavy line, and the direct control run alternately in the same window with matching
+  endpoints, so any worker overhead is measured rather than inferred.
+- **Concurrency**: the same checks with as many calls at once as a class would run.
+
+If the worker fails this in a way browser-direct wouldn't, the decision gets revisited.
 
 ## Not tested
 
@@ -194,3 +264,5 @@ which"). Asked "what were you saying?", she picked the thought back up.
 - The paid tier
 - Silent network drops, where neither side notices for a while; only the fast-detect case was
   forced
+- How often the customer refers back to unheard words, with a fixture that rules out guessing
+- Worker against direct latency with matching endpoints

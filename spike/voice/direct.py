@@ -2,9 +2,15 @@
 
 This is roughly the browser-direct path's network shape (one WebSocket to Google) minus the
 browser. Same prompt, model and voice activity settings as the worker, same macOS `say` lines.
-"End of turn to first audio" here is the last voiced sample sent to the WebSocket to the first
-audio chunk received from it, so compare it with caller.py's numbers to see what the worker and
-LiveKit hops cost.
+
+It times from the moment the send of the line's last voiced chunk returns to two endpoints:
+  first chunk    the first audio chunk of the reply arriving, loud or not
+  first audible  the first 10 ms window above caller.py's loudness threshold, assuming playback
+                 starts the moment the first chunk arrives (never before its chunk arrives)
+caller.py times the worker path from the last voiced sample entering the WebRTC track to the
+first loud frame arriving after real-time playout. "first audible" is the closer match, but the
+two still differ (WebRTC capture and jitter buffers on both legs, the worker's playout pacing),
+so the gap between this and caller.py is not a measurement of LiveKit overhead.
 
 Usage: uv run python direct.py [n_turns] [silence_ms]
 Env: GEMINI_API_KEY, SIM_LIVE_MODEL.
@@ -29,10 +35,12 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "backend"))
 
 from agent import customer_prompt  # noqa: E402
-from caller import REP_VOICE, SCRIPT  # noqa: E402
+from caller import LOUD, REP_VOICE, SCRIPT  # noqa: E402
 
 SR_IN = 16_000
 CHUNK = SR_IN // 50  # 20 ms
+SR_OUT = 24_000  # Gemini Live returns 24 kHz 16-bit mono
+WIN_OUT = SR_OUT // 100  # 10 ms, the caller's frame size
 TTS_DIR = HERE / "runs" / "tts16"
 
 
@@ -74,13 +82,29 @@ async def main(n_turns: int, silence_ms: int) -> None:
     lines = [s[1] for s in SCRIPT if s[0] == "turn"][:n_turns]
     clips = [tts16(line) for line in lines]
     silence = np.zeros(CHUNK, dtype=np.int16).tobytes()
-    lats: list[float] = []
+    lats: list[float] = []  # to first chunk
+    audible: list[float] = []  # to first audible window
 
     async with client.aio.live.connect(model=os.environ["SIM_LIVE_MODEL"], config=config) as s:
         turn_done = asyncio.Event()
-        gen_first: list[float | None] = [None]  # first audio chunk of the current generation
-        completed: list[float] = []  # first-chunk times of generations that finished
+        clip_sent = asyncio.Event()
+        clip_sent_at: list[float] = [0.0]
+        # Current generation: first chunk arrival, first audible time, samples received so far.
+        gen: dict[str, float | None] = {"first": None, "audible": None, "samples": 0}
+        completed: list[tuple[float, float | None]] = []  # (first chunk, first audible) per reply
         false_starts: list[float] = []  # first-chunk times of generations Gemini cancelled
+
+        def on_audio(pcm_bytes: bytes, now: float) -> None:
+            if gen["first"] is None:
+                gen["first"] = now
+            pcm = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float64)
+            if gen["audible"] is None:
+                for w in range(0, len(pcm) - WIN_OUT + 1, WIN_OUT):
+                    if np.sqrt(np.mean(pcm[w : w + WIN_OUT] ** 2)) > LOUD:
+                        offset = (gen["samples"] + w) / SR_OUT
+                        gen["audible"] = max(now, gen["first"] + offset)
+                        break
+            gen["samples"] += len(pcm)
 
         async def recv() -> None:
             while True:
@@ -88,22 +112,22 @@ async def main(n_turns: int, silence_ms: int) -> None:
                     sc = msg.server_content
                     if sc and sc.model_turn:
                         for p in sc.model_turn.parts:
-                            if p.inline_data and p.inline_data.data and gen_first[0] is None:
-                                gen_first[0] = time.time()
-                    if sc and sc.interrupted:
-                        if gen_first[0] is not None:
-                            false_starts.append(gen_first[0])
-                        gen_first[0] = None
-                    elif sc and sc.turn_complete:
-                        if gen_first[0] is not None:
-                            completed.append(gen_first[0])
-                            turn_done.set()
-                        gen_first[0] = None
+                            if p.inline_data and p.inline_data.data:
+                                on_audio(p.inline_data.data, time.time())
+                    if sc and (sc.interrupted or sc.turn_complete):
+                        if gen["first"] is not None:
+                            if sc.interrupted:
+                                false_starts.append(gen["first"])
+                            else:
+                                completed.append((gen["first"], gen["audible"]))
+                                turn_done.set()
+                        gen.update(first=None, audible=None, samples=0)
 
         stop = asyncio.Event()
 
         async def pump(clip: bytes | None) -> None:
-            """Stream at real time: the clip (if any), then silence until told to stop."""
+            """Stream at real time: the clip (if any), then silence until told to stop. Records
+            when the send of the clip's last chunk returned."""
             data = clip or b""
             t_next = time.perf_counter()
             for off in range(0, len(data), CHUNK * 2):
@@ -112,6 +136,9 @@ async def main(n_turns: int, silence_ms: int) -> None:
                         data=data[off : off + CHUNK * 2], mime_type="audio/pcm;rate=16000"
                     )
                 )
+                if off + CHUNK * 2 >= len(data):
+                    clip_sent_at[0] = time.time()
+                    clip_sent.set()
                 t_next += 0.02
                 await asyncio.sleep(max(0.0, t_next - time.perf_counter()))
             while not stop.is_set():
@@ -125,18 +152,25 @@ async def main(n_turns: int, silence_ms: int) -> None:
         n_false = 0
         for i, (line, clip) in enumerate(zip(lines, clips, strict=True)):
             turn_done.clear()
+            clip_sent.clear()
             stop.clear()
             n_done, n_fs = len(completed), len(false_starts)
-            t_start = time.time()
             task = asyncio.create_task(pump(clip))
-            t_end = t_start + len(clip) / 2 / SR_IN
             try:
                 await asyncio.wait_for(turn_done.wait(), 40)
-                lat = completed[n_done] - t_end
+                await clip_sent.wait()
+                first, aud = completed[n_done]
+                lat = first - clip_sent_at[0]
                 lats.append(lat)
+                if aud is not None:
+                    audible.append(aud - clip_sent_at[0])
                 fs = len(false_starts) - n_fs
                 n_false += fs
-                print(f"[{i:02d}] {lat:+.2f}s  false starts {fs}  {line[:50]}", flush=True)
+                aud_s = f"{aud - clip_sent_at[0]:+.2f}s" if aud is not None else "  none"
+                print(
+                    f"[{i:02d}] chunk {lat:+.2f}s  audible {aud_s}  false starts {fs}  {line[:44]}",
+                    flush=True,
+                )
             except TimeoutError:
                 print(f"[{i:02d}]  none  {line[:60]}", flush=True)
             # let the reply "play out" before the next line, as a listener would
@@ -145,13 +179,21 @@ async def main(n_turns: int, silence_ms: int) -> None:
             await task
         rx.cancel()
 
-    good = [x for x in lats if x > 0]
-    ordered = sorted(good)
-    p95 = ordered[max(0, int(np.ceil(0.95 * len(ordered))) - 1)]
+    def stats(xs: list[float]) -> str:
+        good = sorted(x for x in xs if x > 0)
+        if not good:
+            return "no turns"
+        p95 = good[max(0, int(np.ceil(0.95 * len(good))) - 1)]
+        return (
+            f"{len(good)} turns, median {statistics.median(good):.2f}s, p95 {p95:.2f}s, "
+            f"max {max(good):.2f}s"
+        )
+
     print(
-        f"\ndirect, {os.environ['SIM_LIVE_MODEL']}, silence {silence_ms} ms: {len(good)} turns, "
-        f"median {statistics.median(good):.2f}s, p95 {p95:.2f}s, max {max(good):.2f}s; "
-        f"replies that began before the line ended: {len(lats) - len(good)}; "
+        f"\ndirect, {os.environ['SIM_LIVE_MODEL']}, silence {silence_ms} ms\n"
+        f"  to first chunk:   {stats(lats)}\n"
+        f"  to first audible: {stats(audible)}\n"
+        f"  replies that began before the line ended: {sum(x <= 0 for x in lats)}; "
         f"cancelled false starts: {n_false}"
     )
 

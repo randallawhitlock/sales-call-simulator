@@ -1,0 +1,49 @@
+forced reconnects (reply deadline 5 s):
+  room                             kind               connected       replied attrib heard recall later
+  r38-resume-a                     kill_idle          yes 1.18s     yes 1.45s    yes   yes    yes 8/8  
+      reply: 'You said your extension was 4417.'
+  r38-resume-a                     kill_speaking      yes 1.32s     yes 1.79s    yes     -      - 2/2  
+  r38-vad500-b                     kill_idle                 NO            NO     NO   yes     NO 0/9  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc-m38-vad500-res1-fr1-r1        kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc-m38-vad500-res1-fr15-r1       kill_idle          yes 2.22s     yes 1.84s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417.'
+  rc-m38-vad500-res1-fr15-r2       kill_idle          yes 2.21s     yes 1.69s    yes    NO     NO 1/1  
+      reply: "I'm sorry, Marcus, I didn't write that down and I just can't remember. I'm just so focused on my hea"
+  rc2-m38-vad500-res0-fr1-r1       kill_idle          yes 0.64s     yes 1.25s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417. I just want to make sure I can keep seeing Dr. Raman next year.'
+  rc2-m38-vad500-res0-fr1-r2       kill_idle          yes 0.67s     yes 1.93s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417, Marcus.'
+  rc2-m38-vad500-res0-fr1-r3       kill_idle          yes 0.74s     yes 1.35s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417, Marcus.'
+  rc2-m38-vad500-res0-fr1-r4       kill_idle          yes 0.65s     yes 1.28s    yes   yes    yes 1/1  
+      reply: "Your extension was 4417. I just really need to make sure I don't have to switch heart doctors."
+  rc2-m38-vad500-res1-fr1-r1       kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc2-m38-vad500-res1-fr1-r2       kill_idle          yes 1.25s     yes 1.79s    yes   yes    yes 1/1  
+      reply: 'You told me your extension number was fortyfour seventeen.'
+  rc2-m38-vad500-res1-fr1-r3       kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc2-m38-vad500-res1-fr1-r4       kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc2-m38-vad500-res1-fr15-r1      kill_idle          yes 2.14s     yes 1.32s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417.'
+  rc2-m38-vad500-res1-fr15-r2      kill_idle          yes 2.52s      NO 5.03s    yes   yes    yes 1/1  
+      reply: 'You said your extension was forty-four seventeen.'
+  rc2-m38-vad500-res1-fr15-r3      kill_idle          yes 2.29s     yes 1.42s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417. I just want to ensure I can still see Dr. Raman next year.'
+  rc2-m38-vad500-res1-fr15-r4      kill_idle          yes 2.17s     yes 1.06s    yes    NO     NO 1/1  
+      reply: "You said your extension is forty-four, Marcus. Can we please look into what's happening with Dr. Ram"
+
+reconnects by setup:
+  fresh session, LiveKit replays history: 4 drops
+    connected 4/4 (back 0.64-0.74s); replied in time 4/4 (1.25-1.93s); attributed 4/4; later lines all answered 4/4
+    number in the rep transcript before the drop 4/4; recalled 4/4 of those that also reconnected
+  plugin default: resume, first retry 0.1 s: 8 drops
+    connected 3/8 (back 1.18-1.32s); replied in time 3/8 (1.45-1.79s); attributed 3/8; later lines all answered 3/8
+    number in the rep transcript before the drop 7/7; recalled 2/2 of those that also reconnected
+  resume with handle, first retry 1.5 s: 6 drops
+    connected 6/6 (back 2.14-2.52s); replied in time 5/6 (1.06-5.03s); attributed 6/6; later lines all answered 6/6
+    number in the rep transcript before the drop 4/6; recalled 4/4 of those that also reconnected
+

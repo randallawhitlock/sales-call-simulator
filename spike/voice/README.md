@@ -15,10 +15,18 @@ and none of it should be. M4 starts over with real code.
   prints a report. `SPIKE_SCRIPT=reconnect` runs a short version with one barge-in and one drop.
 - `reconnect_rounds.sh` repeats the short script in fresh rooms, three reconnect setups side by
   side. The worker reads each room's setup from tokens in the room name (see `room_overrides`).
-- `summarize.py` rolls up any set of runs: latency, every forced reconnect, every barge-in.
-- `direct.py` is the control: the same lines sent straight to Gemini Live with no LiveKit.
-- `results/` holds the text reports the write-up quotes. Raw logs, audio and frame dumps go to
-  `runs/`, which is git-ignored.
+- `summarize.py` rolls up any set of runs: latency, every forced reconnect, every barge-in and
+  probe. Each reconnect is scored on separate checks (reconnected, answered the next line in
+  time, reply attributed to that line, number recalled, later lines answered), and each probe
+  answer lists the words it shares only with the part of the cut-off turn the rep never heard.
+- `test_summarize.py` checks those helpers on synthetic events. No LiveKit, Gemini or saved runs.
+- `direct.py` is the control: the same lines sent straight to Gemini Live with no LiveKit. It
+  times to the first audio chunk and to the first audible window. Those endpoints still differ
+  from `caller.py`'s, so don't read the gap between them as LiveKit overhead.
+- `results/` holds the text reports the write-up quotes. `direct-control.txt` came from an
+  earlier `direct.py` that estimated when the line ended and stopped at the first chunk.
+  `reconnects.txt` is the reconnect section over every kept run. Raw logs, audio and frame dumps
+  go to `runs/`, which is git-ignored, and invalid runs were moved to `runs/discarded/`.
 
 ## Run it
 
@@ -62,6 +70,12 @@ Three terminals, all from `spike/voice/`.
    ./reconnect_rounds.sh 4 rc                  # 4 rounds x 3 reconnect setups
    uv run python summarize.py rc-              # roll up every room starting with rc-
    ```
+
+The analysis tests need nothing running:
+
+```bash
+uv run python -m unittest test_summarize
+```
 
 The control needs no LiveKit, just the key and model:
 
