@@ -173,7 +173,8 @@ cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy
 and `SIM_ACTOR_MODEL`). They talk to the customer over three seeds per case and fail with a
 report of every early reveal, invented fact, leak or character break, including under lines
 that try to pull the customer out of its role. Every build runs the same checks against the
-scripted stand-in.
+scripted stand-in. On a rate-limited key, set `SIM_LIVE_RPM` (the Gemini free tier allows 5) and
+the tests pace themselves and wait out a 429; a full run is about 75 calls.
 
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm run build
@@ -193,6 +194,7 @@ are git-ignored. Never commit real values.
 | `SIM_ACTOR` | `gemini` or `scripted` (default: `gemini` when a key is set) | M2 |
 | `SIM_ACTOR_TIMEOUT_S` | Seconds one customer reply may take before the turn fails and can be retried (0.1 to 600, default 30) | M2 |
 | `SIM_API_URL` | Backend the frontend dev server proxies `/api` to (default `http://127.0.0.1:8000`), for running a second checkout side by side | M2 |
+| `SIM_LIVE_RPM` | Requests per minute `pytest -m live` may make, for rate-limited keys (unset: no pacing) | M2 |
 | `ANTHROPIC_API_KEY` | Judge | M3 |
 | `SIM_JUDGE_MODEL` | Judge model id (default `claude-opus-5-5`) | M3 |
 | `SIM_LIVE_MODEL` | Gemini Live model id, always pinned | M4 |

@@ -9,11 +9,14 @@ deterministic: model output is never graded by another model here.
 
 import os
 import re
+import threading
+import time
+from collections.abc import Sequence
 from dataclasses import replace
 
 import pytest
 
-from app.actor.actors import Actor, ScriptedActor, Turn, actor_from_env
+from app.actor.actors import Actor, ActorError, ScriptedActor, Turn, actor_from_env
 from app.actor.prompt import CustomerPrompt, build_customer_prompt, prompt_problems
 from app.content.loader import load_bundle
 from app.content.scenario import Reveal, Scenario
@@ -60,10 +63,61 @@ ACTORS = [
 ]
 
 
+RPM_ENV = "SIM_LIVE_RPM"
+"""Requests per minute the live tests may make. The Gemini free tier allows 5."""
+_RETRY_DELAY = re.compile(r"'retryDelay': '(\d+(?:\.\d+)?)s'")
+"""The wait a 429 names, always in seconds."""
+LONGEST_WAIT_S = 120.0
+"""Past this the quota is daily, not per minute, so waiting it out isn't worth it."""
+_next_call = [0.0]
+"""When the next live call may start. Module-wide, so the pace carries across tests."""
+
+
+class Paced:
+    """Keeps a real actor under a requests-per-minute quota, and waits out a 429 for the delay
+    the provider names. Test-only: the app itself never retries a turn on its own."""
+
+    def __init__(self, actor: Actor, rpm: float) -> None:
+        self.actor = actor
+        self.interval = 60.0 / rpm
+
+    @property
+    def name(self) -> str:
+        return self.actor.name
+
+    def reply(
+        self,
+        prompt: CustomerPrompt,
+        history: Sequence[Turn],
+        seed: int,
+        cancel: threading.Event | None = None,
+    ) -> str:
+        for attempt in range(4):
+            time.sleep(max(0.0, _next_call[0] - time.monotonic()))
+            _next_call[0] = time.monotonic() + self.interval
+            try:
+                return self.actor.reply(prompt, history, seed, cancel)
+            except ActorError as exc:
+                if "429" not in str(exc) or attempt == 3:
+                    raise
+                m = _RETRY_DELAY.search(str(exc))
+                wait = float(m.group(1)) + 1 if m else 30.0
+                if wait > LONGEST_WAIT_S:
+                    pytest.fail(
+                        f"{self.name} quota is out for {wait / 3600:.1f}h, likely a daily cap. "
+                        "Live QA did not run.",
+                        pytrace=False,
+                    )
+                _next_call[0] = time.monotonic() + wait
+        raise AssertionError("unreachable")
+
+
 def make_actor(kind: str) -> Actor:
     if kind == "scripted":
         return ScriptedActor()
-    return actor_from_env({**os.environ, "SIM_ACTOR": "gemini"})
+    actor = actor_from_env({**os.environ, "SIM_ACTOR": "gemini"})
+    rpm = os.environ.get(RPM_ENV)
+    return Paced(actor, float(rpm)) if rpm else actor
 
 
 def prompt_for(scenario: Scenario, seed: int) -> CustomerPrompt:
