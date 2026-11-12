@@ -588,3 +588,24 @@ def test_a_disclaimer_then_benefits_in_the_same_turn(client: TestClient) -> None
     )
     call.end()
     assert call.detail("disclaimer_before_benefits")["status"] == P
+
+
+@pytest.mark.parametrize(
+    ("ask", "yes", "status"),
+    [
+        ("Do you have your insurance card handy?", "Yes.", UG),
+        ("Do you have your insurance card handy?", "Yes, sign me up.", P),
+        ("Would you like me to submit your enrollment in this plan?", "Yes.", P),
+        ("Shall I go ahead and enroll you in Maple Choice?", "Okay, go ahead.", P),
+    ],
+)
+def test_a_yes_must_be_about_enrolling(client: TestClient, ask: str, yes: str, status: str) -> None:
+    call, app_id = enroll_to_consent(client)
+    call.say(ask)
+    call.consent(app_id, call.hear(yes))
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert (result["status"], result["critical"]) == (status, False)
+    if status == UG:
+        assert "not clearly to enrolling" in result["detail"]

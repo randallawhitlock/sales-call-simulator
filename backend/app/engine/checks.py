@@ -593,6 +593,26 @@ _HEDGE = re.compile(r"\b(no|not|don't|dont)\b")
 its own; the result goes to the judge instead."""
 
 
+_ENROLLMENT_ASK = re.compile(r"\b(enroll\w*|submit\w*|application|sign(?:ing)? you up|sign up)\b")
+"""A learner line that puts enrollment or submission to the customer."""
+_ENROLLMENT_YES = re.compile(
+    r"\b(sign me up|enroll me|(?:want|like) to (?:enroll|sign up|join)|"
+    r"submit (?:it|that|the application|my application|my enrollment))\b"
+)
+"""A customer line that names enrollment itself, so it needs no question before it."""
+
+
+def _yes_to_enrollment(f: Facts, utt: Utterance) -> bool:
+    """Whether a customer's yes is about enrolling: it says so itself, or it answers the
+    learner's last line before it and that line asked about enrolling or submitting. A yes to
+    "Do you have your card?" is a yes, but not consent."""
+    if _ENROLLMENT_YES.search(_fold(utt.heard_text)):
+        return True
+    seq = f.utt_seq(utt.utt_id)
+    asked = [u for u in f.learner_utterances() if f.utt_seq(u.utt_id) < seq]
+    return bool(asked) and bool(_ENROLLMENT_ASK.search(_fold(asked[-1].heard_text)))
+
+
 def _consent_signal(text: str) -> str:
     """``objection``, ``hedge`` or ``clear`` for one customer utterance."""
     folded = _fold(text)
@@ -652,6 +672,15 @@ def _consent(f: Facts, app: Application) -> CheckResult:
             return fail("The customer objected after saying yes, before submission.")
         if later_signal == "hedge":
             hedges.append(later.utt_id)
+    if not _yes_to_enrollment(f, utt):
+        return _result(
+            check,
+            CheckStatus.UNGRADED,
+            "The customer said yes, but not clearly to enrolling: the line does not mention "
+            "enrollment and the question before it did not ask about it. Needs the judge.",
+            seqs,
+            utts + hedges,
+        )
     if hedges:
         return _result(
             check,
