@@ -1,6 +1,6 @@
 {
   "scenario_id": "scenario-103",
-  "version": 1,
+  "version": 2,
   "title": "Retiree coverage",
   "learner_title": "Inbound call: Raymond Ellis",
   "frame_id": "aep-2027",
@@ -176,6 +176,20 @@
         "deadline",
         "timing"
       ]
+    }
+  ],
+  "objections": [
+    {
+      "objection_id": "just-do-it",
+      "trigger": "asked_to_wait",
+      "lay_text": "My neighbor's been on that plan and loves it. Can't we just do it today?",
+      "settles_when": "the agent explains what you could lose by switching"
+    },
+    {
+      "objection_id": "plain-english",
+      "trigger": "jargon",
+      "lay_text": "Plain English, please. What's that mean?",
+      "settles_when": "the agent explains it in everyday words"
     }
   ],
   "outcomes": [

@@ -248,13 +248,17 @@ def _knowledge_leaks(s: Scenario, c: Catalog) -> list[str]:
     """The build-time leak guard: customer knowledge stays in lay words."""
     ids = internal_ids(c)
     out: list[str] = []
-    for item in s.knowledge:
-        text = item.lay_text.casefold()
+    lay = [(f"knowledge {k.item_id}", k.lay_text) for k in s.knowledge] + [
+        (f"objection {o.objection_id}", f"{o.lay_text} {o.settles_when or ''}")
+        for o in s.objections
+    ]
+    for where, raw in lay:
+        text = raw.casefold()
         for word in jargon_in(text):
-            out.append(f"knowledge {item.item_id} uses agent jargon {word!r}")
+            out.append(f"{where} uses agent jargon {word!r}")
         for internal in ids:
             if internal.casefold() in text:
-                out.append(f"knowledge {item.item_id} contains internal id {internal!r}")
+                out.append(f"{where} contains internal id {internal!r}")
     return out
 
 

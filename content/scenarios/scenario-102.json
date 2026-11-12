@@ -1,6 +1,6 @@
 {
   "scenario_id": "scenario-102",
-  "version": 1,
+  "version": 2,
   "title": "The ad promised money",
   "learner_title": "Inbound call: Harold Pruitt",
   "frame_id": "aep-2027",
@@ -172,6 +172,26 @@
         "dental",
         "services used"
       ]
+    }
+  ],
+  "objections": [
+    {
+      "objection_id": "ask-first",
+      "trigger": "early_pitch",
+      "lay_text": "Hold on. You haven't even asked what I've got now.",
+      "settles_when": "the agent asks about your current plan and your doctor"
+    },
+    {
+      "objection_id": "plain-talk",
+      "trigger": "jargon",
+      "lay_text": "Talk to me like a regular person. What does that mean?",
+      "settles_when": "the agent says it in plain words"
+    },
+    {
+      "objection_id": "no-numbers",
+      "trigger": "personal_info",
+      "lay_text": "I'm not giving that out over the phone until I've actually decided on something.",
+      "settles_when": "you've decided on a plan and the agent tells you why they need it"
     }
   ],
   "outcomes": [

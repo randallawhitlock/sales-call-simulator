@@ -1,6 +1,6 @@
 {
   "scenario_id": "scenario-101",
-  "version": 1,
+  "version": 2,
   "title": "Must-keep specialist",
   "learner_title": "Inbound call: Loretta Banks",
   "frame_id": "aep-2027",
@@ -188,6 +188,25 @@
         "retiree",
         "employer"
       ]
+    }
+  ],
+  "objections": [
+    {
+      "objection_id": "doctor-first",
+      "trigger": "early_pitch",
+      "lay_text": "Wait, before anything else, will Dr. Raman be in it? I'm not switching heart doctors.",
+      "settles_when": "the agent tells you they checked that Dr. Raman is in that plan"
+    },
+    {
+      "objection_id": "too-fast",
+      "trigger": "rushed",
+      "lay_text": "I'm sorry, that's a lot all at once. Can you slow down? I want to get this right.",
+      "settles_when": "the agent slows down and takes one thing at a time"
+    },
+    {
+      "objection_id": "not-hurried",
+      "trigger": "pressure",
+      "lay_text": "I'm not deciding anything today if I'm being hurried."
     }
   ],
   "outcomes": [
