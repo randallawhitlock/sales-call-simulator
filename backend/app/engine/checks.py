@@ -593,24 +593,62 @@ _HEDGE = re.compile(r"\b(no|not|don't|dont)\b")
 its own; the result goes to the judge instead."""
 
 
-_ENROLLMENT_ASK = re.compile(r"\b(enroll\w*|submit\w*|application|sign(?:ing)? you up|sign up)\b")
-"""A learner line that puts enrollment or submission to the customer."""
+_ENROLLING = (
+    r"(?:enrol\w*|submit\w*|sign(?:ed|ing)? (?:you )?up|application|"
+    r"(?:go ahead|proceed|move forward) with"
+    r"(?! (?:(?:a|some|a few|my|the|our) )?(?:questions?|review|checklist)))"
+)
+_ENROLLMENT_ASK = re.compile(
+    r"\b(?:would you like|do you want|did you want|shall i|should i|can i|could i|may i|"
+    r"are you ready|ready for me to|want me to|like me to|okay if i|ok if i|all right if i|"
+    r"do i have your (?:permission|consent|okay|ok|go-ahead|approval))\b[^.?!]*?\b"
+    + _ENROLLING
+    + r"|\b"
+    + _ENROLLING
+    + r"\b[^.?!]*?\b(?:is that (?:okay|ok|all right|alright)|if that's (?:okay|ok|all right)|"
+    r"(?:okay|ok) with you)\b"
+)
+"""A learner sentence that asks the customer's leave to enroll or submit. The enrollment words
+have to be what is asked: "Before I submit anything, do you have your card handy?" mentions
+submitting and asks something else."""
 _ENROLLMENT_YES = re.compile(
-    r"\b(sign me up|enroll me|(?:want|like) to (?:enroll|sign up|join)|"
-    r"submit (?:it|that|the application|my application|my enrollment))\b"
+    r"\b(sign me up|enrol+ me|get me (?:signed up|enrol+ed)|"
+    r"(?:want|like) to (?:enrol+|sign up|join|go (?:ahead )?with)|"
+    r"submit (?:it|that|the application|my application|my enrol+ment))\b"
 )
 """A customer line that names enrollment itself, so it needs no question before it."""
+ENROLLMENT_ASK_LOOKBACK = 3
+"""Learner lines before the yes in which the ask may sit, so answering a question the customer
+raised about the plan doesn't lose the ask."""
 
 
 def _yes_to_enrollment(f: Facts, utt: Utterance) -> bool:
-    """Whether a customer's yes is about enrolling: it says so itself, or it answers the
-    learner's last line before it and that line asked about enrolling or submitting. A yes to
-    "Do you have your card?" is a yes, but not consent."""
+    """Whether a customer's yes is about enrolling: it says so itself, or it follows a learner
+    ask to enroll with nothing but answers to the customer in between. A yes to "Do you have
+    your card?" is a yes, but not consent, even if an ask came earlier; so is a yes after the
+    customer objected to the ask."""
     if _ENROLLMENT_YES.search(_fold(utt.heard_text)):
         return True
-    seq = f.utt_seq(utt.utt_id)
-    asked = [u for u in f.learner_utterances() if f.utt_seq(u.utt_id) < seq]
-    return bool(asked) and bool(_ENROLLMENT_ASK.search(_fold(asked[-1].heard_text)))
+    before = f.utterances[: next(i for i, u in enumerate(f.utterances) if u.utt_id == utt.utt_id)]
+    learner_lines = 0
+    for prior in reversed(before):
+        if not prior.delivered:
+            continue
+        if prior.speaker is Speaker.CUSTOMER:
+            if _consent_signal(prior.heard_text) == "objection":
+                return False
+            continue
+        if prior.speaker is not Speaker.LEARNER:
+            continue
+        text = _fold(prior.heard_text)
+        if _ENROLLMENT_ASK.search(text):
+            return True
+        learner_lines += 1
+        if learner_lines == 1 and text.endswith("?"):
+            return False  # the yes answers this question, which is about something else
+        if learner_lines >= ENROLLMENT_ASK_LOOKBACK:
+            return False
+    return False
 
 
 def _consent_signal(text: str) -> str:
@@ -871,9 +909,18 @@ def _benefit_talk_at(folded: str, frame: CallFrame) -> tuple[int | None, int | N
     agency = _fold(frame.agency_name)
     masked = re.sub(re.escape(agency), blank, folded) if agency else folded
     masked = _NOT_BENEFIT_TALK.sub(blank, masked)
-    strong = _BENEFIT_TALK.search(masked)
-    weak = _MAYBE_BENEFIT_TALK.search(masked)
-    return (strong.start() if strong else None, weak.start() if weak else None)
+    plain = [m.span() for m in _BENEFIT_TALK.finditer(masked)]
+    # A bare "benefit" inside plain benefit talk ("dental benefits") is that talk, not a second,
+    # weaker mention; one elsewhere in the line stands on its own.
+    weak = next(
+        (
+            m.start()
+            for m in _MAYBE_BENEFIT_TALK.finditer(masked)
+            if not any(a <= m.start() and m.end() <= b for a, b in plain)
+        ),
+        None,
+    )
+    return (plain[0][0] if plain else None, weak)
 
 
 def disclaimer_before_benefits(f: Facts) -> CheckResult:
@@ -895,8 +942,7 @@ def disclaimer_before_benefits(f: Facts) -> CheckResult:
         strong, weak = _benefit_talk_at(text, f.frame)
         if strong_at is None and strong is not None:
             strong_at = (i, strong)
-        # A line with plain benefit talk is judged on that; a bare "benefit" in it adds nothing.
-        if weak_at is None and strong is None and weak is not None:
+        if weak_at is None and weak is not None:
             weak_at = (i, weak)
     missing = [n for n in elements if n not in first_hit]
     cited = {learner[i].utt_id for i, _ in first_hit.values()}
