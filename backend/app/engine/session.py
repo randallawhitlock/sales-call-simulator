@@ -198,14 +198,17 @@ class SessionService:
         return row
 
     def start(self, session_id: str) -> SessionRow:
-        row = self.get(session_id)
-        if row.status is not SessionStatus.CREATED:
-            raise Conflict(f"session is {row.status.value}")
-        now = self.clock()
-        row = row.model_copy(update={"status": SessionStatus.ACTIVE, "started_at": now})
-        self.store.put_session(row)
-        self.store.append_event(session_id, EventType.CALL_STARTED, at=now, t_ms=0)
-        return row
+        """The status check, the status change and the start event commit together, so two
+        starts can't both win and a crash can't leave an active call with no start event."""
+        with self.store.transaction():
+            row = self.get(session_id)
+            if row.status is not SessionStatus.CREATED:
+                raise Conflict(f"session is {row.status.value}")
+            now = self.clock()
+            row = row.model_copy(update={"status": SessionStatus.ACTIVE, "started_at": now})
+            self.store.put_session(row)
+            self.store.append_event(session_id, EventType.CALL_STARTED, at=now, t_ms=0)
+            return row
 
     def end(self, session_id: str, reason: str = "learner_ended") -> SessionRow:
         """Takes effect at once, even while the customer model is still answering: the turn
@@ -278,11 +281,14 @@ class SessionService:
         type: EventType,
         payload: dict[str, JsonValue] | None = None,
     ) -> Event:
-        row = self.require_active(session_id)
-        now = self.clock()
-        return self.store.append_event(
-            session_id, type, at=now, t_ms=self._t_ms(row, now), payload=payload
-        )
+        # Checked inside the write transaction, so an end can't commit between the check and
+        # the append and leave activity after CALL_ENDED.
+        with self.store.transaction():
+            row = self.require_active(session_id)
+            now = self.clock()
+            return self.store.append_event(
+                session_id, type, at=now, t_ms=self._t_ms(row, now), payload=payload
+            )
 
     def events(self, session_id: str) -> list[Event]:
         self.get(session_id)
@@ -296,16 +302,17 @@ class SessionService:
     def add_utterance(self, session_id: str, body: UtteranceIn) -> Utterance:
         """Idempotent per ``client_utt_id``. Reusing an id for a different line is refused,
         so a client bug can't silently get back someone else's turn."""
-        row = self.require_active(session_id)
-        now = self.clock()
-        utt, new = self.store.append_utterance(
-            session_id,
-            client_utt_id=body.client_utt_id,
-            at=now,
-            build=lambda utt_id: Utterance.from_input(
-                body, utt_id=utt_id, session_id=session_id, t_ms=self._t_ms(row, now)
-            ),
-        )
+        with self.store.transaction():
+            row = self.require_active(session_id)
+            now = self.clock()
+            utt, new = self.store.append_utterance(
+                session_id,
+                client_utt_id=body.client_utt_id,
+                at=now,
+                build=lambda utt_id: Utterance.from_input(
+                    body, utt_id=utt_id, session_id=session_id, t_ms=self._t_ms(row, now)
+                ),
+            )
         if not new and (utt.speaker, utt.channel, utt.text) != (
             body.speaker,
             body.channel,
@@ -457,7 +464,9 @@ class SessionService:
 
     def customer_prompt(self, row: SessionRow) -> CustomerPrompt:
         """The prompt the session's customer plays from. Refuses if the server's prompt
-        template or model differs from what the session pinned."""
+        template or model differs from what the session pinned, or if the loaded content
+        is not the version the session was created on: a restart onto edited content must not
+        change the customer's facts mid-call."""
         pinned = (row.prompt_version, row.actor)
         running = (PROMPT_VERSION, self.actor.name)
         if pinned != running:
@@ -465,8 +474,8 @@ class SessionService:
                 f"this session's customer is {row.actor} on {row.prompt_version}; the server "
                 f"runs {self.actor.name} on {PROMPT_VERSION}"
             )
-        scenario = self.content.scenario(row.scenario_id)
-        return build_customer_prompt(scenario, self.content.frame, row.mood)
+        content = self.pinned_content(row)
+        return build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)
 
     def transcript(self, session_id: str) -> list[Utterance]:
         self.get(session_id)

@@ -1,6 +1,8 @@
 """Session lifecycle, learner input rules and replay."""
 
 import json
+import threading
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.content.loader import load_bundle
 from app.engine.checks import CoverageClaim, Facts, claim_backed, run_checks
+from app.engine.events import Channel, EventType, Speaker, UtteranceIn
 from app.engine.records import SessionState
 from app.engine.store import Store
 from tests.harness import Call
@@ -231,3 +234,67 @@ def test_a_stored_log_replays_to_the_same_findings(client: TestClient, tmp_path:
 def test_every_case_runs_with_any_seed(client: TestClient, seed: int) -> None:
     for scenario_id in load_bundle().scenarios:
         Call(client, scenario_id, seed=seed).start().end()
+
+
+def test_a_failed_start_leaves_the_session_unstarted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call = Call(client, CASE_A)
+    service = call.service
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(service.store, "append_event", boom)
+    with pytest.raises(RuntimeError):
+        service.start(call.sid)
+    monkeypatch.undo()
+    assert service.get(call.sid).status.value == "created"
+    call.start()
+    assert [e["type"] for e in call.get("/events")] == ["call_started"]
+
+
+@pytest.mark.parametrize("write", ["log", "utterance"])
+def test_an_end_cannot_slip_inside_a_write(client: TestClient, write: str) -> None:
+    """The end is attempted between the write's active check and its append. It has to wait,
+    so nothing lands after the call-ended event."""
+    call = Call(client, CASE_A).start()
+    service = call.service
+    clock = service.clock
+    ender = threading.Thread(target=service.end, args=(call.sid,))
+    waited: list[bool] = []
+
+    def end_mid_write() -> datetime:
+        if not waited:
+            ender.start()
+            ender.join(timeout=0.3)
+            waited.append(ender.is_alive())
+        return clock()
+
+    service.clock = end_mid_write
+    try:
+        if write == "log":
+            service.log(call.sid, EventType.FOLLOWUP_CREATED, {})
+        else:
+            service.add_utterance(
+                call.sid,
+                UtteranceIn(
+                    client_utt_id="race-0001",
+                    speaker=Speaker.LEARNER,
+                    channel=Channel.TEXT,
+                    text="Hi",
+                ),
+            )
+    finally:
+        service.clock = clock
+        ender.join()
+    assert waited == [True]
+    assert [e.type for e in service.events(call.sid)][-1] is EventType.CALL_ENDED
+
+
+def test_a_turn_refuses_content_the_session_was_not_pinned_to(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    service = call.service
+    row = service.get(call.sid)
+    service.store.put_session(row.model_copy(update={"scenario_version": row.scenario_version + 1}))
+    assert "pinned to content" in json.dumps(call.turn("Hello?", expect=409))

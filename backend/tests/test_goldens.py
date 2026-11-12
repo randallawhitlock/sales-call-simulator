@@ -564,3 +564,27 @@ def test_c_follow_up_after_the_deadline(client: TestClient) -> None:
     call.end()
     assert call.detail("followup_created")["status"] == F
     assert "2026-12-07" in call.detail("followup_created")["detail"]
+
+
+def test_a_benefits_before_disclaimer_in_the_same_turn(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    call.say(
+        "This call is recorded. Dental benefits are included. We do not offer every plan "
+        "available in your area. We represent 3 organizations which offer 6 products. Please "
+        "contact Medicare.gov or 1-800-MEDICARE for all your options."
+    )
+    call.end()
+    result = call.detail("disclaimer_before_benefits")
+    assert result["status"] == F
+    assert "before the disclaimer" in result["detail"]
+
+
+def test_a_disclaimer_then_benefits_in_the_same_turn(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    call.say(
+        "This call is recorded. We do not offer every plan available in your area. We represent "
+        "3 organizations which offer 6 products. Please contact Medicare.gov or 1-800-MEDICARE "
+        "for all your options. Now, dental benefits are included."
+    )
+    call.end()
+    assert call.detail("disclaimer_before_benefits")["status"] == P

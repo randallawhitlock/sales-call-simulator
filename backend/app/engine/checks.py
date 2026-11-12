@@ -831,34 +831,49 @@ _NOT_BENEFIT_TALK = re.compile(
 """Names like "Larkspur Benefits Group" or "Retiree Benefits Center" aren't benefit talk."""
 
 
-def _talks_benefits(text: str, frame: CallFrame) -> str | None:
-    """``strong``, ``weak`` or None."""
-    folded = _NOT_BENEFIT_TALK.sub(" ", _fold(text).replace(_fold(frame.agency_name), " "))
-    if _BENEFIT_TALK.search(folded):
-        return "strong"
-    if _MAYBE_BENEFIT_TALK.search(folded):
-        return "weak"
-    return None
+def _benefit_talk_at(folded: str, frame: CallFrame) -> tuple[int | None, int | None]:
+    """Where plainly-benefit talk and possibly-benefit talk first start in a folded line, as
+    offsets into it. Names that only look like benefit talk are blanked at equal length, so the
+    offsets stay comparable with other matches on the same folded text."""
+
+    def blank(m: re.Match[str]) -> str:
+        return " " * len(m.group())
+
+    agency = _fold(frame.agency_name)
+    masked = re.sub(re.escape(agency), blank, folded) if agency else folded
+    masked = _NOT_BENEFIT_TALK.sub(blank, masked)
+    strong = _BENEFIT_TALK.search(masked)
+    weak = _MAYBE_BENEFIT_TALK.search(masked)
+    return (strong.start() if strong else None, weak.start() if weak else None)
 
 
 def disclaimer_before_benefits(f: Facts) -> CheckResult:
     check = CheckId.DISCLAIMER_BEFORE_BENEFITS
     learner = f.learner_utterances()
-    first_hit: dict[str, int] = {}
+    # Positions are (learner turn, offset in the folded line): a turn index alone can't order a
+    # disclaimer and benefit talk said in the same turn.
+    Pos = tuple[int, int]
+    first_hit: dict[str, Pos] = {}
+    strong_at: Pos | None = None
+    weak_at: Pos | None = None
+    elements = _disclaimer_elements(f.frame)
     for i, u in enumerate(learner):
         text = _fold(u.heard_text)
-        for name, pattern in _disclaimer_elements(f.frame).items():
-            if name not in first_hit and pattern.search(text):
-                first_hit[name] = i
-    talk = [_talks_benefits(u.heard_text, f.frame) for u in learner]
-    strong_at = next((i for i, t in enumerate(talk) if t == "strong"), None)
-    weak_at = next((i for i, t in enumerate(talk) if t == "weak"), None)
-    names = list(_disclaimer_elements(f.frame))
-    missing = [n for n in names if n not in first_hit]
-    cited = {learner[i].utt_id for i in first_hit.values()}
+        for name, pattern in elements.items():
+            hit = pattern.search(text)
+            if name not in first_hit and hit:
+                first_hit[name] = (i, hit.end())
+        strong, weak = _benefit_talk_at(text, f.frame)
+        if strong_at is None and strong is not None:
+            strong_at = (i, strong)
+        # A line with plain benefit talk is judged on that; a bare "benefit" in it adds nothing.
+        if weak_at is None and strong is None and weak is not None:
+            weak_at = (i, weak)
+    missing = [n for n in elements if n not in first_hit]
+    cited = {learner[i].utt_id for i, _ in first_hit.values()}
     for at in (strong_at, weak_at):
         if at is not None:
-            cited.add(learner[at].utt_id)
+            cited.add(learner[at[0]].utt_id)
     if missing:
         detail = f"Disclaimer elements not found: {', '.join(missing)}."
         if first_hit or strong_at is not None:
