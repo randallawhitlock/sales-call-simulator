@@ -195,7 +195,9 @@ A worker doesn't lower the per-minute model bill, the largest cost. It adds plat
 
 LiveKit's docs flag one newer Gemini Live model as incompatible [S30], so the first build milestone (M1) includes a half-day spike running Case A through LiveKit and the chosen model, measuring latency, barge-in and a forced reconnect. If it fails, the MVP uses browser-direct.
 
-The audio path uses supported echo-cancellation constraints and headsets [S20], requires voiced evidence before counting a turn, records only what was heard when interrupted, confirms uncertain drug names, and resumes without duplicating consent or submission. Unmeasured targets: median end-of-turn to audio at or under 1.2 seconds, p95 at or under 2.5 seconds, stable 45–60 minute sessions. Usable latency needs the paid Gemini tier.
+Note, November 2026: the spike has been run, and [voice-spike.md](voice-spike.md) has what it measured and the decision recorded from it. In short, the LiveKit page no longer marks any model as incompatible; latency, barge-in and forced reconnects were measured with a bot caller on the free tier; and the write-up records a provisional decision to proceed with the server-hosted worker and `gemini-3.8-live`, which it says is not acceptance until the voice path passes its M4 acceptance gate.
+
+The audio path uses supported echo-cancellation constraints and headsets [S20], requires voiced evidence before counting a turn, records only what was heard when interrupted, confirms uncertain drug names, and resumes without duplicating consent or submission. Targets: median end-of-turn to audio at or under 1.2 seconds, p95 at or under 2.5 seconds, stable 45–60 minute sessions. The spike measured the two latency targets with a bot caller on the free tier ([voice-spike.md](voice-spike.md) has the figures); 45–60 minute stability is still unmeasured. Usable latency needs the paid Gemini tier.
 
 ## 12. Scoring and evidence
 
@@ -244,7 +246,7 @@ Beneficiary data is synthetic, and secrets stay server-side, read from environme
 | AI customer invents or leaks facts | Lay-fact prompt, leak guard, consistency QA |
 | Unfair penalties | Deterministic checks first; verified quotes; review-required and incomplete states |
 | Incentives favor switching | Valid no-sale outcomes; critical findings for unsupported claims |
-| Voice framework lags the Gemini model | Day-3 spike, pinned model, browser-direct fallback |
+| Voice framework lags the Gemini model | Day-3 spike (run; see [voice-spike.md](voice-spike.md)), pinned model, browser-direct fallback |
 | Cost creep | Per-call token and minute telemetry |
 
 # Part II. Later phases

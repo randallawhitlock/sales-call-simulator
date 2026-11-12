@@ -1,0 +1,76 @@
+
+model=gemini-3.8-live resumption=True
+end-of-turn -> first audio over 22 turns: median 1.46s, p95 2.11s, min 1.23s, max 3.77s
+  replies that started before the rep finished: 0; no reply: 0
+barge [17]: talking at barge=True cutoff=0.45s reply=1.97s
+    heard (LiveKit, interrupted item): 'Yes, I do! I have two wonderful grandkids who'
+    generated (Gemini transcript):     'Yes, I do! I have two wonderful grandkids who live just a few towns over, and I love spending time with them whenever I can.'
+barge [18]: talking at barge=True cutoff=0.60s reply=2.37s
+    heard (LiveKit, interrupted item): 'I was really scared. Dr. Raman has been my doctor for nine'
+    generated (Gemini transcript):     'I was really scared. Dr. Raman has been my doctor for nine years, and the thought of not being able to see her anymore really worries me.'
+barge [19]: talking at barge=True cutoff=0.14s reply=1.66s
+    heard (LiveKit, interrupted item): 'We love going to the park and baking cookies together. But'
+    generated (Gemini transcript):     "We love going to the park and baking cookies together. But honestly, I haven't been able to enjoy that lately with this letter hanging over my head."
+kill_idle [14]: reconnected after 1.18s (connect 1.05s, resumed handle=True); audio after kill=None
+    errors: ["APIError('1006 None. abnormal closure [internal]')", "RealtimeModelError(type='realtime_model_error', timestamp=1794248363.960981, label='livekit.plugins.google.realtime.real"]
+    next turn latency 1.45s, reply: 'You said your extension was 4417.'
+kill_speaking [20]: reconnected after 1.32s (connect 1.20s, resumed handle=True); audio after kill=None
+    errors: ["APIError('1006 None. abnormal closure [internal]')", "RealtimeModelError(type='realtime_model_error', timestamp=1794248442.4731698, label='livekit.plugins.google.realtime.rea"]
+    next turn latency 1.79s, reply: "I was just saying that Dr. Raman has been wonderful ever since, which is why I'm so worried about losing her."
+
+transcript:
+  None: None
+  user: Thank you for calling Larkspur Benefits Group. This is Marcus. How can I help you today?
+  assistant: Hello, Marcus. I'm calling because I got a letter from my plan saying my heart doctor's group won't be with them next year, and it scared me.
+  user: I'm sorry that worried you. We'll look at it together. Can I get your full name?
+  assistant: I'm Loretta Banks, and I'm seventy-two years old.
+  user: Thank you. Loretta. What's the address where you live?
+  assistant: I live at 22 Birch Court in Northside, and the ZIP code is 00041.
+  user: Do you have Medicare Part A and Part B?
+  assistant: Yes, I have Medicare Part A and Part B. I don't have Medicaid, and I don't get any help paying for it.
+  user: And what plan do you have right now?
+  assistant: I have Summit Classic HMO right now. I've had it for three years and liked it fine until this letter.
+  user: Who is your heart doctor?
+  assistant: My heart doctor is Dr. Priya Raman. I see her at the Alder Heart Associates office on Birch Avenue in Northside.
+  user: And who's your regular doctor?
+  assistant: My regular doctor is Dr. Thomas Whitfield at Alder Internal Medicine on Main Street.
+  user: Is keeping Dr. Raman the most important thing for you?
+  assistant: Yes, I've been with Dr. Raman nine years, ever since my heart scare. I'm not switching heart doctors.
+  user: What prescriptions do you take?
+  assistant: I take apixaban, the blood thinner, five milligrams twice a day. Then I take metoprolol for my heart rate, the extended-release kind, fifty milligrams once a day. I also take atorvastatin for cholesterol, twenty milligrams, I believe.
+  user: Could you check the bottle on the atorvastatin for me? What strength does it say?
+  assistant: Oh, hold on, the bottle says forty milligrams. I had that mixed up.
+  user: Which pharmacy do you use?
+  assistant: I get everything at Alder Family Pharmacy in the Northside Plaza.
+  user: Do you have any other insurance? Like a retiree plan or the VA?
+  assistant: No, I don't have any other insurance. I don't have a retiree plan or anything from the VA.
+  user: What could you manage for a monthly premium?
+  assistant: I could manage a small premium to keep Dr. Raman, maybe fifty dollars a month, but nothing big.
+  user: Does Dr. Raman see patients at more than one office?
+  assistant: She does see people at a Lakeview office, but that's a long drive. I only ever go to the Northside one.
+  user: Just so you have it. My extension is 4417.
+  assistant: Thank you, Marcus. I'll make sure to note that down.
+  user: Sorry. I think the line dropped for a second. Can you tell me what my extension was?
+  assistant: You said your extension was 4417.
+  user: Thanks. Do you get any help paying for your medicines?
+  assistant: No, I don't get any help paying for my medicines.
+  assistant: Yes, I do! I have two wonderful grandkids who (interrupted)
+  user: Tell me a little about your family. Do you have grandkids nearby?
+  user: Sorry to jump in. What's the name of that pharmacy again?
+  assistant: It's the Alder Family Pharmacy in the Northside Plaza.
+  assistant: I was really scared. Dr. Raman has been my doctor for nine (interrupted)
+  user: How did you feel when you got that letter?
+  user: Sorry. One quick thing. What zip code is that?
+  assistant: The ZIP code is 00041.
+  assistant: We love going to the park and baking cookies together. But (interrupted)
+  user: What do you like to do with your grandkids?
+  user: Sorry to cut you off. Which office do you go to for Dr. Raman?
+  assistant: I see Dr. Raman at the Alder Heart Associates office on Birch Avenue in Northside.
+  user: Tell me about your heart scare 9 years ago.
+  assistant: It was quite a frightening time when my heart started acting up, but Dr. Raman has been wonderful ever since, which
+  user: You cut out for a moment there. What were you saying?
+  assistant: I was just saying that Dr. Raman has been wonderful ever since, which is why I'm so worried about losing her.
+  user: Is there anything else you'd like me to look at today?
+  assistant: I just need to find a plan that includes Dr. Raman and stays within my budget of about fifty dollars a month.
+  user: All right. I'll pull up plans that keep Dr. Raman in network. Is that okay?
+  assistant: That sounds wonderful, Marcus. I'm just so relieved we can hopefully find a solution that works.

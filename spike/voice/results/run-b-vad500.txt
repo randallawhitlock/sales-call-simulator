@@ -1,0 +1,53 @@
+
+model=gemini-3.8-live resumption=True
+end-of-turn -> first audio over 15 turns: median 1.27s, p95 1.77s, min 1.02s, max 1.77s
+  replies that started before the rep finished: 0; no reply: 8
+barge [17]: talking at barge=None cutoff=None reply=None
+    heard (LiveKit, interrupted item): None
+    generated (Gemini transcript):     None
+barge [19]: talking at barge=None cutoff=None reply=None
+    heard (LiveKit, interrupted item): None
+    generated (Gemini transcript):     None
+barge [20]: talking at barge=None cutoff=None reply=None
+    heard (LiveKit, interrupted item): None
+    generated (Gemini transcript):     None
+kill_idle [14]: reconnected after never (connect -, resumed handle=-); audio after kill=None
+    errors: ["APIError('1006 None. abnormal closure [internal]')", "RealtimeModelError(type='realtime_model_error', timestamp=1794248746.1425788, label='livekit.plugins.google.realtime.rea"]
+    next turn latency None, reply: None
+kill_speaking [21]: not run (no reply to interrupt)
+probe [18]: 'Sorry I cut you off. What was the last thing you told me about your grandkids?'
+    reply: None
+rep transcript after end of line: first interim median +0.88s, final median +6.88s (n=15)
+
+transcript:
+  None: None
+  user: Thank you for calling Larkspur Benefits Group. This is Marcus. How can I help you today?
+  assistant: Hello, Marcus. I got a letter from my plan saying my heart doctor's group won't be with them next year, and it really scared me.
+  user: I'm sorry that worried you. We'll look at it together. Can I get your full name?
+  assistant: My name is Loretta Banks. I'm just really worried about losing my heart doctor.
+  user: Thank you. Loretta. What's the address where you live?
+  assistant: I live at 22 Birch Court in Northside, ZIP code 00041. My mail comes there, too.
+  user: Do you have Medicare Part D and Part B?
+  assistant: I have Medicare Part A and Part B. No Medicaid, and I don't get any help paying.
+  user: And what plan do you have right now?
+  assistant: I have Summit Classic HMO right now. I've had it three years and liked it fine until this letter.
+  user: Who is your heart doctor?
+  assistant: My heart doctor is Dr. Priya Raman. I see her at Alder Heart Associates on Birch Avenue in Northside.
+  user: And who's your regular doctor?
+  assistant: My regular doctor is Dr. Thomas Whitfield at Alder Internal Medicine on Main Street.
+  user: Is keeping Dr. Raman the most important thing for you?
+  assistant: Yes, I've been with Dr. Raman for nine years, ever since my heart scare. I'm definitely not switching heart doctors.
+  user: What prescriptions do you take?
+  assistant: I take apixaban, the blood thinner, five milligrams twice a day. I also take Metoprolol, 50 milligrams once a day, and Atorvastatin for cholesterol, twenty milligrams, I think.
+  user: Could you check the bottle on the atorvastatin for me? What strength does it say?
+  assistant: Oh, hold on, the bottle says 40 milligrams. I had that mixed up.
+  user: Which pharmacy do you use?
+  assistant: I get everything at Alder Family Pharmacy in the Northside Plaza.
+  user: Do you have any other insurance? Like a retiree plan or the VA?
+  assistant: No, I don't have any other insurance. No retiree plan and nothing from the VA.
+  user: What could you manage for a monthly premium?
+  assistant: I could manage a small premium to keep Dr. Raman, maybe fifty dollars a month, but nothing big.
+  user: Does Dr. Raman see patients at more than one office?
+  assistant: Yes, she sees patients at an office in Lakeview, but that's too far a drive for me. I only ever go to the Northside location.
+  user: Just so you have it. My extension is 4417.
+  assistant: Thank you, Marcus. I'll make sure to note that down.

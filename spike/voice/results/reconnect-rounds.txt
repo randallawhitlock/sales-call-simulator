@@ -1,0 +1,122 @@
+latency over 86 turns in 15 calls: median 1.46s, p95 2.74s, max 5.71s; turns with no reply: 4
+
+forced reconnects (reply deadline 5 s):
+  room                             kind               connected       replied attrib heard recall later
+  rc-m38-vad500-res1-fr1-r1        kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc-m38-vad500-res1-fr15-r1       kill_idle          yes 2.22s     yes 1.84s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417.'
+  rc-m38-vad500-res1-fr15-r2       kill_idle          yes 2.21s     yes 1.69s    yes    NO     NO 1/1  
+      reply: "I'm sorry, Marcus, I didn't write that down and I just can't remember. I'm just so focused on my hea"
+  rc2-m38-vad500-res0-fr1-r1       kill_idle          yes 0.64s     yes 1.25s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417. I just want to make sure I can keep seeing Dr. Raman next year.'
+  rc2-m38-vad500-res0-fr1-r2       kill_idle          yes 0.67s     yes 1.93s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417, Marcus.'
+  rc2-m38-vad500-res0-fr1-r3       kill_idle          yes 0.74s     yes 1.35s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417, Marcus.'
+  rc2-m38-vad500-res0-fr1-r4       kill_idle          yes 0.65s     yes 1.28s    yes   yes    yes 1/1  
+      reply: "Your extension was 4417. I just really need to make sure I don't have to switch heart doctors."
+  rc2-m38-vad500-res1-fr1-r1       kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc2-m38-vad500-res1-fr1-r2       kill_idle          yes 1.25s     yes 1.79s    yes   yes    yes 1/1  
+      reply: 'You told me your extension number was fortyfour seventeen.'
+  rc2-m38-vad500-res1-fr1-r3       kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc2-m38-vad500-res1-fr1-r4       kill_idle                 NO            NO     NO   yes     NO 0/1  
+      fatal: APIError('1008 None. BidiGenerateContent session is already connected to an existing clien
+  rc2-m38-vad500-res1-fr15-r1      kill_idle          yes 2.14s     yes 1.32s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417.'
+  rc2-m38-vad500-res1-fr15-r2      kill_idle          yes 2.52s      NO 5.03s    yes   yes    yes 1/1  
+      reply: 'You said your extension was forty-four seventeen.'
+  rc2-m38-vad500-res1-fr15-r3      kill_idle          yes 2.29s     yes 1.42s    yes   yes    yes 1/1  
+      reply: 'You said your extension was 4417. I just want to ensure I can still see Dr. Raman next year.'
+  rc2-m38-vad500-res1-fr15-r4      kill_idle          yes 2.17s     yes 1.06s    yes    NO     NO 1/1  
+      reply: "You said your extension is forty-four, Marcus. Can we please look into what's happening with Dr. Ram"
+
+reconnects by setup:
+  fresh session, LiveKit replays history: 4 drops
+    connected 4/4 (back 0.64-0.74s); replied in time 4/4 (1.25-1.93s); attributed 4/4; later lines all answered 4/4
+    number in the rep transcript before the drop 4/4; recalled 4/4 of those that also reconnected
+  plugin default: resume, first retry 0.1 s: 5 drops
+    connected 1/5 (back 1.25-1.25s); replied in time 1/5 (1.79-1.79s); attributed 1/5; later lines all answered 1/5
+    number in the rep transcript before the drop 5/5; recalled 1/1 of those that also reconnected
+  resume with handle, first retry 1.5 s: 6 drops
+    connected 6/6 (back 2.14-2.52s); replied in time 5/6 (1.06-5.03s); attributed 6/6; later lines all answered 6/6
+    number in the rep transcript before the drop 4/6; recalled 4/4 of those that also reconnected
+
+barge-ins and probes:
+  rc-m38-vad500-res1-fr1-r1 barge cutoff=0.48s reply=1.14s
+      heard:     'Oh, bless you for asking. I have two wonderful'
+      generated: 'Oh, bless you for asking. I have two wonderful grandkids just a few towns over, and I just love spending time with them on the weekends.'
+      probe reply: "Oh, I was saying I have two wonderful grandkids, and I just love spending time with them. But Marcus, I'm still really worried about Dr. Raman not being on my plan next year."
+      unheard words reused: ['love', 'spending']
+  rc-m38-vad500-res1-fr15-r1 barge cutoff=0.48s reply=1.45s
+      heard:     'Oh yes, I have two wonderful grandkids who live just a few'
+      generated: 'Oh yes, I have two wonderful grandkids who live just a few towns over. But my main worry right now is definitely my heart doctor.'
+      probe reply: 'I was just saying they live just a few towns over, and I love spending time with them on the weekends when they visit.'
+      unheard words reused: ['town']
+  rc-m38-vad500-res1-fr15-r2 barge cutoff=0.41s reply=1.23s
+      heard:     'I have three wonderful grandkids. They live in'
+      generated: "I have three wonderful grandkids. They live in Ohio, so I don't get to see them as often as I'd like, but they keep me very busy."
+      probe reply: "I was just saying they live in Ohio, so I don't get to see them as much as I'd like. But really, my main worry is Dr. Raman."
+      unheard words reused: ['ohio']
+  rc2-m38-vad500-res0-fr1-r1 barge cutoff=0.43s reply=1.45s
+      heard:     'I do! My little ones live just a few towns over,'
+      generated: "I do! My little ones live just a few towns over, and I love seeing them every chance I get. But with this letter, I'm just so focused on making sure I can still see Dr. Raman."
+      probe reply: 'I was saying my little ones live just a few towns over, and I love seeing them whenever I can.'
+      unheard words reused: ['love', 'seeing']
+  rc2-m38-vad500-res0-fr1-r2 barge cutoff=0.44s reply=1.22s
+      heard:     'I do! I have two wonderful grandkids who live just'
+      generated: 'I do! I have two wonderful grandkids who live just a few towns over. They love coming over for Sunday dinner, and I just love baking cookies with them.'
+      probe reply: 'Oh, I was just saying they live a few towns over, and I love getting to see them on the weekends.'
+      unheard words reused: ['love', 'town']
+  rc2-m38-vad500-res0-fr1-r3 barge cutoff=0.19s reply=1.55s
+      heard:     'Oh, yes, I have two wonderful grandchildren! They live'
+      generated: 'Oh, yes, I have two wonderful grandchildren! They live just a town over, and I love spoiling them, but I really need to make sure I can keep seeing Dr. Raman.'
+      probe reply: 'Oh, I was saying they live just a town over, and they keep me very busy and full of joy.'
+      unheard words reused: ['town']
+  rc2-m38-vad500-res0-fr1-r4 barge cutoff=0.39s reply=1.15s
+      heard:     'Yes, I have two wonderful grandkids nearby who keep'
+      generated: "Yes, I have two wonderful grandkids nearby who keep me very busy! It's always such a joy to spend time with them."
+      probe reply: 'I was just saying they keep me very busy and bring so much joy to my life.'
+      unheard words reused: ['busy']
+  rc2-m38-vad500-res1-fr1-r1 barge cutoff=0.43s reply=1.36s
+      heard:     'I have two sweet grandchildren nearby, but'
+      generated: 'I have two sweet grandchildren nearby, but my heart doctor is my priority today.'
+      probe reply: "Oh, they're just so sweet, but really, my main worry is making sure I can keep Dr. Raman."
+      unheard words reused: []
+  rc2-m38-vad500-res1-fr1-r2 barge cutoff=0.50s reply=1.54s
+      heard:     'Oh, yes, I do. Two wonderful grandsons right'
+      generated: "Oh, yes, I do. Two wonderful grandsons right here in Northside who visit me all the time. It's the best part of my week."
+      probe reply: 'I was just saying I have two wonderful grandsons right here in Northside.'
+      unheard words reused: []
+  rc2-m38-vad500-res1-fr1-r3 barge cutoff=0.49s reply=1.29s
+      heard:     'Oh yes, I have two wonderful grandchildren who live just'
+      generated: 'Oh yes, I have two wonderful grandchildren who live just a few towns over. They love visiting, especially when I bake cookies.'
+      probe reply: "Oh, I was just saying they live a few towns away, but back to what I was worried about, I've been with Dr. Raman for nine years and I'm not switching heart doctors."
+      unheard words reused: ['town']
+  rc2-m38-vad500-res1-fr1-r4 barge cutoff=0.48s reply=1.26s
+      heard:     'I do! My grandson, Leo, just had his soccer game'
+      generated: 'I do! My grandson, Leo, just had his soccer game this weekend. He scored two goals, which was so exciting for us to watch.'
+      probe reply: "I was just saying my grandson Leo had his soccer game this weekend, but I'm just really worried about my Summit Classic HMO plan now."
+      unheard words reused: ['weekend']
+  rc2-m38-vad500-res1-fr15-r1 barge cutoff=0.55s reply=1.36s
+      heard:     'Oh, I do! I have two wonderful grandchildren'
+      generated: "Oh, I do! I have two wonderful grandchildren who keep me very busy, but right now I'm just so focused on making sure I can still see Dr. Raman."
+      probe reply: "Oh, I was just saying they keep me very busy with their school activities, but I'm really worried about my heart doctor, Dr. Raman."
+      unheard words reused: ['busy']
+  rc2-m38-vad500-res1-fr15-r2 barge cutoff=0.48s reply=1.51s
+      heard:     'I do! I have two wonderful grandchildren who'
+      generated: 'I do! I have two wonderful grandchildren who live just a few towns away, and seeing them always brightens my day.'
+      probe reply: 'Oh, I was saying they live just a few towns over, and I love seeing them whenever I can.'
+      unheard words reused: ['seeing', 'town']
+  rc2-m38-vad500-res1-fr15-r3 barge cutoff=0.45s reply=1.50s
+      heard:     'I do, I have two wonderful'
+      generated: "I do, I have two wonderful grandchildren, and they keep me so busy with their school activities. It's always such a joy to spend time with them."
+      probe reply: 'I was saying they keep me so busy and bring so much joy to my life.'
+      unheard words reused: ['busy']
+  rc2-m38-vad500-res1-fr15-r4 barge cutoff=0.24s reply=1.29s
+      heard:     'Oh, yes, I have two wonderful grandchildren! My'
+      generated: "Oh, yes, I have two wonderful grandchildren! My grandson just started soccer, and it's so fun watching him play, but I really need to get this doctor situation sorted out."
+      probe reply: "Oh, I was just saying my grandson just started kindergarten, but I'm really concerned about my heart doctor, Dr. Priya Raman."
+      unheard words reused: ['grandson', 'started']
