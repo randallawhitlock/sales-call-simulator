@@ -11,7 +11,10 @@ Reconnect checks, kept apart on purpose (a reconnect can pass one and fail the n
   attributed  exactly one customer reply landed between that line ending and the next line starting
   heard       Gemini's transcript of the rep's line before the drop held the number (kill_idle only)
   recalled    the attributed reply held the number (kill_idle only)
-  later       every line after the follow-up got an audible, attributed reply
+  later       every line after the follow-up, up to the next forced drop's line, got an audible,
+              attributed reply
+Each drop is judged only on what happened before the next one: a reconnect, a fatal error or an
+unanswered line after a later drop belongs to that drop.
 A drop is also flagged when the rep started the follow-up line before the reconnect finished: that
 reply time isn't comparable with one from a setup that was already back.
 """
@@ -70,8 +73,9 @@ def content_words(text: str) -> set[str]:
 
 def unheard_words(heard: str, generated: str, reply: str, known: str) -> list[str]:
     """Content words in the reply that Gemini generated after the cut-off point and that appear
-    nowhere in what was heard, the rep's lines or the customer prompt. A non-empty result means
-    the reply reused something the rep never heard and the model wasn't told elsewhere."""
+    nowhere in what was heard or in `known` (the customer prompt and everything said and heard
+    earlier in the call, see said_before). A non-empty result means the reply reused something
+    the rep never heard and the model wasn't told elsewhere."""
     unheard = generated[len(heard) :] if generated.startswith(heard) else generated
     exclusive = content_words(unheard) - content_words(heard) - content_words(known)
     return sorted(content_words(reply) & exclusive)
@@ -119,21 +123,39 @@ def reply_to(steps: list[dict], events: list[dict], step: dict) -> tuple[str | N
 TIMED = ("turn", "probe", "barge", "kill_idle", "kill_speaking")
 
 
+def not_idle_steps(steps: list[dict]) -> list[int]:
+    """Steps whose line the caller spoke while the customer was still talking, because its wait
+    for quiet timed out. Their latency isn't a clean turn."""
+    return [s["i"] for s in steps if s["notes"].get("not_idle_at_start")]
+
+
 def turn_latencies(steps: list[dict]) -> tuple[list[float], int, int]:
-    """Latencies of timed turns that aren't right after a forced drop, plus how many replies
-    started before the rep finished (latency <= 0) and how many lines got no reply."""
-    after_kill = {s["i"] + 1 for s in steps if s["kind"].startswith("kill")}
-    normal = [s["latency_s"] for s in steps if s["kind"] in TIMED and s["i"] not in after_kill]
+    """Latencies of timed turns that aren't right after a forced drop or spoken over the
+    customer (not_idle_steps), plus how many replies started before the rep finished
+    (latency <= 0) and how many lines got no reply."""
+    skip = {s["i"] + 1 for s in steps if s["kind"].startswith("kill")} | set(not_idle_steps(steps))
+    normal = [s["latency_s"] for s in steps if s["kind"] in TIMED and s["i"] not in skip]
     heard = [x for x in normal if x is not None]
     return [x for x in heard if x > 0], sum(x <= 0 for x in heard), len(normal) - len(heard)
 
 
-def cut_turn(events: list[dict], barge_from: float) -> tuple[str | None, str | None]:
+CUT_WINDOW_S = 15.0  # how long after a barge-in starts its interrupted turn can still be logged
+
+
+def cut_turn(
+    events: list[dict], barge_from: float, until: float | None = None
+) -> tuple[str | None, str | None]:
     """The customer turn a barge-in cut off: what LiveKit says was heard, and what Gemini's own
-    transcript says it generated. Either is None when the agent logged no such turn."""
+    transcript says it generated. Either is None when the agent logged no such turn.
+
+    `until` is when the next rep line started (window_end). Both halves are looked for only
+    before it, so a barge-in that cut nothing can't pick up the turn the next barge-in cut, and
+    the two halves can't come from different barge-ins. When the worker logged the turn a second
+    time with text that arrived after the interruption (`late`), that fuller text is used."""
+    end = barge_from + CUT_WINDOW_S if until is None else min(until, barge_from + CUT_WINDOW_S)
 
     def near(e: dict) -> bool:
-        return bool(e.get("interrupted")) and barge_from - 1 < e["t"] < barge_from + 15
+        return bool(e.get("interrupted")) and barge_from - 1 < e["t"] <= end
 
     heard = next(
         (
@@ -143,8 +165,21 @@ def cut_turn(events: list[dict], barge_from: float) -> tuple[str | None, str | N
         ),
         None,
     )
-    gen = next((e["generated"] for e in events if e["kind"] == "model_turn_text" and near(e)), None)
-    return heard, gen
+    gens = [e for e in events if e["kind"] == "model_turn_text" and near(e)]
+    if not gens:
+        return heard, None
+    full = gens[1] if len(gens) > 1 and gens[1].get("late") else gens[0]
+    return heard, full["generated"]
+
+
+def said_before(steps: list[dict], events: list[dict], t: float, upto: int) -> str:
+    """Everything the customer could know by time t without the unheard part of a cut turn: the
+    conversation items logged before t (rep lines as Gemini transcribed them, and her own turns
+    as heard, since LiveKit trims an interrupted turn to what played) and the rep's scripted
+    lines through step `upto`, barge-in lines included."""
+    items = [e.get("text") or "" for e in events if e["kind"] == "item" and e["t"] < t]
+    lines = [x for s in steps if s["i"] <= upto for x in (s["line"], s["notes"].get("barge_line"))]
+    return " ".join(x for x in items + lines if x)
 
 
 def answered(steps: list[dict], events: list[dict], step: dict) -> bool:
@@ -167,13 +202,19 @@ def reconnect_setup(events: list[dict]) -> str:
 
 def classify_reconnect(steps: list[dict], events: list[dict], kill: dict) -> dict:
     k = kill["notes"]["kill_at"]
-    conn = next((e for e in events if e["kind"] == "model_connected" and e["t"] > k), None)
+    # The next forced drop, if the call had one. Nothing at or after it is this drop's doing.
+    nxt = next(
+        (x for x in steps if x["i"] > kill["i"] and "kill_at" in x["notes"]),
+        None,
+    )
+    k_next = nxt["notes"]["kill_at"] if nxt else float("inf")
+    conn = next((e for e in events if e["kind"] == "model_connected" and k < e["t"] < k_next), None)
     fatal = next(
         (
             e
             for e in events
             if e["kind"] == "model_error"
-            and e["t"] > k
+            and k < e["t"] < k_next
             and str(e.get("recoverable")) in ("False", "false")
         ),
         None,
@@ -183,7 +224,10 @@ def classify_reconnect(steps: list[dict], events: list[dict], kill: dict) -> dic
     lat = follow["latency_s"] if follow else None
     is_idle = kill["kind"] == "kill_idle"
     heard = " ".join(items_between(events, "user", kill["said_from"], k)) if is_idle else None
-    later = [x for x in steps if follow and x["i"] > follow["i"]]
+    # Lines after the follow-up and before the next drop's own line: that line's reply is the
+    # one the next drop cuts or follows, so it can't be held against this drop.
+    last = nxt["i"] if nxt else float("inf")
+    later = [x for x in steps if follow and follow["i"] < x["i"] < last]
     return {
         "kind": kill["kind"],
         "connected": conn is not None,
@@ -228,6 +272,9 @@ def main(prefixes: list[str]) -> None:
             f"{statistics.median(lats):.2f}s, p95 {p95(lats):.2f}s, max {max(lats):.2f}s; "
             f"turns with no reply: {no_reply}"
         )
+    for room in rooms:
+        if not_idle := not_idle_steps(load(room)[0]):
+            print(f"  {room}: steps {not_idle} were spoken over the customer and aren't counted")
 
     print(f"\nforced reconnects (reply deadline {REPLY_DEADLINE_S:g} s):")
     print(
@@ -286,7 +333,7 @@ def main(prefixes: list[str]) -> None:
             n = s["notes"]
             if s["kind"] != "barge" or "barge_from" not in n:
                 continue
-            heard, gen = cut_turn(events, n["barge_from"])
+            heard, gen = cut_turn(events, n["barge_from"], window_end(steps, events, s["i"]))
             print(
                 f"  {room} barge cutoff={n.get('cutoff_s', float('nan')):.2f}s "
                 f"reply={n.get('reply_latency_s', float('nan')):.2f}s"
@@ -298,13 +345,15 @@ def main(prefixes: list[str]) -> None:
             reply, _ = reply_to(steps, events, probe)
             print(f"      probe reply: {reply!r}")
             if heard and gen and reply:
-                known = " ".join([known_base, s["line"], n.get("barge_line", ""), probe["line"]])
+                known = " ".join(
+                    [known_base, said_before(steps, events, n["barge_from"], probe["i"])]
+                )
                 print(f"      unheard words reused: {unheard_words(heard, gen, reply, known)}")
 
 
 def _customer_prompt() -> str:
     """The customer prompt, so words she could have taken from it don't count as unheard."""
-    from agent import customer_prompt
+    from live_settings import customer_prompt
 
     return customer_prompt()
 

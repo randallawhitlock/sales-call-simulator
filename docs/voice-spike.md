@@ -101,22 +101,38 @@ Run A came from an earlier version of the caller script: three barge-ins at step
 probe step, 22 turns in its latency figure. The committed `caller.py` has a different step
 layout and won't reproduce that report line for line.
 
-The control sent the same audio straight to Gemini over one WebSocket, roughly the shape of the
-browser-direct path minus the browser. Its median was 1.00 s against 1.27 s for worker run B's
-15 plain turns at the same setting. That 0.27 s gap is not a measure of LiveKit's overhead, because the two scripts
-time different things:
+The control sent rep lines from the same script straight to Gemini over one WebSocket, roughly
+the shape of the browser-direct path minus the browser. Its median was 1.00 s against 1.27 s for
+worker run B's 15 plain turns at the same setting. That 0.27 s gap is not a measure of LiveKit's
+overhead. The two runs didn't speak the same lines, and the two scripts time different things.
+
+The control as run took the first 18 `turn` lines of the script, whatever came between them.
+That's steps 0 to 13, then four more: "Sorry, I think the line dropped for a second. Can you tell
+me what my extension was?" (it never spoke the line that gives the extension, and nothing had
+dropped), "Thanks. Do you get any help paying for your medicines?", "You cut out for a moment
+there. What were you saying?" (again with no drop) and "Is there anything else you'd like me to
+look at today?". Run B's 15 turns are steps 0 to 14, the last being the extension line. So 14
+lines are common to both, the control has four the worker figure doesn't (two of them questions
+about things that never happened in its session), and the worker has one the control doesn't.
+The comparison is between two sets of mostly the same questions, not line for line.
+`results/direct-control.txt` lists the control's lines.
+
 
 | | Control (`direct.py` as run) | Worker (`caller.py`) |
 |---|---|---|
 | Clock starts | Estimated end of the line (send start plus clip length), not observed | Last voiced sample handed to the caller's WebRTC track |
 | Clock stops | First audio chunk received, loud or not | First frame above the loudness threshold, after real-time playout through the worker and LiveKit |
-| Sample | 18 plain turns, one session | 15 plain turns, the part of one call before its forced drop ended the session |
+| Sample | 18 lines, one session: steps 0 to 13 and the four lines above | 15 plain turns (steps 0 to 14), the part of one call before its forced drop ended the session |
+| Live config | Same prompt, model, voice, temperature and end-of-speech setting, built by hand; no context-window compression, no request for session resumption handles | Built by the LiveKit plugin from the worker's options, with compression and resumption handles |
 
 They also ran at different times on a shared free tier. What the control does show is that the
 model and its end-of-speech detection took about a second on their own before any audio came
 back, so moving the client wouldn't get this setup far under the 1.2 s median target.
 `direct.py` now records the real send time of the last chunk and a "first audible" time on the
-caller's threshold, but it hasn't been rerun yet. A like-for-like comparison, with control and
+caller's threshold. It now speaks only the lines that are plain turns on the worker path too
+(the extension line included, the two follow-ups to a drop left out), prints each line's script
+step so the two reports can be matched, and takes its Live config from the builder the worker
+uses (`live_settings.py`). It hasn't been rerun yet. A like-for-like comparison, with control and
 worker calls alternating in the same window, is part of the
 [acceptance gate](#m4-acceptance-gate). (The plugin reports no model-only time to first
 token for this model, `ttft=-1`, so there's no split from inside the worker either.)
@@ -155,6 +171,10 @@ last thing you told me about your grandkids?" `summarize.py` lists the content w
 answer that appear only in the part Gemini generated after the cut, and nowhere in what was
 heard, the rep's lines or her prompt:
 
+(The counts below are from the report as run, which compared against her prompt and the three
+rep lines around the interruption. `summarize.py` now also sets aside words from everything said
+and heard earlier in the call. It hasn't been rerun on these calls, so the counts could move.)
+
 - In 1 of 15 the answer held a detail that could only have come from the unheard part. For the
   example above, she said "I was just saying they live in Ohio."
 - In 12 more the answer reused words from the unheard part, but they're the model's stock
@@ -192,7 +212,12 @@ Every reply the caller heard passed the attribution check. "Later lines" is one 
 short reconnect script and two to eight in the full script, so it shows the session kept
 working for a few turns, not for a whole call. In this data every drop that reconnected also
 answered and kept going. The checks are split so M4's tests can catch one that doesn't.
-`results/reconnects.txt` has the per-drop rows.
+`results/reconnects.txt` has the per-drop rows. In those rows the first drop of a two-drop call
+was scored on every line to the end of the call, the ones after the second drop included (the
+8/8 row). `summarize.py` now stops each drop's checks at the next forced drop, so a
+failure after the second drop can't be charged to the first. The kept runs don't have that case
+(in one both drops recovered, in the other the second drop was never run), and the report hasn't
+been regenerated.
 
 The three rows aren't like for like on the "answered the next line" column. The caller as run
 waited a fixed 2.0 s after the drop and then spoke the follow-up line. The other two setups,

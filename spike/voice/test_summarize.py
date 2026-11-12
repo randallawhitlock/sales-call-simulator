@@ -224,7 +224,64 @@ class Reconnects(unittest.TestCase):
         self.assertFalse(S.classify_reconnect(steps, events, steps[0])["overlapped"])
 
 
+class TwoDrops(unittest.TestCase):
+    """The full script drops the model twice. Each drop is judged on what came before the next."""
+
+    def run_with(self, *after_second: dict, last_latency: float | None = 1.0):
+        steps = [
+            step(0, "kill_idle", 100.0, 103.0, 1.2, kill_at=KILL_AT),
+            step(1, "turn", 112.0, 116.0, 1.4),
+            step(2, "turn", 125.0, 127.0, 1.1),
+            step(3, "kill_speaking", 135.0, 137.0, 1.0, kill_at=139.0),
+            step(4, "turn", 145.0, 147.0, last_latency),
+            step(5, "turn", 155.0, 157.0, last_latency),
+        ]
+        events = [
+            say(108.0, "user", "My extension is 4417"),
+            ev(111.2, "model_connected", connect_s=0.6),
+            say(119.0, "assistant", "You said 4417."),
+            say(129.0, "assistant", "Alder Family Pharmacy."),
+            say(138.5, "assistant", "It was a frightening time, which"),
+            *after_second,
+        ]
+        return steps, events
+
+    def test_a_session_that_dies_at_the_second_drop_is_not_charged_to_the_first(self):
+        steps, events = self.run_with(
+            ev(139.2, "model_error", error="1008 already connected", recoverable=False),
+            last_latency=None,
+        )
+        first = S.classify_reconnect(steps, events, steps[0])
+        self.assertIsNone(first["fatal"])
+        self.assertEqual((first["later_ok"], first["later_n"]), (1, 1))
+        second = S.classify_reconnect(steps, events, steps[3])
+        self.assertIn("1008", second["fatal"])
+        self.assertFalse(second["connected"])
+        self.assertEqual((second["later_ok"], second["later_n"]), (0, 1))
+
+    def test_a_reconnect_after_the_second_drop_does_not_count_for_the_first(self):
+        steps, events = self.run_with(ev(140.1, "model_connected", connect_s=0.5))
+        events = [e for e in events if not (e["kind"] == "model_connected" and e["t"] < 139.0)]
+        self.assertFalse(S.classify_reconnect(steps, events, steps[0])["connected"])
+        self.assertTrue(S.classify_reconnect(steps, events, steps[3])["connected"])
+
+    def test_a_second_drop_that_was_not_run_is_no_bound(self):
+        steps, events = self.run_with(say(149.0, "assistant", "a"), say(159.0, "assistant", "b"))
+        del steps[3]["notes"]["kill_at"]
+        r = S.classify_reconnect(steps, events, steps[0])
+        self.assertEqual((r["later_ok"], r["later_n"]), (4, 4))
+
+
 class Latencies(unittest.TestCase):
+    def test_a_line_spoken_over_the_customer_is_flagged_and_not_timed(self):
+        steps = [
+            step(0, "turn", 1.0, 2.0, 1.2),
+            step(1, "turn", 5.0, 6.0, 0.3, not_idle_at_start=True),
+            step(2, "turn", 9.0, 10.0, 1.4),
+        ]
+        self.assertEqual(S.not_idle_steps(steps), [1])
+        self.assertEqual(S.turn_latencies(steps), ([1.2, 1.4], 0, 0))
+
     def test_early_missing_and_after_drop_turns_stay_out_of_the_latencies(self):
         steps = [
             step(0, "turn", 1.0, 2.0, 1.2),
@@ -249,6 +306,37 @@ class CutTurns(unittest.TestCase):
         self.assertEqual(S.cut_turn(events, 100.0), ("They live in", "They live in Ohio."))
         self.assertEqual(S.cut_turn(events, 300.0), (None, None))
 
+    def test_a_barge_that_cut_nothing_does_not_get_the_next_barges_turn(self):
+        """Two barge-ins back to back: the first cut nothing, the second line started 8 s on."""
+        events = [
+            ev(108.6, "item", role="assistant", text="We bake", interrupted=True),
+            ev(108.7, "model_turn_text", generated="We bake cookies.", interrupted=True),
+        ]
+        self.assertEqual(S.cut_turn(events, 100.0, until=106.0), (None, None))
+        self.assertEqual(S.cut_turn(events, 108.0, until=120.0), ("We bake", "We bake cookies."))
+
+    def test_the_two_halves_come_from_the_same_barge(self):
+        """LiveKit logged the first cut but the worker logged no Gemini text for it; the text
+        the next barge-in cut must not be paired with it."""
+        events = [
+            ev(100.5, "item", role="assistant", text="I felt", interrupted=True),
+            ev(108.7, "model_turn_text", generated="We bake cookies.", interrupted=True),
+        ]
+        self.assertEqual(S.cut_turn(events, 100.0, until=106.0), ("I felt", None))
+
+    def test_text_that_arrived_after_the_interruption_is_part_of_the_cut_turn(self):
+        events = [
+            ev(100.4, "model_turn_text", generated="They live in", interrupted=True),
+            ev(
+                101.0,
+                "model_turn_text",
+                generated="They live in Ohio.",
+                interrupted=True,
+                late=" Ohio.",
+            ),
+        ]
+        self.assertEqual(S.cut_turn(events, 100.0, until=110.0), (None, "They live in Ohio."))
+
 
 class Probes(unittest.TestCase):
     heard = "I have three wonderful grandkids. They live in"
@@ -264,6 +352,30 @@ class Probes(unittest.TestCase):
         self.assertEqual(
             S.unheard_words(self.heard, self.generated, "My three grandkids.", known=""), []
         )
+
+    def test_words_heard_earlier_in_the_call_do_not_count(self):
+        """She said "Ohio" in an earlier turn the rep heard in full, and the rep said "often" in
+        an earlier line. Neither is evidence that she remembers the unheard part."""
+        steps = [
+            step(0, "turn", 10.0, 12.0, 1.0),
+            step(1, "barge", 50.0, 52.0, 1.0, barge_line="Which pharmacy was that again?"),
+            step(2, "probe", 70.0, 72.0, 1.0),
+            step(3, "turn", 90.0, 92.0, 1.0),
+        ]
+        steps[0]["line"] = "How often do you visit?"
+        steps[3]["line"] = "Do they live in a brick house?"
+        events = [
+            say(15.0, "assistant", "My daughter moved to Ohio last spring."),
+            ev(56.0, "item", role="assistant", text=self.heard, interrupted=True),
+            say(95.0, "assistant", "A brick one, yes."),
+        ]
+        known = S.said_before(steps, events, 55.0, upto=2)
+        self.assertIn("Ohio", known)
+        self.assertIn("pharmacy", known)
+        self.assertNotIn("brick", known)
+        reply = "I was just saying they live in Ohio and I don't see them often."
+        self.assertEqual(S.unheard_words(self.heard, self.generated, reply, known), [])
+        self.assertEqual(S.unheard_words(self.heard, self.generated, reply, ""), ["often", "ohio"])
 
 
 class Percentile(unittest.TestCase):

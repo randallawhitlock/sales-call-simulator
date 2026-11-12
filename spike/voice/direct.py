@@ -1,7 +1,19 @@
-"""Control for the spike: the same lines sent straight to Gemini Live, no LiveKit in between.
+"""Control for the spike: the worker's plain lines sent straight to Gemini Live, no LiveKit.
 
 This is roughly the browser-direct path's network shape (one WebSocket to Google) minus the
-browser. Same prompt, model and voice activity settings as the worker, same macOS `say` lines.
+browser. The prompt, voice, temperature, end-of-speech setting and context compression come from
+live_settings.py, the same builder the worker uses. What still differs from the worker's
+connection: the LiveKit plugin always asks Gemini for session resumption handles and this
+doesn't, and the model comes from SIM_LIVE_MODEL alone (no room-name override).
+
+Lines: the control can't drop the model or barge in, so it speaks only the script lines that are
+plain question-and-answer turns on the worker path too (control_lines): `turn` lines and the line
+of each forced-drop step, which the worker times before the drop. It leaves out the line right
+after a drop ("what was my extension?", "you cut out"), which only makes sense after one and
+which the worker's latency figure also leaves out, and the barge-in and probe steps. Each
+printed row carries its script step number, so a control line can be matched to the same step
+in a caller.py report. The run in results/direct-control.txt predates this and used a different
+selection; see docs/voice-spike.md.
 
 It times from the moment the send of the line's last voiced chunk returns to two endpoints:
   first chunk    the first audio chunk of the reply arriving, loud or not
@@ -16,8 +28,11 @@ Each reply is tied to the line that was current when its first chunk arrived. A 
 earlier line that finishes late, or one that finishes while the current line is still being
 sent, is counted and set aside instead of being timed against the wrong line.
 
-Usage: uv run python direct.py [n_turns] [silence_ms]
-Env: GEMINI_API_KEY, SIM_LIVE_MODEL.
+Usage: uv run python direct.py [n_turns] [silence_ms | default]
+  silence_ms  Gemini's end-of-speech silence window, with high end-of-speech sensitivity, as the
+              worker sets it for SPIKE_SILENCE_MS (default 500). "default" leaves Google's
+              defaults, like a worker run with SPIKE_SILENCE_MS unset.
+Env: GEMINI_API_KEY, SIM_LIVE_MODEL, SPIKE_VOICE.
 """
 
 import asyncio
@@ -25,7 +40,6 @@ import os
 import statistics
 import sys
 import time
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,10 +49,10 @@ from google.genai import types
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parents[1] / "backend"))
 
-from agent import customer_prompt  # noqa: E402
-from caller import LOUD, SCRIPT, synth  # noqa: E402
+from caller import LOUD, SCRIPT, voiced_clip  # noqa: E402
+from live_settings import connect_config  # noqa: E402
+from summarize import p95  # noqa: E402
 
 SR_IN = 16_000
 CHUNK = SR_IN // 50  # 20 ms
@@ -47,12 +61,21 @@ WIN_OUT = SR_OUT // 100  # 10 ms, the caller's frame size
 TTS_DIR = HERE / "runs" / "tts16"
 
 
+PLAIN = ("turn", "kill_idle", "kill_speaking")  # steps whose line is a plain turn for the worker
+
+
 def tts16(text: str) -> bytes:
-    path = synth(text, TTS_DIR, SR_IN)
-    with wave.open(str(path)) as w:
-        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
-    voiced = np.flatnonzero(np.abs(pcm) > 200)
-    return pcm[voiced[0] : voiced[-1] + 1].tobytes()
+    return voiced_clip(text, TTS_DIR, SR_IN).tobytes()
+
+
+def control_lines(script: list[tuple[str, ...]], n: int) -> list[tuple[int, str]]:
+    """The first n (script step, line) pairs the control speaks: the plain turns the worker's
+    latency figure also counts (summarize.turn_latencies), minus the barge-in and probe steps,
+    which need an interruption the control can't make. The line right after a forced drop is
+    left out, as it is there."""
+    after_kill = {i + 1 for i, s in enumerate(script) if s[0].startswith("kill")}
+    plain = [(i, s[1]) for i, s in enumerate(script) if s[0] in PLAIN and i not in after_kill]
+    return plain[:n]
 
 
 @dataclass
@@ -77,29 +100,27 @@ def credit(reply: Reply, line: int, clip_sent_at: float | None) -> str:
     return "reply"
 
 
-async def main(n_turns: int, silence_ms: int) -> None:
+def stats(xs: list[float]) -> str:
+    good = [x for x in xs if x > 0]
+    if not good:
+        return "no turns"
+    return (
+        f"{len(good)} turns, median {statistics.median(good):.2f}s, p95 {p95(good):.2f}s, "
+        f"max {max(good):.2f}s"
+    )
+
+
+def silence_arg(arg: str) -> int | None:
+    return None if arg == "default" else int(arg)
+
+
+async def main(n_turns: int, silence_ms: int | None) -> None:
     client = genai.Client(
         api_key=os.environ["GEMINI_API_KEY"], http_options=types.HttpOptions(api_version="v1beta")
     )
-    config = types.LiveConnectConfig(
-        response_modalities=[types.Modality.AUDIO],
-        system_instruction=customer_prompt(),
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
-            )
-        ),
-        temperature=0.8,
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        output_audio_transcription=types.AudioTranscriptionConfig(),
-        realtime_input_config=types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                silence_duration_ms=silence_ms,
-            )
-        ),
-    )
-    lines = [s[1] for s in SCRIPT if s[0] == "turn"][:n_turns]
+    config = connect_config(silence_ms)
+    picked = control_lines(SCRIPT, n_turns)
+    lines = [line for _, line in picked]
     clips = [tts16(line) for line in lines]
     silence = np.zeros(CHUNK, dtype=np.int16).tobytes()
     lats: list[float] = []  # to first chunk
@@ -214,29 +235,21 @@ async def main(n_turns: int, silence_ms: int) -> None:
                 n_false += fs
                 aud_s = f"{aud - clip_sent_at[0]:+.2f}s" if aud is not None else "  none"
                 print(
-                    f"[{i:02d}] chunk {lat:+.2f}s  audible {aud_s}  false starts {fs}  {line[:44]}",
+                    f"[{i:02d}] step {picked[i][0]:02d}  chunk {lat:+.2f}s  audible {aud_s}  "
+                    f"false starts {fs}  {line[:36]}",
                     flush=True,
                 )
             except TimeoutError:
-                print(f"[{i:02d}]  none  {line[:60]}", flush=True)
+                print(f"[{i:02d}] step {picked[i][0]:02d}  none  {line[:52]}", flush=True)
             # let the reply "play out" before the next line, as a listener would
             await asyncio.sleep(1.0)
             stop.set()
             await task
         rx.cancel()
 
-    def stats(xs: list[float]) -> str:
-        good = sorted(x for x in xs if x > 0)
-        if not good:
-            return "no turns"
-        p95 = good[max(0, int(np.ceil(0.95 * len(good))) - 1)]
-        return (
-            f"{len(good)} turns, median {statistics.median(good):.2f}s, p95 {p95:.2f}s, "
-            f"max {max(good):.2f}s"
-        )
-
+    window = "Google's default" if silence_ms is None else f"{silence_ms} ms"
     print(
-        f"\ndirect, {os.environ['SIM_LIVE_MODEL']}, silence {silence_ms} ms\n"
+        f"\ndirect, {os.environ['SIM_LIVE_MODEL']}, silence {window}\n"
         f"  to first chunk:   {stats(lats)}\n"
         f"  to first audible: {stats(audible)}\n"
         f"  replies that began before the line ended: {sum(x <= 0 for x in lats)}; "
@@ -250,6 +263,6 @@ if __name__ == "__main__":
     asyncio.run(
         main(
             int(sys.argv[1]) if len(sys.argv) > 1 else 18,
-            int(sys.argv[2]) if len(sys.argv) > 2 else 500,
+            silence_arg(sys.argv[2]) if len(sys.argv) > 2 else 500,
         )
     )

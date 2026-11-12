@@ -17,7 +17,6 @@ the first reconnect attempt; the plugin's default is 0.1).
 import json
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -35,25 +34,19 @@ from livekit.agents import (
 )
 from livekit.plugins import google
 
+from live_settings import (
+    MOOD,
+    SCENARIO_ID,
+    TEMPERATURE,
+    context_compression,
+    customer_prompt,
+    end_of_speech,
+    voice,
+)
+
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parents[1] / "backend"))
-
-from app.actor.prompt import build_customer_prompt, prompt_problems  # noqa: E402
-from app.content.loader import load_bundle  # noqa: E402
-
-SCENARIO_ID = "scenario-101"
-MOOD = "worried"
 RUNS = HERE / "runs"
 log = logging.getLogger("spike.agent")
-
-
-def customer_prompt() -> str:
-    bundle = load_bundle()
-    prompt = build_customer_prompt(bundle.scenarios[SCENARIO_ID], bundle.frame, MOOD)
-    problems = prompt_problems(prompt, bundle)
-    if problems:
-        raise SystemExit(f"prompt guard failed: {problems}")
-    return prompt.text
 
 
 class EventLog:
@@ -105,15 +98,10 @@ async def entrypoint(ctx: JobContext) -> None:
     ev = EventLog(RUNS / f"{ctx.room.name}-agent.jsonl")
     ev("start", model=model, resumption=resumption, scenario=SCENARIO_ID, mood=MOOD, overrides=opts)
     instructions = customer_prompt()
-    vad: types.RealtimeInputConfig | None = None
-    if silence_ms := opts.get("silence_ms") or os.environ.get("SPIKE_SILENCE_MS"):
-        # Gemini's server-side end-of-speech detection; unset leaves Google's defaults.
-        vad = types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_HIGH,
-                silence_duration_ms=int(silence_ms),
-            )
-        )
+    # Gemini's server-side end-of-speech detection; unset leaves Google's defaults.
+    silence_ms = opts.get("silence_ms") or os.environ.get("SPIKE_SILENCE_MS")
+    vad = end_of_speech(int(silence_ms) if silence_ms else None)
+    if vad:
         ev("vad", silence_ms=int(silence_ms), end_sensitivity="high")
     conn = FirstRetryAfter()
     conn.first_retry_s = float(
@@ -125,12 +113,10 @@ async def entrypoint(ctx: JobContext) -> None:
         model=model,
         # google-genai 3.x defaults to API v1, where the Live endpoint returns HTTP 404.
         api_version="v1beta",
-        voice=os.environ.get("SPIKE_VOICE", "Aoede"),
-        temperature=0.8,
+        voice=voice(),
+        temperature=TEMPERATURE,
         session_resumption=types.SessionResumptionConfig() if resumption else NOT_GIVEN,
-        context_window_compression=types.ContextWindowCompressionConfig(
-            sliding_window=types.SlidingWindow()
-        ),
+        context_window_compression=context_compression(),
         realtime_input_config=vad if vad else NOT_GIVEN,
         conn_options=conn,
     )
@@ -194,16 +180,24 @@ def _log_metrics(ev: EventLog, m: Any) -> None:
 
 
 def _instrument(rt: Any, ev: EventLog) -> None:
-    """Log reconnects and the full text Gemini generated, to compare with what was heard."""
+    """Log reconnects and the full text Gemini generated, to compare with what was heard.
+
+    A turn runs until turn_complete, the same boundary the plugin uses for a generation. Text
+    that arrives after the interrupted message but before turn_complete is the tail of the turn
+    that was cut, so it's logged again as that turn (interrupted=True, with the tail in `late`),
+    not as a turn of its own. See the README for what this can't see."""
     acquired = rt._report_connection_acquired
     generated: list[str] = []
+    cut: list[str] | None = None  # text already logged for an interrupted turn that's still open
 
     def report_acquired(dt: float, *a: Any, **k: Any) -> Any:
+        nonlocal cut
         # Text still buffered belongs to a turn the old socket never finished. Log it apart and
         # drop it, or it would be prepended to the first turn on the new connection.
         if generated:
             ev("model_turn_dropped", generated="".join(generated))
             generated.clear()
+        cut = None
         ev("model_connected", connect_s=dt, handle=rt.session_resumption_handle)
         return acquired(dt, *a, **k)
 
@@ -212,18 +206,27 @@ def _instrument(rt: Any, ev: EventLog) -> None:
     handle_sc = rt._handle_server_content
 
     def on_server_content(sc: types.LiveServerContent) -> Any:
+        nonlocal cut
         if sc.output_transcription and sc.output_transcription.text:
             generated.append(sc.output_transcription.text)
-        if sc.interrupted:
+        if sc.interrupted and cut is None:
             ev("model_interrupted", generated="".join(generated))
-        if sc.turn_complete or sc.interrupted:
             if generated:
+                ev("model_turn_text", generated="".join(generated), interrupted=True)
+            cut = list(generated)
+            generated.clear()
+        if sc.turn_complete:
+            if cut is not None and generated:
                 ev(
                     "model_turn_text",
-                    generated="".join(generated),
-                    interrupted=bool(sc.interrupted),
+                    generated="".join(cut + generated),
+                    interrupted=True,
+                    late="".join(generated),
                 )
+            elif generated:
+                ev("model_turn_text", generated="".join(generated), interrupted=False)
             generated.clear()
+            cut = None
         return handle_sc(sc)
 
     rt._handle_server_content = on_server_content
