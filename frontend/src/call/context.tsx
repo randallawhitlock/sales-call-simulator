@@ -64,6 +64,15 @@ export function planName(seen: Seen, planId: string | null): string {
   return seen.plans.find((p) => p.plan_id === planId)?.name ?? planId
 }
 
+export function mergeSeen(prev: Seen, found: Partial<Seen>): Seen {
+  return {
+    plans: mergeById(prev.plans, found.plans ?? [], (p) => p.plan_id),
+    providers: mergeById(prev.providers, found.providers ?? [], (p) => p.provider_id),
+    drugs: mergeById(prev.drugs, found.drugs ?? [], (d) => d.drug_id),
+    pharmacies: mergeById(prev.pharmacies, found.pharmacies ?? [], (p) => p.pharmacy_id),
+  }
+}
+
 export function mergeById<T>(prev: T[], next: T[], id: (item: T) => string): T[] {
   const out = [...prev]
   for (const item of next) {

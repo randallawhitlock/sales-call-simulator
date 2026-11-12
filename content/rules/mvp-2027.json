@@ -41,7 +41,8 @@
       "on_unknown": "instructor_review",
       "grading_effect": "points",
       "check_ids": ["disclaimer_before_benefits"],
-      "notes": "Timing moved from the first minute of the call to before any benefit discussion, and the SHIP reference was dropped. The judge backs up the element match for paraphrases."
+      "notes": "Timing moved from the first minute of the call to before any benefit discussion, and the SHIP reference was dropped. The judge backs up the element match for paraphrases.",
+      "standard_text": "We do not offer every plan available in your area. Currently we represent {organizations} organizations which offer {products} products in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options."
     },
     {
       "rule_id": "R-NEEDS",

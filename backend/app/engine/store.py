@@ -7,7 +7,7 @@ is a fold over it, so replaying a stored log reproduces the state that was grade
 import json
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
@@ -179,6 +179,17 @@ class Store:
             ),
         )
         return event
+
+    def last_event_type(self, session_id: str, types: Iterable[EventType]) -> EventType | None:
+        """The type of the latest event among ``types``, without reading the log."""
+        wanted = [t.value for t in types]
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT type FROM events WHERE session_id = ? "
+                f"AND type IN ({', '.join('?' * len(wanted))}) ORDER BY seq DESC LIMIT 1",
+                (session_id, *wanted),
+            ).fetchone()
+        return EventType(row[0]) if row else None
 
     def events(self, session_id: str) -> list[Event]:
         with self._lock:

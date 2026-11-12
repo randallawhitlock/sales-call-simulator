@@ -299,6 +299,19 @@ class SessionService:
     def state(self, session_id: str) -> SessionState:
         return SessionState.fold(self.events(session_id))
 
+    def on_hold(self, session_id: str) -> bool:
+        """Same answer as ``state(...).on_hold``, from the last hold event alone. The session
+        view is polled, so it must not fold the whole log."""
+        last = self.store.last_event_type(
+            session_id, (EventType.HOLD_STARTED, EventType.HOLD_ENDED)
+        )
+        return last is EventType.HOLD_STARTED
+
+    def turn_pending(self, session_id: str) -> bool:
+        """A customer reply is being generated for this session right now. A call screen that
+        reloads mid-turn uses it to wait for the reply instead of offering a new line."""
+        return session_id in self._inflight
+
     # Utterances
 
     def add_utterance(self, session_id: str, body: UtteranceIn) -> Utterance:
@@ -478,6 +491,17 @@ class SessionService:
                 f"runs {self.actor.name} on {PROMPT_VERSION}"
             )
         content = self.pinned_content(row)
+        return build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)
+
+    def review_prompt(self, row: SessionRow, content: ContentBundle) -> CustomerPrompt:
+        """The prompt an ended call's customer played from, for QA. Refuses if the server's
+        prompt template is not the one the session pinned: the rebuilt prompt would not be
+        what the customer was given. The actor may have changed since; review doesn't run it."""
+        if row.prompt_version != PROMPT_VERSION:
+            raise Conflict(
+                f"this session's customer played from prompt {row.prompt_version}; the server "
+                f"runs {PROMPT_VERSION}"
+            )
         return build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)
 
     def transcript(self, session_id: str) -> list[Utterance]:

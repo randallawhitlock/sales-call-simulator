@@ -5,6 +5,7 @@ truth, customer knowledge, persona rolls and seeded document defects stay server
 the call ends, when the answer key and findings unlock.
 """
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Annotated, Any
 
@@ -12,10 +13,12 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from app.content.catalog import Drug
-from app.content.common import Id, PlanId
+from app.content.common import Authority, Id, PlanId
+from app.content.rules import RuleStatus
 from app.content.scenario import CrmSeed, ElectionPeriod, Scenario
 from app.engine import research
 from app.engine.checks import CheckResult, run_checks
+from app.engine.consistency import ConsistencyFlag, check_consistency
 from app.engine.events import Event, EventType, Utterance, UtteranceIn
 from app.engine.records import (
     Application,
@@ -72,6 +75,10 @@ class SessionView(BaseModel):
     created_at: datetime
     started_at: datetime | None
     ended_at: datetime | None
+    on_hold: bool
+    """The customer is on hold. Live state, so a reloaded call screen shows it correctly."""
+    turn_pending: bool
+    """A customer reply is being generated right now."""
 
 
 class CreateSession(BaseModel):
@@ -101,9 +108,53 @@ class ApplicationView(BaseModel):
     warnings: list[str]
 
 
+class StandardText(BaseModel):
+    """Wording CMS publishes and the agent must say, filled in for this call."""
+
+    rule_id: str
+    title: str
+    text: str
+    citation: str
+    source_urls: list[str]
+    verified_as_of: date | None
+
+
+class RuleReference(BaseModel):
+    """A requirement in this app's own words, with where it comes from."""
+
+    rule_id: str
+    title: str
+    requirement: str
+    authority: Authority
+    citation: str
+    source_urls: list[str]
+    status: RuleStatus
+    verified_as_of: date | None
+
+
+class Reference(BaseModel):
+    """The reference drawer. Standardized CMS text stays apart from the app's own wording.
+    General requirements only: nothing here is about a case. Retired rules and rules not in
+    effect on the call date are left out."""
+
+    ruleset_version: str
+    verified_as_of: date
+    standard: list[StandardText]
+    rules: list[RuleReference]
+
+
 class AnswerKey(BaseModel):
     scenario: Scenario
     document_defects: dict[str, str]
+
+
+class ActorQa(BaseModel):
+    """Content QA on the AI customer: what it said that nothing gave it. Never scored."""
+
+    session_id: str
+    actor: str | None
+    prompt_version: str | None
+    flags: list[ConsistencyFlag]
 
 
 class Findings(BaseModel):
@@ -137,6 +188,8 @@ def session_view(service: SessionService, row: SessionRow) -> SessionView:
         created_at=row.created_at,
         started_at=row.started_at,
         ended_at=row.ended_at,
+        on_hold=row.status is SessionStatus.ACTIVE and service.on_hold(row.session_id),
+        turn_pending=service.turn_pending(row.session_id),
     )
 
 
@@ -148,6 +201,42 @@ def _found(fn: Any, *args: Any) -> Any:
 
 
 # Sessions
+
+
+@router.get("/reference")
+def reference(service: Service) -> Reference:
+    ruleset, frame = service.content.ruleset, service.content.frame
+    current = [r for r in ruleset.rules if r.current_on(frame.call_date)]
+    fill = {"organizations": frame.carriers_represented, "products": frame.products_offered}
+    return Reference(
+        ruleset_version=ruleset.ruleset_version,
+        verified_as_of=ruleset.verified_as_of,
+        standard=[
+            StandardText(
+                rule_id=r.rule_id,
+                title=r.title,
+                text=r.standard_text.format(**fill),
+                citation=r.citation,
+                source_urls=[str(u) for u in r.source_urls],
+                verified_as_of=r.verified_as_of,
+            )
+            for r in current
+            if r.standard_text is not None
+        ],
+        rules=[
+            RuleReference(
+                rule_id=r.rule_id,
+                title=r.title,
+                requirement=r.requirement,
+                authority=r.authority,
+                citation=r.citation,
+                source_urls=[str(u) for u in r.source_urls],
+                status=r.status,
+                verified_as_of=r.verified_as_of,
+            )
+            for r in current
+        ],
+    )
 
 
 @router.get("/scenarios")
@@ -202,6 +291,22 @@ def transcript(session_id: str, service: Service) -> list[Utterance]:
 @router.get("/sessions/{session_id}/events")
 def events(session_id: str, service: Service) -> list[Event]:
     return service.events(session_id)
+
+
+@router.get("/sessions/{session_id}/found")
+def found(session_id: str, service: Service) -> research.Found:
+    """What the learner's searches have returned so far, rebuilt from the event log for a
+    reloaded call screen. Reading it logs nothing."""
+    searches = [
+        (str(e.payload.get("kind")), [str(i) for i in _ids(e.payload.get("result_ids"))])
+        for e in service.events(session_id)
+        if e.type is EventType.SEARCH
+    ]
+    return research.found(service.content.catalog, searches)
+
+
+def _ids(value: object) -> Sequence[object]:
+    return value if isinstance(value, list) else []
 
 
 # Research
@@ -538,4 +643,17 @@ def findings(session_id: str, service: Service) -> Findings:
         catalog_version=row.catalog_version,
         ruleset_version=row.ruleset_version,
         results=results,
+    )
+
+
+@router.get("/sessions/{session_id}/actor-qa")
+def actor_qa(session_id: str, service: Service) -> ActorQa:
+    """Doctors, drugs and dollar amounts the customer said that neither its prompt nor the
+    agent gave it. For content authors; a flag never counts against the learner."""
+    row = service.require_ended(session_id)
+    content = service.pinned_content(row)
+    prompt = service.review_prompt(row, content)
+    flags = check_consistency(prompt.text, content.catalog, service.store.utterances(session_id))
+    return ActorQa(
+        session_id=session_id, actor=row.actor, prompt_version=row.prompt_version, flags=flags
     )

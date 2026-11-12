@@ -51,4 +51,24 @@ describe('Review', () => {
     const transcriptCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/transcript'))
     expect(transcriptCalls).toHaveLength(1)
   })
+
+  it('lists what the AI customer made up, marked as not scored', async () => {
+    const flag = { utt_id: 'u0004', kind: 'drug', said: 'lisinopril', text: 'They added lisinopril.' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const body = url.endsWith('/actor-qa')
+          ? { session_id: 's-test', actor: 'scripted', prompt_version: 'v', flags: [flag] }
+          : url.endsWith('/transcript')
+            ? []
+            : { results: [] }
+        return new Response(JSON.stringify(body), { status: 200 })
+      }),
+    )
+    render(<Harness initial={[]} />)
+
+    await waitFor(() => expect(screen.getByText('AI customer check')).toBeTruthy())
+    expect(screen.getByText(/Not part of your score/)).toBeTruthy()
+    expect(screen.getByText('“lisinopril”', { exact: false })).toBeTruthy()
+  })
 })

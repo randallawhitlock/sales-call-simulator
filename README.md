@@ -36,14 +36,14 @@ the conversation and the research on one screen and grades both.
 
 ## Status
 
-Pre-alpha. The content and the deterministic core are in. The call screen and the text actor
-are working; the rest of M2 is in progress.
+Pre-alpha. The content, the deterministic core, the call screen and the text actor are in.
+Next up are the judge and the debrief (M3).
 
 | Milestone | What lands | State |
 |---|---|---|
 | M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold, CI | Done |
 | M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done; voice spike pending |
-| M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer | In progress: call screen, Gemini text actor, offline scripted actor |
+| M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer, objections, reference drawer, rejoin after reload, actor QA | Done; first live actor QA run pending |
 | M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, retry | Planned |
 | M4 Voice | LiveKit agent worker on Gemini Live | Planned |
 | M5 Hardening | Resilience tests, demo script | Planned |
@@ -148,9 +148,14 @@ right. "Pin to record" saves a research result as evidence; "Use as source" on a
 lets a record field or the enrollment consent cite it. Ending the call shows the rule-check
 findings.
 
+Each case also lists objections: how the customer reacts if you rush, use insurance words,
+pitch a plan before asking about their doctors, pressure them, tell them to wait, or ask for
+their Medicare number. Some settle once you fix what caused them, and some refusals hold for
+the rest of the call. They live in the customer's prompt, so text and voice react the same way.
+
 Without `GEMINI_API_KEY` the customer is an offline scripted stand-in that answers from the
-case's facts by topic and reveal rule. It is enough to click through a call, not to practice
-one.
+case's facts by topic and reveal rule, and raises an objection when it spots a simple trigger.
+It is enough to click through a call, not to practice one.
 
 The backend validates every content file at startup, and checks the files against each other
 (every plan a case names exists, the disclaimer numbers match the catalog, customer knowledge
@@ -164,7 +169,12 @@ The checks CI runs on every pull request:
 cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q
 ```
 
-`uv run pytest -m live` runs the opt-in tests that call a real model (needs `GEMINI_API_KEY` and `SIM_ACTOR_MODEL`).
+`uv run pytest -m live` runs the opt-in tests that call a real model (needs `GEMINI_API_KEY`
+and `SIM_ACTOR_MODEL`). They talk to the customer over three seeds per case and fail with a
+report of every early reveal, invented fact, leak or character break, including under lines
+that try to pull the customer out of its role. Every build runs the same checks against the
+scripted stand-in. On a rate-limited key, set `SIM_LIVE_RPM` (the Gemini free tier allows 5) and
+the tests pace themselves and wait out a 429; a full run is about 75 calls.
 
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm run build
@@ -183,6 +193,8 @@ are git-ignored. Never commit real values.
 | `SIM_ACTOR_MODEL` | Text actor model id. Required with a key; never defaulted, so each session records the exact model | M2 |
 | `SIM_ACTOR` | `gemini` or `scripted` (default: `gemini` when a key is set) | M2 |
 | `SIM_ACTOR_TIMEOUT_S` | Seconds one customer reply may take before the turn fails and can be retried (0.1 to 600, default 30) | M2 |
+| `SIM_API_URL` | Backend the frontend dev server proxies `/api` to (default `http://127.0.0.1:8000`), for running a second checkout side by side | M2 |
+| `SIM_LIVE_RPM` | Requests per minute `pytest -m live` may make, for rate-limited keys (unset: no pacing) | M2 |
 | `ANTHROPIC_API_KEY` | Judge | M3 |
 | `SIM_JUDGE_MODEL` | Judge model id (default `claude-opus-5-5`) | M3 |
 | `SIM_LIVE_MODEL` | Gemini Live model id, always pinned | M4 |

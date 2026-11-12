@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { get, type CheckResult, type Findings, type Utterance } from '../api.ts'
+import { get, type CheckResult, type ConsistencyFlag, type ActorQa, type Findings, type Utterance } from '../api.ts'
 import { Badge, ErrorNote } from '../ui.tsx'
 import { errorText } from '../util.ts'
 import { mergeTranscript, useCall } from './context.tsx'
@@ -17,12 +17,18 @@ const TONE: Record<CheckResult['status'], 'good' | 'bad' | 'warn' | 'info'> = {
 export function Review() {
   const { base, transcript, setTranscript } = useCall()
   const [findings, setFindings] = useState<CheckResult[] | null>(null)
+  const [actorFlags, setActorFlags] = useState<ConsistencyFlag[]>([])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     get<Findings>(`${base}/findings`).then(
       (f) => setFindings(f.results),
       (err: unknown) => setError(errorText(err)),
+    )
+    // Content QA only; the debrief works without it.
+    get<ActorQa>(`${base}/actor-qa`).then(
+      (qa) => setActorFlags(qa.flags ?? []),
+      () => {},
     )
     // The call may have ended while a turn was in flight; show the transcript that was
     // graded, not whatever the call screen last had.
@@ -60,6 +66,22 @@ export function Review() {
             ))}
           </tbody>
         </table>
+      )}
+      {actorFlags.length > 0 && (
+        <section className="actor-qa">
+          <h3>AI customer check</h3>
+          <p className="muted">
+            Not part of your score. The AI customer said these things that its case never gave it, so treat
+            them as made up. Content authors use this to fix the case.
+          </p>
+          <ul>
+            {actorFlags.map((f) => (
+              <li key={`${f.utt_id}-${f.kind}-${f.said}`}>
+                <Badge tone="warn">{f.kind}</Badge> “{f.said}” <span className="muted small-text">in {f.utt_id}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       <h3>Transcript</h3>
       <ol className="transcript static">

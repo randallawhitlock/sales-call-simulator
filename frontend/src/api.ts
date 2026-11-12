@@ -51,6 +51,37 @@ export function clientId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`
 }
 
+// Reference
+
+export type Authority = 'regulatory' | 'cms_guidance' | 'plan' | 'organization' | 'training'
+
+export interface StandardText {
+  rule_id: string
+  title: string
+  text: string
+  citation: string
+  source_urls: string[]
+  verified_as_of: string | null
+}
+
+export interface RuleReference {
+  rule_id: string
+  title: string
+  requirement: string
+  authority: Authority
+  citation: string
+  source_urls: string[]
+  status: 'approved' | 'unverified' | 'retired' | 'disputed'
+  verified_as_of: string | null
+}
+
+export interface Reference {
+  ruleset_version: string
+  verified_as_of: string
+  standard: StandardText[]
+  rules: RuleReference[]
+}
+
 // Sessions
 
 export interface Health {
@@ -93,8 +124,12 @@ export interface Session {
   status: SessionStatus
   frame: Frame
   crm_seed: CrmSeed
+  created_at: string
   started_at: string | null
   ended_at: string | null
+  /** Live state, so a reloaded call screen shows hold and a reply in flight correctly. */
+  on_hold: boolean
+  turn_pending: boolean
 }
 
 export interface Utterance {
@@ -347,4 +382,19 @@ export interface CheckResult {
 
 export interface Findings {
   results: CheckResult[]
+}
+
+/** Content QA on the AI customer. Never scored. */
+export interface ConsistencyFlag {
+  utt_id: string
+  kind: 'doctor' | 'drug' | 'amount'
+  said: string
+  text: string
+}
+
+export interface ActorQa {
+  session_id: string
+  actor: string | null
+  prompt_version: string | null
+  flags: ConsistencyFlag[]
 }

@@ -130,6 +130,30 @@ class KnowledgeItem(ContentModel):
     misconception: bool = False
 
 
+class ObjectionTrigger(StrEnum):
+    """Something the agent does that the customer notices and reacts to. Each has a fixed lay
+    description in the customer prompt, so authors pick a trigger rather than write one."""
+
+    RUSHED = "rushed"
+    JARGON = "jargon"
+    EARLY_PITCH = "early_pitch"
+    PRESSURE = "pressure"
+    ASKED_TO_WAIT = "asked_to_wait"
+    PERSONAL_INFO = "personal_info"
+
+
+class Objection(ContentModel):
+    """How the customer reacts when the agent does ``trigger``. Lives in the prompt, because
+    Gemini Live takes no mid-call system messages, so text and voice react the same way."""
+
+    objection_id: Id
+    trigger: ObjectionTrigger
+    lay_text: str
+    """What the customer says, in lay words."""
+    settles_when: str | None = None
+    """What settles it, in lay words. None: a reasonable refusal that holds for the call."""
+
+
 class OutcomeVerdict(StrEnum):
     ACCEPTABLE = "acceptable"
     EXCLUDED = "excluded"
@@ -175,6 +199,7 @@ class Scenario(ContentModel):
     crm_seed: CrmSeed
     truth: Truth
     knowledge: tuple[KnowledgeItem, ...] = Field(min_length=1)
+    objections: tuple[Objection, ...] = ()
     outcomes: tuple[Outcome, ...] = Field(min_length=1)
     traps: tuple[Trap, ...] = ()
     rule_ids: tuple[RuleId, ...] = Field(min_length=1)
@@ -186,6 +211,8 @@ class Scenario(ContentModel):
     @model_validator(mode="after")
     def _consistent(self) -> Self:
         require_unique("knowledge ids", (k.item_id for k in self.knowledge))
+        require_unique("objection ids", (o.objection_id for o in self.objections))
+        require_unique("objection triggers", (o.trigger.value for o in self.objections))
         require_unique("outcome ids", (o.outcome_id for o in self.outcomes))
         require_unique("trap ids", (t.trap_id for t in self.traps))
         if not any(o.verdict is OutcomeVerdict.ACCEPTABLE for o in self.outcomes):
@@ -199,7 +226,10 @@ class Scenario(ContentModel):
             raise ValueError(
                 f"{self.scenario_id}: canaries not found in truth-only text: {unplanted}"
             )
-        customer_text = " ".join(k.lay_text for k in self.knowledge)
+        customer_text = " ".join(
+            [k.lay_text for k in self.knowledge]
+            + [f"{o.lay_text} {o.settles_when or ''}" for o in self.objections]
+        )
         exposed = [c for c in self.leak_canaries if c in customer_text]
         if exposed:
             raise ValueError(f"{self.scenario_id}: canaries in customer knowledge: {exposed}")
