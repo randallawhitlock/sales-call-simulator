@@ -593,6 +593,64 @@ _HEDGE = re.compile(r"\b(no|not|don't|dont)\b")
 its own; the result goes to the judge instead."""
 
 
+_ENROLLING = (
+    r"(?:enrol\w*|submit\w*|sign(?:ed|ing)? (?:you )?up|application|"
+    r"(?:go ahead|proceed|move forward) with"
+    r"(?! (?:(?:a|some|a few|my|the|our) )?(?:questions?|review|checklist)))"
+)
+_ENROLLMENT_ASK = re.compile(
+    r"\b(?:would you like|do you want|did you want|shall i|should i|can i|could i|may i|"
+    r"are you ready|ready for me to|want me to|like me to|okay if i|ok if i|all right if i|"
+    r"do i have your (?:permission|consent|okay|ok|go-ahead|approval))\b[^.?!]*?\b"
+    + _ENROLLING
+    + r"|\b"
+    + _ENROLLING
+    + r"\b[^.?!]*?\b(?:is that (?:okay|ok|all right|alright)|if that's (?:okay|ok|all right)|"
+    r"(?:okay|ok) with you)\b"
+)
+"""A learner sentence that asks the customer's leave to enroll or submit. The enrollment words
+have to be what is asked: "Before I submit anything, do you have your card handy?" mentions
+submitting and asks something else."""
+_ENROLLMENT_YES = re.compile(
+    r"\b(sign me up|enrol+ me|get me (?:signed up|enrol+ed)|"
+    r"(?:want|like) to (?:enrol+|sign up|join|go (?:ahead )?with)|"
+    r"submit (?:it|that|the application|my application|my enrol+ment))\b"
+)
+"""A customer line that names enrollment itself, so it needs no question before it."""
+ENROLLMENT_ASK_LOOKBACK = 3
+"""Learner lines before the yes in which the ask may sit, so answering a question the customer
+raised about the plan doesn't lose the ask."""
+
+
+def _yes_to_enrollment(f: Facts, utt: Utterance) -> bool:
+    """Whether a customer's yes is about enrolling: it says so itself, or it follows a learner
+    ask to enroll with nothing but answers to the customer in between. A yes to "Do you have
+    your card?" is a yes, but not consent, even if an ask came earlier; so is a yes after the
+    customer objected to the ask."""
+    if _ENROLLMENT_YES.search(_fold(utt.heard_text)):
+        return True
+    before = f.utterances[: next(i for i, u in enumerate(f.utterances) if u.utt_id == utt.utt_id)]
+    learner_lines = 0
+    for prior in reversed(before):
+        if not prior.delivered:
+            continue
+        if prior.speaker is Speaker.CUSTOMER:
+            if _consent_signal(prior.heard_text) == "objection":
+                return False
+            continue
+        if prior.speaker is not Speaker.LEARNER:
+            continue
+        text = _fold(prior.heard_text)
+        if _ENROLLMENT_ASK.search(text):
+            return True
+        learner_lines += 1
+        if learner_lines == 1 and text.endswith("?"):
+            return False  # the yes answers this question, which is about something else
+        if learner_lines >= ENROLLMENT_ASK_LOOKBACK:
+            return False
+    return False
+
+
 def _consent_signal(text: str) -> str:
     """``objection``, ``hedge`` or ``clear`` for one customer utterance."""
     folded = _fold(text)
@@ -652,6 +710,15 @@ def _consent(f: Facts, app: Application) -> CheckResult:
             return fail("The customer objected after saying yes, before submission.")
         if later_signal == "hedge":
             hedges.append(later.utt_id)
+    if not _yes_to_enrollment(f, utt):
+        return _result(
+            check,
+            CheckStatus.UNGRADED,
+            "The customer said yes, but not clearly to enrolling: the line does not mention "
+            "enrollment and the question before it did not ask about it. Needs the judge.",
+            seqs,
+            utts + hedges,
+        )
     if hedges:
         return _result(
             check,
@@ -831,34 +898,57 @@ _NOT_BENEFIT_TALK = re.compile(
 """Names like "Larkspur Benefits Group" or "Retiree Benefits Center" aren't benefit talk."""
 
 
-def _talks_benefits(text: str, frame: CallFrame) -> str | None:
-    """``strong``, ``weak`` or None."""
-    folded = _NOT_BENEFIT_TALK.sub(" ", _fold(text).replace(_fold(frame.agency_name), " "))
-    if _BENEFIT_TALK.search(folded):
-        return "strong"
-    if _MAYBE_BENEFIT_TALK.search(folded):
-        return "weak"
-    return None
+def _benefit_talk_at(folded: str, frame: CallFrame) -> tuple[int | None, int | None]:
+    """Where plainly-benefit talk and possibly-benefit talk first start in a folded line, as
+    offsets into it. Names that only look like benefit talk are blanked at equal length, so the
+    offsets stay comparable with other matches on the same folded text."""
+
+    def blank(m: re.Match[str]) -> str:
+        return " " * len(m.group())
+
+    agency = _fold(frame.agency_name)
+    masked = re.sub(re.escape(agency), blank, folded) if agency else folded
+    masked = _NOT_BENEFIT_TALK.sub(blank, masked)
+    plain = [m.span() for m in _BENEFIT_TALK.finditer(masked)]
+    # A bare "benefit" inside plain benefit talk ("dental benefits") is that talk, not a second,
+    # weaker mention; one elsewhere in the line stands on its own.
+    weak = next(
+        (
+            m.start()
+            for m in _MAYBE_BENEFIT_TALK.finditer(masked)
+            if not any(a <= m.start() and m.end() <= b for a, b in plain)
+        ),
+        None,
+    )
+    return (plain[0][0] if plain else None, weak)
 
 
 def disclaimer_before_benefits(f: Facts) -> CheckResult:
     check = CheckId.DISCLAIMER_BEFORE_BENEFITS
     learner = f.learner_utterances()
-    first_hit: dict[str, int] = {}
+    # Positions are (learner turn, offset in the folded line): a turn index alone can't order a
+    # disclaimer and benefit talk said in the same turn.
+    Pos = tuple[int, int]
+    first_hit: dict[str, Pos] = {}
+    strong_at: Pos | None = None
+    weak_at: Pos | None = None
+    elements = _disclaimer_elements(f.frame)
     for i, u in enumerate(learner):
         text = _fold(u.heard_text)
-        for name, pattern in _disclaimer_elements(f.frame).items():
-            if name not in first_hit and pattern.search(text):
-                first_hit[name] = i
-    talk = [_talks_benefits(u.heard_text, f.frame) for u in learner]
-    strong_at = next((i for i, t in enumerate(talk) if t == "strong"), None)
-    weak_at = next((i for i, t in enumerate(talk) if t == "weak"), None)
-    names = list(_disclaimer_elements(f.frame))
-    missing = [n for n in names if n not in first_hit]
-    cited = {learner[i].utt_id for i in first_hit.values()}
+        for name, pattern in elements.items():
+            hit = pattern.search(text)
+            if name not in first_hit and hit:
+                first_hit[name] = (i, hit.end())
+        strong, weak = _benefit_talk_at(text, f.frame)
+        if strong_at is None and strong is not None:
+            strong_at = (i, strong)
+        if weak_at is None and weak is not None:
+            weak_at = (i, weak)
+    missing = [n for n in elements if n not in first_hit]
+    cited = {learner[i].utt_id for i, _ in first_hit.values()}
     for at in (strong_at, weak_at):
         if at is not None:
-            cited.add(learner[at].utt_id)
+            cited.add(learner[at[0]].utt_id)
     if missing:
         detail = f"Disclaimer elements not found: {', '.join(missing)}."
         if first_hit or strong_at is not None:
