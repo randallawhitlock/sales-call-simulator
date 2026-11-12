@@ -1,6 +1,8 @@
 """Session lifecycle, learner input rules and replay."""
 
 import json
+import threading
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -8,7 +10,8 @@ from fastapi.testclient import TestClient
 
 from app.content.loader import load_bundle
 from app.engine.checks import CoverageClaim, Facts, claim_backed, run_checks
-from app.engine.records import SessionState
+from app.engine.events import Channel, EventType, Speaker, UtteranceIn
+from app.engine.records import SessionState, SubmitIn
 from app.engine.store import Store
 from tests.harness import Call
 from tests.test_goldens import A_DRUGS, MAPLE_CHOICE, SUMMIT_CLASSIC, a_call, enroll_to_consent
@@ -231,3 +234,113 @@ def test_a_stored_log_replays_to_the_same_findings(client: TestClient, tmp_path:
 def test_every_case_runs_with_any_seed(client: TestClient, seed: int) -> None:
     for scenario_id in load_bundle().scenarios:
         Call(client, scenario_id, seed=seed).start().end()
+
+
+def test_a_failed_start_leaves_the_session_unstarted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call = Call(client, CASE_A)
+    service = call.service
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("disk full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service.store, "append_event", boom)
+        with pytest.raises(RuntimeError):
+            service.start(call.sid)
+    assert service.get(call.sid).status.value == "created"
+    call.start()
+    assert [e["type"] for e in call.get("/events")] == ["call_started"]
+
+
+@pytest.mark.parametrize("write", ["log", "utterance"])
+def test_an_end_cannot_slip_inside_a_write(client: TestClient, write: str) -> None:
+    """The end is attempted between the write's active check and its append. It has to wait,
+    so nothing lands after the call-ended event."""
+    call = Call(client, CASE_A).start()
+    service = call.service
+    clock = service.clock
+    ender = threading.Thread(target=service.end, args=(call.sid,))
+    waited: list[bool] = []
+
+    def end_mid_write() -> datetime:
+        if not waited:
+            ender.start()
+            ender.join(timeout=0.3)
+            waited.append(ender.is_alive())
+        return clock()
+
+    service.clock = end_mid_write
+    try:
+        if write == "log":
+            service.log(call.sid, EventType.FOLLOWUP_CREATED, {})
+        else:
+            service.add_utterance(
+                call.sid,
+                UtteranceIn(
+                    client_utt_id="race-0001",
+                    speaker=Speaker.LEARNER,
+                    channel=Channel.TEXT,
+                    text="Hi",
+                ),
+            )
+    finally:
+        service.clock = clock
+        ender.join()
+    assert waited == [True]
+    assert [e.type for e in service.events(call.sid)][-1] is EventType.CALL_ENDED
+
+
+def test_a_turn_refuses_content_the_session_was_not_pinned_to(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    service = call.service
+    row = service.get(call.sid)
+    service.store.put_session(row.model_copy(update={"scenario_version": row.scenario_version + 1}))
+    assert "pinned to content" in json.dumps(call.turn("Hello?", expect=409))
+
+
+def test_nothing_is_logged_against_unpinned_content_but_the_call_can_end(
+    client: TestClient,
+) -> None:
+    call = Call(client, CASE_A).start()
+    service = call.service
+    row = service.get(call.sid)
+    service.store.put_session(row.model_copy(update={"catalog_version": "an-older-catalog"}))
+    before = len(call.get("/events"))
+    call.get("/research/plans", expect=409, zip="00041")
+    call.put("/record/drugs", {"status": "none"}, expect=409)
+    assert len(call.get("/events")) == before
+    call.end()
+
+
+def test_a_field_save_cannot_land_after_a_submit(client: TestClient) -> None:
+    """The submit is attempted between the save's draft check and its append; it has to wait,
+    so the save is logged first and the submission stands on the saved fields."""
+    call, app_id = enroll_to_consent(client)
+    service = call.service
+    fields = service.application(call.sid, app_id).fields
+    clock = service.clock
+
+    def submit() -> None:
+        service.submit_application(call.sid, app_id, SubmitIn(idempotency_key="k" * 12))
+
+    racer = threading.Thread(target=submit)
+    waited: list[bool] = []
+
+    def submit_mid_save() -> datetime:
+        if not waited:
+            racer.start()
+            racer.join(timeout=0.3)
+            waited.append(racer.is_alive())
+        return clock()
+
+    service.clock = submit_mid_save
+    try:
+        service.update_application(call.sid, app_id, fields)
+    finally:
+        service.clock = clock
+        racer.join()
+    assert waited == [True]
+    types = [e.type for e in service.events(call.sid)]
+    assert types[-2:] == [EventType.APPLICATION_UPDATED, EventType.APPLICATION_SUBMITTED]

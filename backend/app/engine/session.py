@@ -198,14 +198,17 @@ class SessionService:
         return row
 
     def start(self, session_id: str) -> SessionRow:
-        row = self.get(session_id)
-        if row.status is not SessionStatus.CREATED:
-            raise Conflict(f"session is {row.status.value}")
-        now = self.clock()
-        row = row.model_copy(update={"status": SessionStatus.ACTIVE, "started_at": now})
-        self.store.put_session(row)
-        self.store.append_event(session_id, EventType.CALL_STARTED, at=now, t_ms=0)
-        return row
+        """The status check, the status change and the start event commit together, so two
+        starts can't both win and a crash can't leave an active call with no start event."""
+        with self.store.transaction():
+            row = self.get(session_id)
+            if row.status is not SessionStatus.CREATED:
+                raise Conflict(f"session is {row.status.value}")
+            now = self.clock()
+            row = row.model_copy(update={"status": SessionStatus.ACTIVE, "started_at": now})
+            self.store.put_session(row)
+            self.store.append_event(session_id, EventType.CALL_STARTED, at=now, t_ms=0)
+            return row
 
     def end(self, session_id: str, reason: str = "learner_ended") -> SessionRow:
         """Takes effect at once, even while the customer model is still answering: the turn
@@ -278,11 +281,16 @@ class SessionService:
         type: EventType,
         payload: dict[str, JsonValue] | None = None,
     ) -> Event:
-        row = self.require_active(session_id)
-        now = self.clock()
-        return self.store.append_event(
-            session_id, type, at=now, t_ms=self._t_ms(row, now), payload=payload
-        )
+        # Checked inside the write transaction, so an end can't commit between the check and
+        # the append and leave activity after CALL_ENDED. Nothing is logged against content the
+        # session wasn't pinned to; ending the call stays possible.
+        with self.store.transaction():
+            row = self.require_active(session_id)
+            self.pinned_content(row)
+            now = self.clock()
+            return self.store.append_event(
+                session_id, type, at=now, t_ms=self._t_ms(row, now), payload=payload
+            )
 
     def events(self, session_id: str) -> list[Event]:
         self.get(session_id)
@@ -296,16 +304,17 @@ class SessionService:
     def add_utterance(self, session_id: str, body: UtteranceIn) -> Utterance:
         """Idempotent per ``client_utt_id``. Reusing an id for a different line is refused,
         so a client bug can't silently get back someone else's turn."""
-        row = self.require_active(session_id)
-        now = self.clock()
-        utt, new = self.store.append_utterance(
-            session_id,
-            client_utt_id=body.client_utt_id,
-            at=now,
-            build=lambda utt_id: Utterance.from_input(
-                body, utt_id=utt_id, session_id=session_id, t_ms=self._t_ms(row, now)
-            ),
-        )
+        with self.store.transaction():
+            row = self.require_active(session_id)
+            now = self.clock()
+            utt, new = self.store.append_utterance(
+                session_id,
+                client_utt_id=body.client_utt_id,
+                at=now,
+                build=lambda utt_id: Utterance.from_input(
+                    body, utt_id=utt_id, session_id=session_id, t_ms=self._t_ms(row, now)
+                ),
+            )
         if not new and (utt.speaker, utt.channel, utt.text) != (
             body.speaker,
             body.channel,
@@ -457,7 +466,10 @@ class SessionService:
 
     def customer_prompt(self, row: SessionRow) -> CustomerPrompt:
         """The prompt the session's customer plays from. Refuses if the server's prompt
-        template or model differs from what the session pinned."""
+        template or model differs from what the session pinned, or if the loaded content
+        is not the version the session was created on: a restart onto a new content version
+        must not change the customer's facts mid-call. The call frame carries no version, so an
+        edit to it under the same ``frame_id`` is not caught."""
         pinned = (row.prompt_version, row.actor)
         running = (PROMPT_VERSION, self.actor.name)
         if pinned != running:
@@ -465,8 +477,8 @@ class SessionService:
                 f"this session's customer is {row.actor} on {row.prompt_version}; the server "
                 f"runs {self.actor.name} on {PROMPT_VERSION}"
             )
-        scenario = self.content.scenario(row.scenario_id)
-        return build_customer_prompt(scenario, self.content.frame, row.mood)
+        content = self.pinned_content(row)
+        return build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)
 
     def transcript(self, session_id: str) -> list[Utterance]:
         self.get(session_id)
@@ -533,54 +545,61 @@ class SessionService:
     def update_application(
         self, session_id: str, app_id: str, fields: ApplicationFields
     ) -> Application:
-        app = self._draft(session_id, app_id)
-        if fields != app.fields and (app.pecl_marks or app.consent_seq is not None):
-            # The checklist and the customer's yes were for the application as it stood.
-            raise Conflict("start a new application to change it after checklist review")
-        self._check_application(fields)
-        self.log(
-            session_id,
-            EventType.APPLICATION_UPDATED,
-            {"application_id": app_id, "fields": fields.model_dump(mode="json")},
-        )
-        return self.application(session_id, app_id)
+        with self.store.transaction():
+            app = self._draft(session_id, app_id)
+            if fields != app.fields and (app.pecl_marks or app.consent_seq is not None):
+                # The checklist and the customer's yes were for the application as it stood.
+                raise Conflict("start a new application to change it after checklist review")
+            self._check_application(fields)
+            self.log(
+                session_id,
+                EventType.APPLICATION_UPDATED,
+                {"application_id": app_id, "fields": fields.model_dump(mode="json")},
+            )
+            return self.application(session_id, app_id)
 
     def mark_pecl(self, session_id: str, app_id: str, body: PeclMarkIn) -> Application:
-        app = self._draft(session_id, app_id)
-        pecl = self.content.catalog.plan_document(
-            app.fields.plan_id, DocumentKind.PRE_ENROLLMENT_CHECKLIST
-        )
-        if body.item_index >= len(pecl.checklist_items):
-            raise Invalid(f"the checklist has {len(pecl.checklist_items)} items")
-        self.log(
-            session_id,
-            EventType.PECL_ITEM_MARKED,
-            {
-                "application_id": app_id,
-                "document_id": pecl.document_id,
-                "item_index": body.item_index,
-            },
-        )
-        return self.application(session_id, app_id)
+        with self.store.transaction():
+            app = self._draft(session_id, app_id)
+            pecl = self.content.catalog.plan_document(
+                app.fields.plan_id, DocumentKind.PRE_ENROLLMENT_CHECKLIST
+            )
+            if body.item_index >= len(pecl.checklist_items):
+                raise Invalid(f"the checklist has {len(pecl.checklist_items)} items")
+            self.log(
+                session_id,
+                EventType.PECL_ITEM_MARKED,
+                {
+                    "application_id": app_id,
+                    "document_id": pecl.document_id,
+                    "item_index": body.item_index,
+                },
+            )
+            return self.application(session_id, app_id)
 
     def mark_consent(self, session_id: str, app_id: str, body: ConsentIn) -> Application:
-        self._draft(session_id, app_id)
-        utt = next((u for u in self.store.utterances(session_id) if u.utt_id == body.utt_id), None)
-        if utt is None:
-            raise Invalid(f"no utterance {body.utt_id} in this call")
-        # The mark is the learner's annotation. Whether the line really is a clear, timely yes
-        # is graded by consent_before_submit; here it only has to be the customer's own heard
-        # words.
-        if utt.speaker is not Speaker.CUSTOMER:
-            raise Invalid(f"{body.utt_id} is not the customer's; consent must cite the customer")
-        if not utt.delivered:
-            raise Invalid(f"{body.utt_id} was cut off before the customer said anything")
-        self.log(
-            session_id,
-            EventType.CONSENT_MARKED,
-            {"application_id": app_id, "utt_id": body.utt_id},
-        )
-        return self.application(session_id, app_id)
+        with self.store.transaction():
+            self._draft(session_id, app_id)
+            utt = next(
+                (u for u in self.store.utterances(session_id) if u.utt_id == body.utt_id), None
+            )
+            if utt is None:
+                raise Invalid(f"no utterance {body.utt_id} in this call")
+            # The mark is the learner's annotation. Whether the line really is a clear, timely yes
+            # is graded by consent_before_submit; here it only has to be the customer's own heard
+            # words.
+            if utt.speaker is not Speaker.CUSTOMER:
+                raise Invalid(
+                    f"{body.utt_id} is not the customer's; consent must cite the customer"
+                )
+            if not utt.delivered:
+                raise Invalid(f"{body.utt_id} was cut off before the customer said anything")
+            self.log(
+                session_id,
+                EventType.CONSENT_MARKED,
+                {"application_id": app_id, "utt_id": body.utt_id},
+            )
+            return self.application(session_id, app_id)
 
     def submit_application(self, session_id: str, app_id: str, body: SubmitIn) -> Application:
         """Idempotent: a retried submit with the same key returns the submitted application
@@ -605,11 +624,12 @@ class SessionService:
         return self.application(session_id, app_id)
 
     def withdraw_application(self, session_id: str, app_id: str) -> Application:
-        app = self.application(session_id, app_id)
-        if app.status == "withdrawn":
-            raise Conflict("application already withdrawn")
-        self.log(session_id, EventType.APPLICATION_WITHDRAWN, {"application_id": app_id})
-        return self.application(session_id, app_id)
+        with self.store.transaction():
+            app = self.application(session_id, app_id)
+            if app.status == "withdrawn":
+                raise Conflict("application already withdrawn")
+            self.log(session_id, EventType.APPLICATION_WITHDRAWN, {"application_id": app_id})
+            return self.application(session_id, app_id)
 
     def application(self, session_id: str, app_id: str) -> Application:
         app = self.state(session_id).applications.get(app_id)

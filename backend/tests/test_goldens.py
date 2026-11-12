@@ -564,3 +564,118 @@ def test_c_follow_up_after_the_deadline(client: TestClient) -> None:
     call.end()
     assert call.detail("followup_created")["status"] == F
     assert "2026-12-07" in call.detail("followup_created")["detail"]
+
+
+def test_a_benefits_before_disclaimer_in_the_same_turn(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    call.say(
+        "This call is recorded. Dental benefits are included. We do not offer every plan "
+        "available in your area. We represent 3 organizations which offer 6 products. Please "
+        "contact Medicare.gov or 1-800-MEDICARE for all your options."
+    )
+    call.end()
+    result = call.detail("disclaimer_before_benefits")
+    assert result["status"] == F
+    assert "before the disclaimer" in result["detail"]
+
+
+def test_a_disclaimer_then_benefits_in_the_same_turn(client: TestClient) -> None:
+    call = Call(client, CASE_A).start()
+    call.say(
+        "This call is recorded. We do not offer every plan available in your area. We represent "
+        "3 organizations which offer 6 products. Please contact Medicare.gov or 1-800-MEDICARE "
+        "for all your options. Now, dental benefits are included."
+    )
+    call.end()
+    assert call.detail("disclaimer_before_benefits")["status"] == P
+
+
+@pytest.mark.parametrize(
+    ("ask", "yes", "status"),
+    [
+        ("Do you have your insurance card handy?", "Yes.", UG),
+        ("Do you have your insurance card handy?", "Yes, sign me up.", P),
+        ("Would you like me to submit your enrollment in this plan?", "Yes.", P),
+        ("Shall I go ahead and enroll you in Maple Choice?", "Okay, go ahead.", P),
+    ],
+)
+def test_a_yes_must_be_about_enrolling(client: TestClient, ask: str, yes: str, status: str) -> None:
+    call, app_id = enroll_to_consent(client)
+    call.say(ask)
+    call.consent(app_id, call.hear(yes))
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert (result["status"], result["critical"]) == (status, False)
+    if status == UG:
+        assert "not clearly to enrolling" in result["detail"]
+
+
+@pytest.mark.parametrize(
+    ("lines", "status"),
+    [
+        (["L:Before I submit anything, do you have your Medicare card handy?", "C:Yes."], UG),
+        (["L:Open enrollment ends December 7. Do you have your card handy?", "C:Yes."], UG),
+        (["L:You don't want to enroll today, right?", "C:Yes."], UG),
+        (["L:May I proceed with a few questions?", "C:Yes."], UG),
+        (
+            [
+                "L:Shall I go ahead and enroll you in Maple Choice?",
+                "C:Hmm.",
+                "L:Do you have your Medicare card handy?",
+                "C:Yes.",
+            ],
+            UG,
+        ),
+        (
+            [
+                "L:Shall I go ahead and enroll you in Maple Choice?",
+                "C:What's the premium again?",
+                "L:The premium is 39 dollars a month.",
+                "C:Okay, go ahead.",
+            ],
+            P,
+        ),
+        (
+            [
+                "L:Shall I go ahead and enroll you in Maple Choice?",
+                "C:Hold on, I'm not ready.",
+                "L:Take your time. It covers your cardiologist.",
+                "C:Okay.",
+            ],
+            UG,
+        ),
+        (["L:Are you ready for me to get you signed up?", "C:Yes."], P),
+        (["L:Shall I complete your enrolment now?", "C:Yes."], P),
+        (["L:Do I have your permission to proceed with Maple Choice?", "C:Yes, go ahead."], P),
+        (["L:Would you like to go ahead with Maple Choice?", "C:Yes."], P),
+        (["L:I'll submit your application now, is that okay?", "C:Yes."], P),
+    ],
+)
+def test_a_yes_must_answer_an_enrollment_ask(
+    client: TestClient, lines: list[str], status: str
+) -> None:
+    call, app_id = enroll_to_consent(client)
+    last = ""
+    for line in lines:
+        who, text = line.split(":", 1)
+        last = call.say(text) if who == "L" else call.hear(text)
+    call.consent(app_id, last)
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert (result["status"], result["critical"]) == (status, False), result["detail"]
+
+
+def test_a_bare_benefit_before_a_same_turn_disclaimer_goes_to_the_judge(
+    client: TestClient,
+) -> None:
+    call = Call(client, CASE_A).start()
+    call.say(
+        "This call is recorded. The main benefit of switching is savings. We do not offer every "
+        "plan available in your area. We represent 3 organizations which offer 6 products. "
+        "Please contact Medicare.gov or 1-800-MEDICARE for all your options. Now, dental is "
+        "included."
+    )
+    call.end()
+    assert call.detail("disclaimer_before_benefits")["status"] == UG
