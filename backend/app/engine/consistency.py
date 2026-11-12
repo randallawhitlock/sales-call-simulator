@@ -8,7 +8,8 @@ case unwinnable. This is content QA for authors: a flag never counts against the
 Detection is deliberately simple and errs toward missing a flag rather than raising a false
 one. Doctors are caught by title ("Dr. Fischer") or by a catalog provider's full name; drugs
 only by catalog name; amounts by "$", "dollars" or "bucks". Any number that appears anywhere in
-what the customer was given counts as given, whatever its unit.
+what the customer was given counts as given, whatever its unit. Only words that were heard
+count, for both speakers.
 """
 
 import re
@@ -38,7 +39,11 @@ class ConsistencyFlag(BaseModel):
 
 
 _TOKEN = re.compile(r"\$?\d+(?:,\d{3})*(?:\.\d+)?|[A-Za-z]+")
-_TITLED = re.compile(r"\b(?i:dr\.?|doctor)\s+([A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+)?)")
+_TITLED = re.compile(
+    r"\b(?i:dr\.?|doctor)\s+(?!(?i:dr|doctor)\b)([A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+)?)"
+)
+"""A title and the one or two capitalized words after it. A second title is not a name, so
+"my doctor Dr. Smith" names Smith."""
 _NOT_NAMES = set(
     "monday tuesday wednesday thursday friday saturday sunday january february march "  # noqa: SIM905
     "april may june july august september october november december".split()
@@ -53,6 +58,8 @@ _UNITS = {w: i for i, w in enumerate(_UNIT_WORDS)}
 _TENS = {w: 10 * i for i, w in enumerate(_TEN_WORDS, 2)}
 _SCALES = {"hundred": 100, "thousand": 1000}
 _NUMBER_WORDS = _UNITS.keys() | _TENS.keys() | _SCALES.keys()
+_BREAK = "|"
+"""Stands in the token list for punctuation, which ends a run of number words."""
 
 
 def check_consistency(
@@ -63,15 +70,17 @@ def check_consistency(
     given = [prompt_text]
     flags: list[ConsistencyFlag] = []
     for utt in transcript:
+        if not utt.delivered:
+            continue  # never played, so never said
         if utt.speaker is Speaker.LEARNER:
-            given.append(utt.text)
+            given.append(utt.heard_text)
             continue
         flags += _flags_for(utt, "\n".join(given), catalog)
     return flags
 
 
 def _flags_for(utt: Utterance, given: str, catalog: Catalog) -> list[ConsistencyFlag]:
-    said = utt.text
+    said = utt.heard_text
     out: list[ConsistencyFlag] = []
 
     def flag(kind: FlagKind, value: str) -> None:
@@ -79,7 +88,7 @@ def _flags_for(utt: Utterance, given: str, catalog: Catalog) -> list[Consistency
             out.append(ConsistencyFlag(utt_id=utt.utt_id, kind=kind, said=value, text=said))
 
     for name in _doctors_named(said, catalog):
-        if not _has_word(given, _surname(name)):
+        if not _doctor_given(given, name):
             flag(FlagKind.DOCTOR, name)
     for drug in _drug_names(catalog):
         if _has_word(said, drug) and not _has_word(given, drug):
@@ -101,8 +110,11 @@ def _doctors_named(text: str, catalog: Catalog) -> list[str]:
     return [re.sub(r"['’]s$", "", n) for n in names if n]
 
 
-def _surname(name: str) -> str:
-    return re.sub(r"['’]s$", "", name.split()[-1])
+def _doctor_given(given: str, name: str) -> bool:
+    """A surname alone matches any given doctor with it. With a first name, both must match:
+    "Dr. Arjun Raman" is not the "Dr. Priya Raman" the customer was told about."""
+    words = name.split()
+    return _has_phrase(given, name) if len(words) > 1 else _has_word(given, words[-1])
 
 
 # Drugs
@@ -118,7 +130,8 @@ def _drug_names(catalog: Catalog) -> list[str]:
 
 def amounts_said(text: str) -> list[tuple[Decimal, str]]:
     """Dollar amounts in ``text``, each with the words that said it."""
-    tokens = _TOKEN.findall(text)
+    tokens = _tokens(text)
+    run_ending_at = {end: start for start, end in _number_runs(tokens)}
     out: list[tuple[Decimal, str]] = []
     for i, tok in enumerate(tokens):
         if tok.startswith("$"):
@@ -132,10 +145,7 @@ def amounts_said(text: str) -> list[tuple[Decimal, str]]:
                 if value is not None:
                     out.append((value, f"{prev} {tok}"))
                 continue
-            start = i
-            while start > 0 and _is_number_word(tokens[start - 1]):
-                start -= 1
-            run = tokens[start:i]
+            run = tokens[run_ending_at.get(i, i) : i]
             value = _words_value(run)
             if value is not None:
                 out.append((value, " ".join([*run, tok])))
@@ -144,26 +154,59 @@ def amounts_said(text: str) -> list[tuple[Decimal, str]]:
 
 def numbers_in(text: str) -> set[Decimal]:
     """Every number in ``text``, in digits or words."""
-    tokens = _TOKEN.findall(text)
+    tokens = _tokens(text)
     out: set[Decimal] = set()
-    run: list[str] = []
-    for tok in [*tokens, ""]:
-        if tok and _is_number_word(tok):
-            run.append(tok)
-            continue
-        value = _words_value(run)
+    for start, end in _number_runs(tokens):
+        value = _words_value(tokens[start:end])
         if value is not None:
             out.add(value)
-        run = []
-        if tok and tok.lstrip("$")[:1].isdigit():
+    for tok in tokens:
+        if tok.lstrip("$")[:1].isdigit():
             value = _decimal(tok.lstrip("$"))
             if value is not None:
                 out.add(value)
     return out
 
 
-def _is_number_word(tok: str) -> bool:
-    return tok.casefold() in _NUMBER_WORDS or tok.casefold() in ("a", "and")
+def _tokens(text: str) -> list[str]:
+    """Words and numbers in order, with ``_BREAK`` wherever anything but spaces or a hyphen
+    ("forty-five") stood between two of them."""
+    out: list[str] = []
+    last = 0
+    for m in _TOKEN.finditer(text):
+        if out and text[last : m.start()].strip(" \t\n-"):
+            out.append(_BREAK)
+        out.append(m.group())
+        last = m.end()
+    return out
+
+
+def _number_runs(tokens: Sequence[str]) -> list[tuple[int, int]]:
+    """Each run of number words that reads as one number, as ``(start, end)`` slices. "a" only
+    opens a run before a scale ("a hundred"); "and" only joins a scale to what follows ("two
+    hundred and fifty"). Anywhere else they are ordinary words and end the run, as punctuation
+    does: "for one, two hundred for the other" is 1 and 200, not 300."""
+    folded = [t.casefold() for t in tokens]
+
+    def at(i: int) -> str:
+        return folded[i] if i < len(folded) else ""
+
+    runs: list[tuple[int, int]] = []
+    i = 0
+    while i < len(folded):
+        if not (folded[i] in _NUMBER_WORDS or (folded[i] == "a" and at(i + 1) in _SCALES)):
+            i += 1
+            continue
+        end = i + 1
+        while at(end) in _NUMBER_WORDS or (
+            at(end) == "and"
+            and folded[end - 1] in _SCALES
+            and (at(end + 1) in _UNITS or at(end + 1) in _TENS)
+        ):
+            end += 1
+        runs.append((i, end))
+        i = end
+    return runs
 
 
 def _words_value(words: Iterable[str]) -> Decimal | None:

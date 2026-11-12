@@ -175,7 +175,8 @@ RUSHED_WORDS = 90
 class ScriptedActor:
     """Offline stand-in. Raises each of the case's objections once when it spots the trigger,
     volunteers ``volunteer`` items one per turn, answers questions with the items whose topics
-    the question mentions, and says yes when asked to enroll."""
+    the question mentions, and says yes when asked to enroll, unless it already refused with
+    an objection that holds for the call."""
 
     name = "scripted"
 
@@ -194,7 +195,10 @@ class ScriptedActor:
         if objection is not None:
             return objection.lay_text
         if asked and _CONSENT_ASK.search(last):
-            return "Yes, go ahead."
+            # A refusal with nothing to settle it holds for the rest of the call.
+            held = [o for o in prompt.scenario.objections if o.settles_when is None]
+            refused = next((o for o in held if o.lay_text in said), None)
+            return refused.lay_text if refused is not None else "Yes, go ahead."
 
         def unsaid(k: KnowledgeItem) -> bool:
             return k.lay_text not in said
@@ -216,10 +220,17 @@ _PERSONAL_INFO = re.compile(
     r"\b(medicare (number|card)|social security number|ssn|bank (account|details|information)|"
     r"routing number|account number|card number)\b"
 )
-_PRESSURE = re.compile(
+_DECIDE_NOW = re.compile(
     r"\b(decide|sign (you )?up|enroll|lock (it|this|you) in|commit)\b[^.?!]{0,40}"
-    r"\b(today|right now|tonight)\b|\bact (fast|now)\b|\blimited time\b|\bwon't last\b"
+    r"\b(today|right now|tonight)\b"
 )
+_URGENCY = re.compile(r"\bact (fast|now)\b|\blimited time\b|\bwon't last\b")
+_PERMISSION_ASK = re.compile(
+    r"^(would you like|do you want|are you ready|is it (ok|okay|all right|alright)|"
+    r"(may|can|could|shall|should) i|do i have your (permission|okay|ok))\b"
+)
+"""How a sentence that asks leave to enroll opens. "Would you like me to enroll you today?" is
+the permission question, not pressure."""
 _EXPLAINED = re.compile(r"\b(means|meaning|which is|that is|in other words|basically)\b")
 _PITCH = re.compile(
     r"\b(i'?d recommend|i would recommend|i recommend|you should (switch|go with|enroll|join|"
@@ -242,7 +253,7 @@ def _objection_for(
     earlier = [_fold(t.text) for t in history[:-1] if t.speaker is Speaker.LEARNER]
     detectors: dict[ObjectionTrigger, Callable[[], bool]] = {
         ObjectionTrigger.PERSONAL_INFO: lambda: bool(_PERSONAL_INFO.search(last)),
-        ObjectionTrigger.PRESSURE: lambda: bool(_PRESSURE.search(last)),
+        ObjectionTrigger.PRESSURE: lambda: _pressures(last),
         ObjectionTrigger.JARGON: lambda: bool(jargon_in(last)) and not _EXPLAINED.search(last),
         ObjectionTrigger.RUSHED: lambda: len(last.split()) > RUSHED_WORDS,
         ObjectionTrigger.EARLY_PITCH: lambda: (
@@ -256,6 +267,14 @@ def _objection_for(
         if o is not None and o.lay_text not in said and fires():
             return o
     return None
+
+
+def _pressures(text: str) -> bool:
+    """Urgency talk, or a push to decide today that isn't the agent asking permission."""
+    if _URGENCY.search(text):
+        return True
+    sentences = (s.strip() for s in re.split(r"(?<=[.?!])\s+", text))
+    return any(_DECIDE_NOW.search(s) and not _PERMISSION_ASK.match(s) for s in sentences)
 
 
 def _is_question(text: str) -> bool:

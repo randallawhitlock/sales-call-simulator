@@ -118,6 +118,14 @@ class Rule(ContentModel):
             raise ValueError(f"{self.rule_id}: authority_outside_scope needs a scoped applies_when")
         return self
 
+    def current_on(self, on: date) -> bool:
+        """Not retired, and in effect on ``on``."""
+        return (
+            self.status is not RuleStatus.RETIRED
+            and (self.effective_from is None or self.effective_from <= on)
+            and (self.effective_to is None or on <= self.effective_to)
+        )
+
 
 class RuleSet(ContentModel):
     ruleset_version: str

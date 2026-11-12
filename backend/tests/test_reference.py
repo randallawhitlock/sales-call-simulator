@@ -1,12 +1,16 @@
 """The reference drawer: standardized CMS text apart from the app's own wording, general
 requirements only."""
 
+from dataclasses import replace
+from datetime import timedelta
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.content.loader import load_bundle
-from app.content.rules import Rule
+from app.content.rules import Rule, RuleStatus
 from tests.harness import GREETING, SCOPE_ASK, Call
 
 BUNDLE = load_bundle()
@@ -32,6 +36,27 @@ def test_every_rule_is_listed_with_its_authority_and_status(client: TestClient) 
     assert listed["O-RECNOTE"]["authority"] == "organization"
     assert listed["R-SB"]["status"] == "unverified"
     assert all("notes" not in r and "check_ids" not in r for r in body["rules"])
+
+
+def test_retired_and_out_of_date_rules_are_left_out(client: TestClient) -> None:
+    """A retired rule, or one not in effect on the call date, is not a current requirement.
+    A disputed one stays, with its status, so the drawer can say so."""
+    service = client.app.state.sessions  # type: ignore[attr-defined]
+    day = BUNDLE.frame.call_date
+    changes: dict[str, dict[str, Any]] = {
+        "O-RECNOTE": {"status": RuleStatus.RETIRED},
+        "R-DISC": {"effective_to": day - timedelta(days=1)},
+        "R-SOA": {"effective_from": day + timedelta(days=1)},
+        "R-SB": {"status": RuleStatus.DISPUTED},
+    }
+    rules = tuple(r.model_copy(update=changes.get(r.rule_id, {})) for r in BUNDLE.ruleset.rules)
+    assert len(rules) > len(changes)
+    service.content = replace(BUNDLE, ruleset=BUNDLE.ruleset.model_copy(update={"rules": rules}))
+    body = client.get("/api/reference").json()
+    listed = {r["rule_id"]: r["status"] for r in body["rules"]}
+    assert set(listed) == {r.rule_id for r in rules} - {"O-RECNOTE", "R-DISC", "R-SOA"}
+    assert listed["R-SB"] == "disputed"
+    assert "R-DISC" not in {s["rule_id"] for s in body["standard"]}
 
 
 def test_saying_the_standard_text_passes_the_disclaimer_check(client: TestClient) -> None:

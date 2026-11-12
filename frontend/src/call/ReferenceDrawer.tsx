@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { get, type Authority, type Reference } from '../api.ts'
+import { get, type Authority, type Reference, type RuleReference } from '../api.ts'
 import { Badge, ErrorNote } from '../ui.tsx'
 import { errorText } from '../util.ts'
+
+/** Anything short of approved is labeled. Retired rules are not requirements and are left out. */
+const STATUS: Record<Exclude<RuleReference['status'], 'approved' | 'retired'>, { tone: 'warn' | 'bad'; label: string }> = {
+  unverified: { tone: 'warn', label: 'not yet verified' },
+  disputed: { tone: 'bad', label: 'disputed' },
+}
 
 const AUTHORITY: Record<Authority, string> = {
   regulatory: 'Federal regulation',
@@ -94,7 +100,7 @@ function ReferenceDrawer({ onClose }: { onClose: () => void }) {
               exact text.
             </p>
             <ul className="plain">
-              {ref.rules.map((r) => (
+              {ref.rules.filter(current).map((r) => (
                 <li key={r.rule_id}>
                   <div className="row spread">
                     <strong>{r.title}</strong>
@@ -102,7 +108,7 @@ function ReferenceDrawer({ onClose }: { onClose: () => void }) {
                       <Badge tone={r.authority === 'organization' || r.authority === 'plan' ? 'warn' : 'info'}>
                         {AUTHORITY[r.authority]}
                       </Badge>
-                      {r.status !== 'approved' && <Badge tone="warn">not yet verified</Badge>}
+                      {r.status !== 'approved' && <Badge tone={STATUS[r.status].tone}>{STATUS[r.status].label}</Badge>}
                     </span>
                   </div>
                   <p className="small-text">{r.requirement}</p>
@@ -115,6 +121,12 @@ function ReferenceDrawer({ onClose }: { onClose: () => void }) {
       )}
     </aside>
   )
+}
+
+type CurrentRule = RuleReference & { status: Exclude<RuleReference['status'], 'retired'> }
+
+function current(r: RuleReference): r is CurrentRule {
+  return r.status !== 'retired'
 }
 
 function Source({ citation, urls, verified }: { citation: string; urls: string[]; verified: string | null }) {

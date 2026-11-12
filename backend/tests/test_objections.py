@@ -102,6 +102,39 @@ def test_a_refusal_under_pressure_holds() -> None:
     assert reply(CASE_A, (L, "You really need to decide today, it's a great deal.")) == held
 
 
+NEEDS = ((L, "Who is your doctor?"), (C, "Dr. Raman."), (L, "What medications do you take?"))
+PERMISSION_ASK = "Would you like me to enroll you in Maple Choice today?"
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [PERMISSION_ASK, "Okay. Do you want me to go ahead and enroll you right now?"],
+)
+def test_asking_permission_to_enroll_today_is_not_pressure(ask: str) -> None:
+    assert reply(CASE_A, *NEEDS, (C, "Apixaban."), (L, ask)) == "Yes, go ahead."
+
+
+@pytest.mark.parametrize(
+    "push",
+    [
+        "Let's enroll you today before the price goes up.",
+        "This is a limited time offer. Would you like me to enroll you?",
+        "You should sign up right now. Can I enroll you?",
+    ],
+)
+def test_pressure_is_still_pressure_beside_a_permission_ask(push: str) -> None:
+    held = objection(CASE_A, ObjectionTrigger.PRESSURE).lay_text
+    assert reply(CASE_A, *NEEDS, (C, "Apixaban."), (L, push)) == held
+
+
+def test_a_refusal_under_pressure_holds_when_asked_again() -> None:
+    held = objection(CASE_A, ObjectionTrigger.PRESSURE).lay_text
+    lines = [*NEEDS, (C, "Apixaban."), (L, "You really need to decide today."), (C, held)]
+    assert reply(CASE_A, *lines, (L, PERMISSION_ASK)) == held
+    again = [*lines, (L, PERMISSION_ASK), (C, held), (L, "Can I enroll you now?")]
+    assert reply(CASE_A, *again) == held
+
+
 def test_being_told_to_wait_draws_pushback() -> None:
     push = objection(CASE_C, ObjectionTrigger.ASKED_TO_WAIT).lay_text
     line = "I'd hold off and check with your retiree benefits center first. Is that okay?"

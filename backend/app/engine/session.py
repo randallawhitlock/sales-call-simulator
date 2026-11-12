@@ -473,6 +473,17 @@ class SessionService:
         scenario = self.content.scenario(row.scenario_id)
         return build_customer_prompt(scenario, self.content.frame, row.mood)
 
+    def review_prompt(self, row: SessionRow, content: ContentBundle) -> CustomerPrompt:
+        """The prompt an ended call's customer played from, for QA. Refuses if the server's
+        prompt template is not the one the session pinned: the rebuilt prompt would not be
+        what the customer was given. The actor may have changed since; review doesn't run it."""
+        if row.prompt_version != PROMPT_VERSION:
+            raise Conflict(
+                f"this session's customer played from prompt {row.prompt_version}; the server "
+                f"runs {PROMPT_VERSION}"
+            )
+        return build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)
+
     def transcript(self, session_id: str) -> list[Utterance]:
         self.get(session_id)
         return self.store.utterances(session_id)

@@ -38,6 +38,26 @@ const REFERENCE: Reference = {
       status: 'unverified',
       verified_as_of: null,
     },
+    {
+      rule_id: 'R-OLD',
+      title: 'Withdrawn rule',
+      requirement: 'No longer asked of anyone.',
+      authority: 'regulatory',
+      citation: '42 CFR 422.0',
+      source_urls: ['https://www.ecfr.gov/c'],
+      status: 'retired',
+      verified_as_of: '2025-01-01',
+    },
+    {
+      rule_id: 'G-DISP',
+      title: 'Contested guidance',
+      requirement: 'Reviewers disagree about this one.',
+      authority: 'cms_guidance',
+      citation: 'CMS memo',
+      source_urls: ['https://www.cms.gov/d'],
+      status: 'disputed',
+      verified_as_of: null,
+    },
   ],
 }
 
@@ -56,7 +76,11 @@ describe('ReferenceButton', () => {
     await waitFor(() => expect(screen.getByText(/Currently we represent 3 organizations/)).toBeTruthy())
     expect(screen.getByText('CMS standardized')).toBeTruthy()
     expect(screen.getByText('Agency policy')).toBeTruthy()
-    expect(screen.getByText('not yet verified')).toBeTruthy()
+    expect(screen.getAllByText('not yet verified')).toHaveLength(1)
+    expect(screen.getByText('Summary of Benefits').parentElement?.textContent).toContain('not yet verified')
+    // A disputed rule says so; a retired one is not a requirement and is not listed.
+    expect(screen.getByText('Contested guidance').parentElement?.textContent).toContain('disputed')
+    expect(screen.queryByText('Withdrawn rule')).toBeNull()
     expect(button.getAttribute('aria-expanded')).toBe('true')
     expect(document.activeElement?.textContent).toBe('Close')
 

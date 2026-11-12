@@ -12,7 +12,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Query, Request
 from pydantic import BaseModel, Field
 
-from app.actor.prompt import build_customer_prompt
 from app.content.catalog import Drug
 from app.content.common import Authority, Id, PlanId
 from app.content.rules import RuleStatus
@@ -135,7 +134,8 @@ class RuleReference(BaseModel):
 
 class Reference(BaseModel):
     """The reference drawer. Standardized CMS text stays apart from the app's own wording.
-    General requirements only: nothing here is about a case."""
+    General requirements only: nothing here is about a case. Retired rules and rules not in
+    effect on the call date are left out."""
 
     ruleset_version: str
     verified_as_of: date
@@ -206,6 +206,7 @@ def _found(fn: Any, *args: Any) -> Any:
 @router.get("/reference")
 def reference(service: Service) -> Reference:
     ruleset, frame = service.content.ruleset, service.content.frame
+    current = [r for r in ruleset.rules if r.current_on(frame.call_date)]
     fill = {"organizations": frame.carriers_represented, "products": frame.products_offered}
     return Reference(
         ruleset_version=ruleset.ruleset_version,
@@ -219,7 +220,7 @@ def reference(service: Service) -> Reference:
                 source_urls=[str(u) for u in r.source_urls],
                 verified_as_of=r.verified_as_of,
             )
-            for r in ruleset.rules
+            for r in current
             if r.standard_text is not None
         ],
         rules=[
@@ -233,7 +234,7 @@ def reference(service: Service) -> Reference:
                 status=r.status,
                 verified_as_of=r.verified_as_of,
             )
-            for r in ruleset.rules
+            for r in current
         ],
     )
 
@@ -651,7 +652,7 @@ def actor_qa(session_id: str, service: Service) -> ActorQa:
     agent gave it. For content authors; a flag never counts against the learner."""
     row = service.require_ended(session_id)
     content = service.pinned_content(row)
-    prompt = build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)
+    prompt = service.review_prompt(row, content)
     flags = check_consistency(prompt.text, content.catalog, service.store.utterances(session_id))
     return ActorQa(
         session_id=session_id, actor=row.actor, prompt_version=row.prompt_version, flags=flags
