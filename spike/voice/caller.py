@@ -12,6 +12,9 @@ number includes Gemini's end-of-speech detection, the model, the worker and both
 but not a browser jitter buffer or speaker output.
 
 Usage: uv run python caller.py [room-name]
+Env: SPIKE_REP_VOICE (default Samantha), SPIKE_SCRIPT=reconnect (the short one-drop script),
+SPIKE_KILL_WAIT_S (pause after dropping the model while idle, before the follow-up line;
+default 4.0, long enough for every reconnect setup in results/ to be back first).
 """
 
 import asyncio
@@ -29,6 +32,8 @@ from pathlib import Path
 import numpy as np
 from livekit import api, rtc
 
+from summarize import cut_turn, p95, reply_to, turn_latencies
+
 HERE = Path(__file__).resolve().parent
 RUNS = HERE / "runs"
 TTS_DIR = RUNS / "tts"
@@ -37,6 +42,9 @@ FRAME = SR // 100  # 10 ms
 LOUD = 300.0  # int16 RMS; Gemini speech sits in the thousands, silence frames are zero
 REP_VOICE = os.environ.get("SPIKE_REP_VOICE", "Samantha")
 AGENCY = "Larkspur Benefits Group"
+# The slowest reconnect in results/ took 2.52 s (first retry after 1.5 s). A shorter pause has the
+# rep speaking the follow-up over the reconnect for that setup but not for the faster ones.
+KILL_WAIT_S = float(os.environ.get("SPIKE_KILL_WAIT_S", "4.0"))
 
 # (kind, line[, interruption]) kinds: turn = timed turn, barge = open question then talk over the
 # answer, kill_idle = turn then drop the model socket, kill_speaking = drop it mid-answer.
@@ -100,15 +108,27 @@ if os.environ.get("SPIKE_SCRIPT") == "reconnect":
     SCRIPT = RECONNECT_SCRIPT
 
 
+def synth(text: str, cache: Path, rate: int) -> Path:
+    """Synthesize a line with `say` once and cache it. Callers started side by side share the
+    cache, so write to a file of our own and rename it into place: nobody reads half a clip."""
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / f"{hashlib.sha1(f'{REP_VOICE}|{text}'.encode()).hexdigest()[:16]}.wav"
+    if not path.exists():
+        tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp.wav")
+        try:
+            subprocess.run(
+                ["say", "-v", REP_VOICE, "-o", str(tmp), f"--data-format=LEI16@{rate}", text],
+                check=True,
+            )
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return path
+
+
 def tts(text: str) -> np.ndarray:
     """Synthesize a line once, cache it, and trim silence so its end is the last voiced sample."""
-    TTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = TTS_DIR / f"{hashlib.sha1(f'{REP_VOICE}|{text}'.encode()).hexdigest()[:16]}.wav"
-    if not path.exists():
-        subprocess.run(
-            ["say", "-v", REP_VOICE, "-o", str(path), "--data-format=LEI16@48000", text],
-            check=True,
-        )
+    path = synth(text, TTS_DIR, SR)
     with wave.open(str(path)) as w:
         assert w.getframerate() == SR and w.getnchannels() == 1
         pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
@@ -306,7 +326,7 @@ async def main(room_name: str) -> None:
         s.reply_end = ear.last_loud()
         if kind == "kill_idle":
             s.notes["kill_at"] = await kill()
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(KILL_WAIT_S)
         steps.append(s)
         lat = f"{s.latency_s:+.2f}s" if s.latency_s is not None else "none"
         print(f"[{i:02d}] {kind:13s} {lat:>8s}  {line[:60]}", flush=True)
@@ -320,12 +340,6 @@ async def main(room_name: str) -> None:
     report(room_name)
 
 
-def p95(xs: list[float]) -> float:
-    """Nearest-rank p95. With ~20 samples this is the second-worst turn, so read it loosely."""
-    ordered = sorted(xs)
-    return ordered[max(0, int(np.ceil(0.95 * len(ordered))) - 1)]
-
-
 def report(room_name: str) -> None:
     steps = json.loads((RUNS / f"{room_name}-caller.json").read_text())
     agent_path = RUNS / f"{room_name}-agent.jsonl"
@@ -335,21 +349,14 @@ def report(room_name: str) -> None:
     start = next((e for e in events if e["kind"] == "start"), {})
     print(f"\nmodel={start.get('model')} resumption={start.get('resumption')}")
 
-    timed = [
-        s for s in steps if s["kind"] in ("turn", "probe", "kill_idle", "barge", "kill_speaking")
-    ]
-    after_kill = {s["i"] + 1 for s in steps if s["kind"] in ("kill_idle", "kill_speaking")}
-    normal = [s for s in timed if s["i"] not in after_kill]
-    lats = [s["latency_s"] for s in normal if s["latency_s"] is not None and s["latency_s"] > 0]
-    early = [s for s in normal if s["latency_s"] is not None and s["latency_s"] <= 0]
-    missing = [s for s in normal if s["latency_s"] is None]
+    lats, early, missing = turn_latencies(steps)
     if lats:
         print(
             f"end-of-turn -> first audio over {len(lats)} turns: median "
             f"{statistics.median(lats):.2f}s, p95 {p95(lats):.2f}s, min {min(lats):.2f}s, "
             f"max {max(lats):.2f}s"
         )
-    print(f"  replies that started before the rep finished: {len(early)}; no reply: {len(missing)}")
+    print(f"  replies that started before the rep finished: {early}; no reply: {missing}")
 
     rt = [e for e in events if e["kind"] == "rt_metrics" and e.get("ttft", -1) > 0]
     if rt:
@@ -361,29 +368,14 @@ def report(room_name: str) -> None:
     for s in steps:
         if s["kind"] == "barge":
             n = s["notes"]
-            heard = [
-                e
-                for e in events
-                if e["kind"] == "item"
-                and e.get("role") == "assistant"
-                and e.get("interrupted")
-                and n["barge_from"] - 1 < e["t"] < n["barge_from"] + 15
-            ]
-            gen = [
-                e
-                for e in events
-                if e["kind"] == "model_turn_text"
-                and e.get("interrupted")
-                and n["barge_from"] - 1 < e["t"] < n["barge_from"] + 15
-            ]
+            # No barge_from means she never started answering, so there was nothing to cut off.
+            heard, gen = cut_turn(events, n["barge_from"]) if "barge_from" in n else (None, None)
             print(
                 f"barge [{s['i']}]: talking at barge={n.get('still_talking_at_barge')} "
                 f"cutoff={_f(n.get('cutoff_s'))} reply={_f(n.get('reply_latency_s'))}"
             )
-            print(f"    heard (LiveKit, interrupted item): {heard[0]['text'] if heard else None!r}")
-            print(
-                f"    generated (Gemini transcript):     {gen[0]['generated'] if gen else None!r}"
-            )
+            print(f"    heard (LiveKit, interrupted item): {heard!r}")
+            print(f"    generated (Gemini transcript):     {gen!r}")
 
     for s in steps:
         if s["kind"] in ("kill_idle", "kill_speaking"):
@@ -396,18 +388,9 @@ def report(room_name: str) -> None:
                 :2
             ]
             nxt = next((x for x in steps if x["i"] == s["i"] + 1), None)
-            reply = None
-            if nxt:
-                reply = next(
-                    (
-                        e["text"]
-                        for e in events
-                        if e["kind"] == "item"
-                        and e.get("role") == "assistant"
-                        and e["t"] > nxt["said_to"]
-                    ),
-                    None,
-                )
+            # Bounded to the follow-up line's own window, so a reply to a later line isn't
+            # credited to it; None also when more than one reply landed there.
+            reply, n_replies = reply_to(steps, events, nxt) if nxt else (None, 0)
             print(
                 f"{s['kind']} [{s['i']}]: reconnected after "
                 f"{_f(conn[0]['t'] - k) if conn else 'never'} "
@@ -417,20 +400,14 @@ def report(room_name: str) -> None:
             )
             print(f"    errors: {[e.get('error', '')[:120] for e in errs]}")
             if nxt:
-                print(f"    next turn latency {_f(nxt['latency_s'])}, reply: {reply!r}")
+                print(
+                    f"    next turn latency {_f(nxt['latency_s'])}, reply: {reply!r}"
+                    + (f" ({n_replies} replies in its window)" if n_replies > 1 else "")
+                )
 
     for s in steps:
         if s["kind"] == "probe":
-            reply = next(
-                (
-                    e["text"]
-                    for e in events
-                    if e["kind"] == "item"
-                    and e.get("role") == "assistant"
-                    and e["t"] > s["said_to"]
-                ),
-                None,
-            )
+            reply, _ = reply_to(steps, events, s)
             print(f"probe [{s['i']}]: {s['line']!r}\n    reply: {reply!r}")
 
     interim_lag, final_lag = [], []
@@ -458,11 +435,10 @@ def report(room_name: str) -> None:
             interim_lag.append(first - s["said_to"])
         if final:
             final_lag.append(final - s["said_to"])
-    if interim_lag:
+    if interim_lag or final_lag:
         print(
-            f"rep transcript after end of line: first interim median "
-            f"{statistics.median(interim_lag):+.2f}s, final median "
-            f"{statistics.median(final_lag):+.2f}s (n={len(interim_lag)})"
+            f"rep transcript after end of line: first interim median {_median(interim_lag)} "
+            f"(n={len(interim_lag)}), final median {_median(final_lag)} (n={len(final_lag)})"
         )
 
     print("\ntranscript:")
@@ -470,6 +446,10 @@ def report(room_name: str) -> None:
         if e["kind"] in ("item",):
             tag = " (interrupted)" if e.get("interrupted") else ""
             print(f"  {e.get('role')}: {e.get('text')}{tag}")
+
+
+def _median(xs: list[float]) -> str:
+    return f"{statistics.median(xs):+.2f}s" if xs else "none"
 
 
 def _f(x: object) -> str:

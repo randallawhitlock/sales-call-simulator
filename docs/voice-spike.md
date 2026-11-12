@@ -9,16 +9,17 @@ in [`spike/voice/`](../spike/voice/README.md). It's throwaway and isn't wired in
 for M4.** This is a provisional call from a short local spike with a bot caller, not acceptance.
 The voice path isn't done until it passes the [M4 acceptance gate](#m4-acceptance-gate).
 
-The spike ran Case A end to end through a local LiveKit server and a Python agent. In a single
-call, latency passed the p95 target and missed the median target by 0.07 s. Barge-in cut the
-customer off within 0.6 s in 18 of 18 tries. With a fresh Gemini session and LiveKit replaying its
+The spike ran Case A end to end through a local LiveKit server and a Python agent. Over the 15
+plain turns one call got through before its forced drop killed the session, latency passed the
+p95 target and missed the median target by 0.07 s. Barge-in cut the customer off within 0.6 s in
+18 of 18 tries. With a fresh Gemini session and LiveKit replaying its
 history, 4 of 4 forced drops reconnected, answered the next line within 2 s, recalled a number
 given before the drop and answered the line after that. With the plugin's default retry, only 3
 of 8 drops survived.
 
 Nothing in the spike pointed to browser-direct. The worker runs had a higher median than the
-direct control (1.27 s against 1.00 s at the same end-of-speech setting), but the two measure
-different endpoints, so that gap doesn't isolate LiveKit's overhead (see
+direct control (1.27 s over run B's 15 plain turns against 1.00 s at the same end-of-speech
+setting), but the two measure different endpoints, so that gap doesn't isolate LiveKit's overhead (see
 [Latency](#latency-target-median--12-s-p95--25-s)). The serious failure, a fast reconnect that
 kills the session, comes from how the client reconnects, not where it runs: Google rejects a
 resume that arrives before it has noticed the old socket died. A browser client would need the
@@ -79,7 +80,7 @@ reply, measured at the caller.
 | Run | Path | Gemini end-of-speech setting | Turns | Median | p95 | Max |
 |---|---|---|---|---|---|---|
 | A | Worker, one call | Google default | 22 | 1.46 s | 2.11 s | 3.77 s |
-| B | Worker, one call | 500 ms silence, high sensitivity | 15 | **1.27 s** | **1.77 s** | 1.77 s |
+| B | Worker, one call, plain turns before it went silent | 500 ms silence, high sensitivity | 15 | **1.27 s** | **1.77 s** | 1.77 s |
 | Rounds | Worker, three calls at once | 500 ms, high | 86 | 1.46 s | 2.74 s | 5.71 s |
 | Control | Straight to Gemini, no LiveKit | 500 ms, high | 18 | 1.00 s | 1.57 s | 1.57 s |
 
@@ -87,16 +88,29 @@ p95 passes for a single call with either setting. The median misses by 0.07 s wi
 window and by 0.26 s with Google's default. Three calls at once on the free tier pushed p95 past
 the target. Repeat that on the paid tier before planning for a class running together.
 
+Run B's figures cover less than run A's. Its session died at the forced drop on step 14 (the
+plugin-default failure described under [Forced reconnect](#forced-reconnect)) and the customer
+never spoke again: no later line got a reply (the report counts 8 timed turns with none), none
+of its three barge-ins had an answer to cut off, its probe went unanswered and its second drop
+wasn't run. So the 1.27 s median and 1.77 s p95 come from
+the 15 plain question-and-answer turns before the call went silent, with no barge-in, probe or
+post-reconnect turn among them. Read them as the 500 ms setting on plain turns, not as a whole
+call.
+
+Run A came from an earlier version of the caller script: three barge-ins at steps 17 to 19, no
+probe step, 22 turns in its latency figure. The committed `caller.py` has a different step
+layout and won't reproduce that report line for line.
+
 The control sent the same audio straight to Gemini over one WebSocket, roughly the shape of the
-browser-direct path minus the browser. Its median was 1.00 s against 1.27 s for worker run B at
-the same setting. That 0.27 s gap is not a measure of LiveKit's overhead, because the two scripts
+browser-direct path minus the browser. Its median was 1.00 s against 1.27 s for worker run B's
+15 plain turns at the same setting. That 0.27 s gap is not a measure of LiveKit's overhead, because the two scripts
 time different things:
 
 | | Control (`direct.py` as run) | Worker (`caller.py`) |
 |---|---|---|
 | Clock starts | Estimated end of the line (send start plus clip length), not observed | Last voiced sample handed to the caller's WebRTC track |
 | Clock stops | First audio chunk received, loud or not | First frame above the loudness threshold, after real-time playout through the worker and LiveKit |
-| Sample | 18 turns, one session, nothing but plain turns | 15 turns in one call, mixed with barge-ins and probes |
+| Sample | 18 plain turns, one session | 15 plain turns, the part of one call before its forced drop ended the session |
 
 They also ran at different times on a shared free tier. What the control does show is that the
 model and its end-of-speech detection took about a second on their own before any audio came
@@ -180,6 +194,16 @@ working for a few turns, not for a whole call. In this data every drop that reco
 answered and kept going. The checks are split so M4's tests can catch one that doesn't.
 `results/reconnects.txt` has the per-drop rows.
 
+The three rows aren't like for like on the "answered the next line" column. The caller as run
+waited a fixed 2.0 s after the drop and then spoke the follow-up line. The other two setups,
+when they reconnected at all, were back by then (0.64 to 1.32 s). The 1.5 s-retry setup took 2.14 to 2.52 s, so by the script's
+timing the rep began the follow-up before Gemini was connected again in all six of its drops.
+The reports in `results/` don't record when each line started, so that overlap is read from the
+script, not measured. That row's reply times, the 5.03 s miss included, were measured with the
+follow-up overlapping the reconnect and may say more about the overlap than about the setup.
+`caller.py` now waits 4.0 s by default (`SPIKE_KILL_WAIT_S`) and `summarize.py` flags any drop
+whose follow-up started before the reconnect finished. Neither has been rerun.
+
 What happened in the failures: the plugin retries 0.1 s after a drop and resumes with Gemini's
 session handle. Google answers `1008 BidiGenerateContent session is already connected to an
 existing client`, because it hasn't noticed the old socket is dead yet. The plugin treats any error
@@ -188,9 +212,10 @@ for the rest of the call. Turning off the plugin's `session_resumption` option d
 plugin always asks Gemini for handles and resumes with the latest one. The fresh-session row
 dropped the handle before reconnecting, which is what a fallback in M4 would do.
 
-When it recovered, it recovered well. When the drop hit while she was talking (run A), the worker
-kept playing the 4.45 s of audio it already had, and then she stopped mid-word ("...ever since,
-which"). Asked "what were you saying?", she picked the thought back up.
+When it recovered, it recovered well. When the drop hit while she was talking (run A), her turn
+ends mid-sentence in the transcript ("...ever since, which"). The report didn't capture how long
+her audio kept playing after the drop (`audio after kill=None`). Asked "what were you saying?",
+she picked the thought back up.
 
 ## Other things the spike turned up
 
@@ -230,7 +255,7 @@ which"). Asked "what were you saying?", she picked the thought back up.
    with director notes. Check it with the made-up-number fixture above, not with grandkid
    questions.
 3. **Tune end-of-speech with real speech, number-heavy lines included.** 500 ms bought 0.2 s on the
-   median and clipped spoken digits twice in 125 lines. Try 700 ms with real people and take the
+   median (over run B's 15 plain turns) and clipped spoken digits twice in 125 lines. Try 700 ms with real people and take the
    lowest window that never clips a Medicare number or a date of birth.
 4. **Pin the API version and the key variable** as above, and use the paid tier for anything a
    person talks into.

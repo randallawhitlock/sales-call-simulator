@@ -13,6 +13,8 @@ and none of it should be. M4 starts over with real code.
   runs about 20 timed turns, three barge-ins, a probe of what the customer remembers after being cut
   off, and two forced reconnects (one while she's listening, one while she's talking), then
   prints a report. `SPIKE_SCRIPT=reconnect` runs a short version with one barge-in and one drop.
+  After a drop while she's listening it waits `SPIKE_KILL_WAIT_S` (default 4.0) before the
+  follow-up line, so the line is spoken after the reconnect in every setup.
 - `reconnect_rounds.sh` repeats the short script in fresh rooms, three reconnect setups side by
   side. The worker reads each room's setup from tokens in the room name (see `room_overrides`).
 - `summarize.py` rolls up any set of runs: latency, every forced reconnect, every barge-in and
@@ -20,12 +22,20 @@ and none of it should be. M4 starts over with real code.
   time, reply attributed to that line, number recalled, later lines answered), and each probe
   answer lists the words it shares only with the part of the cut-off turn the rep never heard.
 - `test_summarize.py` checks those helpers on synthetic events. No LiveKit, Gemini or saved runs.
+- `test_scripts.py` checks the offline parts of the other scripts (the caller's report and clip
+  cache, the control's reply attribution, the worker's transcript buffer). It imports them, so it
+  needs the dependencies installed, but no server, key or network.
 - `direct.py` is the control: the same lines sent straight to Gemini Live with no LiveKit. It
   times to the first audio chunk and to the first audible window. Those endpoints still differ
   from `caller.py`'s, so don't read the gap between them as LiveKit overhead.
-- `results/` holds the text reports the write-up quotes. `direct-control.txt` came from an
-  earlier `direct.py` that estimated when the line ended and stopped at the first chunk.
-  `reconnects.txt` is the reconnect section over every kept run. Raw logs, audio and frame dumps
+- `results/` holds the text reports the write-up quotes. They came from earlier versions of
+  these scripts, and the committed ones won't reproduce them line for line.
+  `run-a-default-vad.txt` used an older caller script (barge-ins at steps 17 to 19, no probe
+  step), and every reconnect in them was run with a fixed 2.0 s pause before the follow-up line.
+  `direct-control.txt` came from an earlier `direct.py` that estimated when the line ended,
+  stopped at the first chunk and credited each finished reply to the current line unchecked.
+  `reconnects.txt` is the reconnect section over every kept run; `summarize.py` now also names
+  the retry delay for fresh-session setups and flags follow-ups spoken over the reconnect. Raw logs, audio and frame dumps
   go to `runs/`, which is git-ignored, and invalid runs were moved to `runs/discarded/`.
 
 ## Run it
@@ -71,10 +81,10 @@ Three terminals, all from `spike/voice/`.
    uv run python summarize.py rc-              # roll up every room starting with rc-
    ```
 
-The analysis tests need nothing running:
+The tests need nothing running:
 
 ```bash
-uv run python -m unittest test_summarize
+uv run python -m unittest test_summarize test_scripts
 ```
 
 The control needs no LiveKit, just the key and model:

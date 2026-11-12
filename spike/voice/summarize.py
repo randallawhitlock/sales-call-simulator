@@ -6,11 +6,14 @@ reconnect broken into separate checks, a tally per reconnect setup, then each ba
 
 Reconnect checks, kept apart on purpose (a reconnect can pass one and fail the next):
   connected   the plugin reported a new Gemini connection after the drop
-  replied     the caller heard a reply to the follow-up line within REPLY_DEADLINE_S
+  replied     the caller heard a reply to the follow-up line within REPLY_DEADLINE_S, starting
+              after that line ended (a reply that began before the rep finished doesn't count)
   attributed  exactly one customer reply landed between that line ending and the next line starting
   heard       Gemini's transcript of the rep's line before the drop held the number (kill_idle only)
   recalled    the attributed reply held the number (kill_idle only)
   later       every line after the follow-up got an audible, attributed reply
+A drop is also flagged when the rep started the follow-up line before the reconnect finished: that
+reply time isn't comparable with one from a setup that was already back.
 """
 
 import json
@@ -24,6 +27,7 @@ import numpy as np
 RUNS = Path(__file__).resolve().parent / "runs"
 EXTENSION = "4417"
 REPLY_DEADLINE_S = 5.0  # longer than this on a phone call is dead air
+PLUGIN_FIRST_RETRY_S = 0.1  # the Google plugin's delay before its first reconnect attempt
 
 # Split strings read better here than ruff's one-word-per-line list literals.
 ONES = "zero one two three four five six seven eight nine".split()  # noqa: SIM905
@@ -81,6 +85,7 @@ def load(room: str) -> tuple[list[dict], list[dict]]:
 
 
 def p95(xs: list[float]) -> float:
+    """Nearest-rank p95. With ~20 samples this is the second-worst turn, so read it loosely."""
     ordered = sorted(xs)
     return ordered[max(0, int(np.ceil(0.95 * len(ordered))) - 1)]
 
@@ -111,22 +116,53 @@ def reply_to(steps: list[dict], events: list[dict], step: dict) -> tuple[str | N
     return (replies[0] if len(replies) == 1 else None), len(replies)
 
 
+TIMED = ("turn", "probe", "barge", "kill_idle", "kill_speaking")
+
+
+def turn_latencies(steps: list[dict]) -> tuple[list[float], int, int]:
+    """Latencies of timed turns that aren't right after a forced drop, plus how many replies
+    started before the rep finished (latency <= 0) and how many lines got no reply."""
+    after_kill = {s["i"] + 1 for s in steps if s["kind"].startswith("kill")}
+    normal = [s["latency_s"] for s in steps if s["kind"] in TIMED and s["i"] not in after_kill]
+    heard = [x for x in normal if x is not None]
+    return [x for x in heard if x > 0], sum(x <= 0 for x in heard), len(normal) - len(heard)
+
+
+def cut_turn(events: list[dict], barge_from: float) -> tuple[str | None, str | None]:
+    """The customer turn a barge-in cut off: what LiveKit says was heard, and what Gemini's own
+    transcript says it generated. Either is None when the agent logged no such turn."""
+
+    def near(e: dict) -> bool:
+        return bool(e.get("interrupted")) and barge_from - 1 < e["t"] < barge_from + 15
+
+    heard = next(
+        (
+            e["text"]
+            for e in events
+            if e["kind"] == "item" and e.get("role") == "assistant" and near(e)
+        ),
+        None,
+    )
+    gen = next((e["generated"] for e in events if e["kind"] == "model_turn_text" and near(e)), None)
+    return heard, gen
+
+
 def answered(steps: list[dict], events: list[dict], step: dict) -> bool:
     """Heard a reply, and the agent logged at least one customer item for this line (a barge-in
     line logs two: the interrupted turn and the answer)."""
     _, n = reply_to(steps, events, step)
-    return step["latency_s"] is not None and n > 0
+    return step["latency_s"] is not None and step["latency_s"] > 0 and n > 0
 
 
 def reconnect_setup(events: list[dict]) -> str:
     start = next((e for e in events if e["kind"] == "start"), {})
     retry = next((e for e in events if e["kind"] == "retry"), {})
-    first = float(retry.get("first_retry_s", 0.1))
+    first = float(retry.get("first_retry_s", PLUGIN_FIRST_RETRY_S))
     if not start.get("resumption", True):
-        return "fresh session, LiveKit replays history"
-    if first >= 1.0:
-        return f"resume with handle, first retry {first:g} s"
-    return "plugin default: resume, first retry 0.1 s"
+        return f"fresh session, LiveKit replays history, first retry {first:g} s"
+    if first == PLUGIN_FIRST_RETRY_S:
+        return f"plugin default: resume, first retry {first:g} s"
+    return f"resume with handle, first retry {first:g} s"
 
 
 def classify_reconnect(steps: list[dict], events: list[dict], kill: dict) -> dict:
@@ -154,7 +190,8 @@ def classify_reconnect(steps: list[dict], events: list[dict], kill: dict) -> dic
         "back_s": conn["t"] - k if conn else None,
         "fatal": (fatal or {}).get("error"),
         "reply_s": lat,
-        "replied": lat is not None and lat <= REPLY_DEADLINE_S,
+        "replied": lat is not None and 0 < lat <= REPLY_DEADLINE_S,
+        "overlapped": bool(conn and follow and follow["said_from"] < conn["t"]),
         "attributed": reply is not None,
         "n_replies": n_replies,
         "reply": reply,
@@ -182,21 +219,9 @@ def main(prefixes: list[str]) -> None:
     lats: list[float] = []
     no_reply = 0
     for room in rooms:
-        steps, events = load(room)
-        after_kill = {s["i"] + 1 for s in steps if s["kind"].startswith("kill")}
-        for s in steps:
-            if s["i"] in after_kill or s["kind"] not in (
-                "turn",
-                "probe",
-                "barge",
-                "kill_idle",
-                "kill_speaking",
-            ):
-                continue
-            if s["latency_s"] is None:
-                no_reply += 1
-            elif s["latency_s"] > 0:
-                lats.append(s["latency_s"])
+        room_lats, _, room_missing = turn_latencies(load(room)[0])
+        lats += room_lats
+        no_reply += room_missing
     if lats:
         print(
             f"latency over {len(lats)} turns in {len(rooms)} calls: median "
@@ -227,6 +252,8 @@ def main(prefixes: list[str]) -> None:
             )
             if r["fatal"]:
                 print(f"      fatal: {r['fatal'][:90]}")
+            if r["overlapped"]:
+                print("      follow-up line started before the reconnect finished")
             if r["reply"] and r["kind"] == "kill_idle":
                 print(f"      reply: {r['reply'][:100]!r}")
 
@@ -242,7 +269,8 @@ def main(prefixes: list[str]) -> None:
             f"({_range([r['reply_s'] for r in rs if r['reply_s']])}); "
             f"attributed {sum(r['attributed'] for r in rs)}/{len(rs)}; "
             f"later lines all answered "
-            f"{sum(r['later_n'] > 0 and r['later_ok'] == r['later_n'] for r in rs)}/{len(rs)}"
+            f"{sum(r['later_n'] > 0 and r['later_ok'] == r['later_n'] for r in rs)}/{len(rs)}; "
+            f"follow-up spoken over the reconnect {sum(r['overlapped'] for r in rs)}/{len(rs)}"
         )
         print(
             f"    number in the rep transcript before the drop "
@@ -258,25 +286,7 @@ def main(prefixes: list[str]) -> None:
             n = s["notes"]
             if s["kind"] != "barge" or "barge_from" not in n:
                 continue
-            b = n["barge_from"]
-            heard = next(
-                (
-                    e["text"]
-                    for e in events
-                    if e["kind"] == "item" and e.get("interrupted") and b - 1 < e["t"] < b + 15
-                ),
-                None,
-            )
-            gen = next(
-                (
-                    e["generated"]
-                    for e in events
-                    if e["kind"] == "model_turn_text"
-                    and e.get("interrupted")
-                    and b - 1 < e["t"] < b + 15
-                ),
-                None,
-            )
+            heard, gen = cut_turn(events, n["barge_from"])
             print(
                 f"  {room} barge cutoff={n.get('cutoff_s', float('nan')):.2f}s "
                 f"reply={n.get('reply_latency_s', float('nan')):.2f}s"

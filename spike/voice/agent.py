@@ -196,15 +196,20 @@ def _log_metrics(ev: EventLog, m: Any) -> None:
 def _instrument(rt: Any, ev: EventLog) -> None:
     """Log reconnects and the full text Gemini generated, to compare with what was heard."""
     acquired = rt._report_connection_acquired
+    generated: list[str] = []
 
     def report_acquired(dt: float, *a: Any, **k: Any) -> Any:
+        # Text still buffered belongs to a turn the old socket never finished. Log it apart and
+        # drop it, or it would be prepended to the first turn on the new connection.
+        if generated:
+            ev("model_turn_dropped", generated="".join(generated))
+            generated.clear()
         ev("model_connected", connect_s=dt, handle=rt.session_resumption_handle)
         return acquired(dt, *a, **k)
 
     rt._report_connection_acquired = report_acquired
 
     handle_sc = rt._handle_server_content
-    generated: list[str] = []
 
     def on_server_content(sc: types.LiveServerContent) -> Any:
         if sc.output_transcription and sc.output_transcription.text:

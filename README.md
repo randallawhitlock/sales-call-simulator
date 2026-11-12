@@ -42,10 +42,10 @@ are working; the rest of M2 is in progress.
 | Milestone | What lands | State |
 |---|---|---|
 | M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold, CI | Done |
-| M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done; voice spike pending |
+| M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done |
 | M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer | In progress: call screen, Gemini text actor, offline scripted actor |
 | M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, retry | Planned |
-| M4 Voice | LiveKit agent worker on Gemini Live | Planned |
+| M4 Voice | LiveKit agent worker on Gemini Live | Planned; spike run, see [docs/voice-spike.md](docs/voice-spike.md) |
 | M5 Hardening | Resilience tests, demo script | Planned |
 
 ### Launch cases

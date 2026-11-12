@@ -188,6 +188,67 @@ class Reconnects(unittest.TestCase):
             S.reconnect_setup([ev(0, "start", resumption=True), ev(0, "retry", first_retry_s=1.5)]),
         )
 
+    def test_reconnect_setup_is_labelled_by_the_actual_retry_delay(self):
+        def setup(resumption: bool, first: float) -> str:
+            return S.reconnect_setup(
+                [ev(0, "start", resumption=resumption), ev(0, "retry", first_retry_s=first)]
+            )
+
+        self.assertEqual(setup(True, 0.1), "plugin default: resume, first retry 0.1 s")
+        self.assertEqual(setup(True, 0.5), "resume with handle, first retry 0.5 s")
+        self.assertNotEqual(setup(False, 0.1), setup(False, 1.5))
+        self.assertIn("1.5 s", setup(False, 1.5))
+
+    def test_a_reply_that_began_before_the_rep_finished_is_not_in_time(self):
+        for latency in (0.0, -0.4):
+            with self.subTest(latency=latency):
+                steps, events = reconnect_run(
+                    ev(111.2, "model_connected"),
+                    say(119.0, "assistant", "You said 4417."),
+                    say(129.0, "assistant", "Alder Family Pharmacy."),
+                    follow_latency=latency,
+                )
+                r = S.classify_reconnect(steps, events, steps[0])
+                self.assertFalse(r["replied"])
+                self.assertTrue(r["attributed"])
+                self.assertFalse(S.answered(steps, events, steps[1]))
+                self.assertTrue(S.answered(steps, events, steps[2]))
+
+    def test_follow_up_spoken_over_the_reconnect_is_flagged(self):
+        after = (say(119.0, "assistant", "You said 4417."),)
+        steps, events = reconnect_run(ev(111.2, "model_connected"), *after)
+        self.assertFalse(S.classify_reconnect(steps, events, steps[0])["overlapped"])
+        steps, events = reconnect_run(ev(112.5, "model_connected"), *after)
+        self.assertTrue(S.classify_reconnect(steps, events, steps[0])["overlapped"])
+        steps, events = reconnect_run(follow_latency=None)
+        self.assertFalse(S.classify_reconnect(steps, events, steps[0])["overlapped"])
+
+
+class Latencies(unittest.TestCase):
+    def test_early_missing_and_after_drop_turns_stay_out_of_the_latencies(self):
+        steps = [
+            step(0, "turn", 1.0, 2.0, 1.2),
+            step(1, "turn", 5.0, 6.0, -0.1),
+            step(2, "barge", 9.0, 10.0, None),
+            step(3, "kill_idle", 13.0, 14.0, 1.5),
+            step(4, "turn", 17.0, 18.0, 4.0),
+            step(5, "probe", 21.0, 22.0, 1.1),
+        ]
+        self.assertEqual(S.turn_latencies(steps), ([1.2, 1.5, 1.1], 1, 1))
+
+
+class CutTurns(unittest.TestCase):
+    def test_heard_and_generated_come_from_the_turn_the_barge_cut(self):
+        events = [
+            ev(40.0, "model_turn_text", generated="An earlier cut turn.", interrupted=True),
+            ev(99.5, "item", role="assistant", text="They live in", interrupted=True),
+            ev(100.2, "item", role="user", text="Sorry to jump in.", interrupted=True),
+            ev(100.4, "model_turn_text", generated="They live in Ohio.", interrupted=True),
+            ev(104.0, "model_turn_text", generated="Alder Family Pharmacy.", interrupted=False),
+        ]
+        self.assertEqual(S.cut_turn(events, 100.0), ("They live in", "They live in Ohio."))
+        self.assertEqual(S.cut_turn(events, 300.0), (None, None))
+
 
 class Probes(unittest.TestCase):
     heard = "I have three wonderful grandkids. They live in"
