@@ -17,15 +17,29 @@ const AUTHORITY: Record<Authority, string> = {
   training: 'Training objective',
 }
 
-/** Reference material beside the call. Not modal, so the learner can read the disclaimer while
- * saying it. CMS standardized text is kept apart from this app's own summaries. */
+const DRAWER_ID = 'reference-drawer'
+
+/** Focus is in the drawer, on its button, or nowhere in particular. Elsewhere, such as the
+ * composer or a select, Escape and focus belong to that control. */
+function focusIsOurs(): boolean {
+  const active = document.activeElement
+  if (!active || active === document.body) return true
+  if (active.getAttribute('aria-controls') === DRAWER_ID) return true
+  return document.getElementById(DRAWER_ID)?.contains(active) ?? false
+}
+
+/** Reference material over the right-hand pane, below the header. Not modal, so the learner can
+ * read the disclaimer while saying it. CMS standardized text is kept apart from this app's own
+ * summaries. */
 export function ReferenceButton() {
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
 
   function close(): void {
+    // Only take focus back from the drawer: closing must not pull it out of the composer.
+    const returnFocus = focusIsOurs()
     setOpen(false)
-    trigger.current?.focus()
+    if (returnFocus) trigger.current?.focus()
   }
 
   return (
@@ -35,7 +49,7 @@ export function ReferenceButton() {
         type="button"
         className="small"
         aria-expanded={open}
-        aria-controls="reference-drawer"
+        aria-controls={DRAWER_ID}
         onClick={() => (open ? close() : setOpen(true))}
       >
         Reference
@@ -57,14 +71,14 @@ function ReferenceDrawer({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape' && !e.defaultPrevented && focusIsOurs()) onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
   return (
-    <aside id="reference-drawer" className="drawer" aria-label="Reference">
+    <aside id={DRAWER_ID} className="drawer" aria-label="Reference">
       <div className="drawer-head">
         <h2>Reference</h2>
         <button ref={closeButton} type="button" className="small" onClick={onClose}>

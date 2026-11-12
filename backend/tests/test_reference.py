@@ -88,3 +88,23 @@ def test_standard_text_fill_ins_are_checked() -> None:
     raw["standard_text"] = "We represent {carriers} organizations."
     with pytest.raises(ValidationError, match="fill-ins"):
         Rule.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We represent {organizations.count} organizations and {products} products.",
+        "We represent {organizations[0]} organizations and {products} products.",
+        "We represent {organizations} organizations and {} products.",
+        "We represent {organizations} organizations and {products products.",
+        "We represent {organizations} organizations.",
+        "We do not offer every plan available in your area.",
+    ],
+)
+def test_standard_text_needs_exactly_the_two_plain_fill_ins(text: str) -> None:
+    """The drawer says the numbers are filled in, so a text without them is an authoring
+    slip, and a fill-in that cannot format must fail as a validation error, not a crash."""
+    raw = next(r for r in BUNDLE.ruleset.rules if r.rule_id == "R-DISC").model_dump(mode="json")
+    raw["standard_text"] = text
+    with pytest.raises(ValidationError, match="standard_text"):
+        Rule.model_validate(raw)

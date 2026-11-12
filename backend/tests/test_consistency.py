@@ -33,6 +33,13 @@ CASE_A = "scenario-101"
         ("two hundred and fifty dollars", [Decimal(250)]),
         ("A thousand and one dollars", [Decimal(1001)]),
         ("Twenty milligrams, twice a day.", []),
+        ("a couple hundred dollars", []),
+        ("a couple of hundred dollars", []),
+        ("a few thousand bucks", []),
+        ("several hundred dollars a year", []),
+        ("nineteen ninety-nine dollars", [Decimal("19.99")]),
+        ("one two three dollars", []),
+        ("nineteen hundred ninety-nine dollars", [Decimal(1999)]),
     ],
 )
 def test_amounts_said(text: str, amounts: list[Decimal]) -> None:
@@ -130,6 +137,23 @@ def test_a_title_after_doctor_is_not_the_name(client: TestClient) -> None:
     call.hear("My doctor Dr. Raman is the one I trust.")
     call.end()
     assert flags(call) == [("doctor", "Smith")]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "I told Dr. Raman I'm worried about switching.",
+        "I told Dr. Raman I've had enough.",
+        "I saw Dr. Raman Thanks for asking.",
+        "With Dr. Raman She's very thorough.",
+        "I like Dr. Priya Raman's office.",
+    ],
+)
+def test_a_word_after_the_surname_is_not_part_of_the_name(client: TestClient, line: str) -> None:
+    call = Call(client, CASE_A).start()
+    call.hear(line)
+    call.end()
+    assert flags(call) == []
 
 
 def test_a_given_surname_with_another_first_name_is_flagged(client: TestClient) -> None:

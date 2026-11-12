@@ -73,8 +73,13 @@ export function App() {
     setAttempt((n) => n + 1)
   }
 
+  /** A call starting or being left. What the rejoin left behind is stale from here on: the
+   * incoming card is for a call already answered, and the error is about an older link. */
   function setSession(s: Session | null): void {
     putSessionInUrl(s?.session_id ?? null)
+    setIncoming(null)
+    setRejoinError(null)
+    setCanRetry(false)
     setSessionState(s)
   }
 

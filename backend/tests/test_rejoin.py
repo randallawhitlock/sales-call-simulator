@@ -1,9 +1,11 @@
 """A call screen that reloads mid-call gets back everything it showed: live hold and turn
 state on the session view, and the catalog items its searches had returned."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.engine.events import EventType
+from app.engine.records import SessionState
 from tests.harness import Call
 from tests.test_actor import blocked_turn
 
@@ -64,6 +66,21 @@ def test_session_view_reports_hold(client: TestClient) -> None:
     call.post("/hold", {"on": True})
     call.end()
     assert call.get("")["on_hold"] is False, "an ended call is not on hold"
+
+
+def test_session_view_does_not_fold_the_event_log(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The call screen polls the view every second while a reply is pending."""
+    call = Call(client, CASE_A).start()
+    call.post("/hold", {"on": True})
+
+    def no_fold(events: object) -> None:
+        raise AssertionError("the session view folded the whole log")
+
+    monkeypatch.setattr(SessionState, "fold", no_fold)
+    monkeypatch.setattr(call.service.store, "events", no_fold)
+    assert call.get("")["on_hold"] is True
 
 
 def test_session_view_reports_a_reply_in_flight(client: TestClient) -> None:

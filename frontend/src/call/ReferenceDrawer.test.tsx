@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Reference } from '../api.ts'
+import css from '../index.css?raw'
 import { ReferenceButton } from './ReferenceDrawer.tsx'
 
 const REFERENCE: Reference = {
@@ -87,5 +88,54 @@ describe('ReferenceButton', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('complementary', { name: 'Reference' })).toBeNull()
     expect(document.activeElement).toBe(button)
+  })
+
+  it('leaves Escape and focus alone while the learner is in another control', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(REFERENCE), { status: 200 })))
+    render(
+      <>
+        <ReferenceButton />
+        <textarea aria-label="Your line" />
+      </>,
+    )
+    const button = screen.getByRole('button', { name: 'Reference' })
+    const composer = screen.getByLabelText('Your line')
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByText('CMS standardized')).toBeTruthy())
+
+    composer.focus()
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(screen.getByRole('complementary', { name: 'Reference' })).toBeTruthy()
+    expect(document.activeElement).toBe(composer)
+
+    // Closing from the header button while typing does not pull focus out of the composer.
+    fireEvent.click(button)
+    expect(screen.queryByRole('complementary', { name: 'Reference' })).toBeNull()
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(composer)
+  })
+
+  it('closes on Escape from its own button, and from its Close control', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(REFERENCE), { status: 200 })))
+    render(<ReferenceButton />)
+    const button = screen.getByRole('button', { name: 'Reference' })
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByText('CMS standardized')).toBeTruthy())
+    button.focus()
+    fireEvent.keyDown(button, { key: 'Escape' })
+    expect(screen.queryByRole('complementary', { name: 'Reference' })).toBeNull()
+
+    fireEvent.click(button)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('complementary', { name: 'Reference' })).toBeNull()
+    expect(document.activeElement).toBe(button)
+  })
+
+  it('hangs below the call header instead of covering it', () => {
+    // jsdom does not lay out, so this pins the rules that keep Leave and Reference in reach.
+    const rule = (selector: string) => new RegExp(`\\${selector} \\{([^}]*)\\}`).exec(css)?.[1] ?? ''
+    expect(rule('.drawer')).toMatch(/position: absolute;\s*top: 100%;/)
+    expect(rule('.drawer')).not.toMatch(/position: fixed/)
+    expect(rule('.call-header')).toMatch(/position: sticky/)
   })
 })

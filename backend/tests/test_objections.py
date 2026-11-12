@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 from pydantic import ValidationError
 
-from app.actor.actors import ScriptedActor, Turn
+from app.actor.actors import DETECTORS, ScriptedActor, Turn
 from app.actor.prompt import TRIGGER_TEXT, build_customer_prompt
 from app.content.loader import load_bundle, validate_bundle
 from app.content.scenario import Objection, ObjectionTrigger, Scenario
@@ -33,6 +33,10 @@ def reply(scenario_id: str, *lines: tuple[Speaker, str]) -> str:
 
 def test_every_trigger_has_lay_wording() -> None:
     assert set(TRIGGER_TEXT) == set(ObjectionTrigger)
+
+
+def test_the_scripted_customer_can_spot_every_trigger() -> None:
+    assert set(DETECTORS) == set(ObjectionTrigger)
 
 
 def test_prompt_renders_reactions_with_how_they_settle() -> None:
@@ -108,7 +112,13 @@ PERMISSION_ASK = "Would you like me to enroll you in Maple Choice today?"
 
 @pytest.mark.parametrize(
     "ask",
-    [PERMISSION_ASK, "Okay. Do you want me to go ahead and enroll you right now?"],
+    [
+        PERMISSION_ASK,
+        "Okay. Do you want me to go ahead and enroll you right now?",
+        "Okay, would you like me to enroll you in Maple Choice today?",
+        "All right, so can I enroll you in Maple Choice today?",
+        "That covers it, would you like me to enroll you today?",
+    ],
 )
 def test_asking_permission_to_enroll_today_is_not_pressure(ask: str) -> None:
     assert reply(CASE_A, *NEEDS, (C, "Apixaban."), (L, ask)) == "Yes, go ahead."
@@ -120,11 +130,30 @@ def test_asking_permission_to_enroll_today_is_not_pressure(ask: str) -> None:
         "Let's enroll you today before the price goes up.",
         "This is a limited time offer. Would you like me to enroll you?",
         "You should sign up right now. Can I enroll you?",
+        "You need to decide today, okay, can I enroll you?",
+        "You don't have to think it over, just enroll today.",
     ],
 )
 def test_pressure_is_still_pressure_beside_a_permission_ask(push: str) -> None:
     held = objection(CASE_A, ObjectionTrigger.PRESSURE).lay_text
     assert reply(CASE_A, *NEEDS, (C, "Apixaban."), (L, push)) == held
+
+
+@pytest.mark.parametrize(
+    "reassurance",
+    [
+        "You don't have to decide today, take your time.",
+        "There's no rush to sign up today.",
+        "I'm not asking you to enroll right now.",
+    ],
+)
+def test_taking_the_pressure_off_is_not_pressure(reassurance: str) -> None:
+    """Otherwise the refusal, which nothing settles, would put enrolling out of reach."""
+    held = objection(CASE_A, ObjectionTrigger.PRESSURE).lay_text
+    lines = [*NEEDS, (C, "Apixaban."), (L, reassurance)]
+    calm = reply(CASE_A, *lines)
+    assert calm != held
+    assert reply(CASE_A, *lines, (C, calm), (L, PERMISSION_ASK)) == "Yes, go ahead."
 
 
 def test_a_refusal_under_pressure_holds_when_asked_again() -> None:

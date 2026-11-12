@@ -46,8 +46,13 @@ _TITLED = re.compile(
 "my doctor Dr. Smith" names Smith."""
 _NOT_NAMES = set(
     "monday tuesday wednesday thursday friday saturday sunday january february march "  # noqa: SIM905
-    "april may june july august september october november december".split()
+    "april may june july august september october november december "
+    "i he she we they you it and but so the my that this well yes no okay oh thanks thank".split()
 )
+"""Capitalized words that can follow a title or a surname without being part of the name."""
+_CONTRACTION = re.compile(r"['’](?:m|ve|ll|d|re|s)$", re.IGNORECASE)
+_VAGUE = {"couple", "few", "several", "some", "many"}
+"""Before a scale these make a rough quantity ("a couple hundred dollars"), not an amount."""
 _CURRENCY = {"dollar", "dollars", "buck", "bucks"}
 _UNIT_WORDS = (
     "zero one two three four five six seven eight nine ten eleven twelve thirteen "  # noqa: SIM905
@@ -105,9 +110,18 @@ def _flags_for(utt: Utterance, given: str, catalog: Catalog) -> list[Consistency
 
 def _doctors_named(text: str, catalog: Catalog) -> list[str]:
     titled = [m.group(1).split() for m in _TITLED.finditer(text)]
-    names = [" ".join(w for w in words if w.casefold() not in _NOT_NAMES) for words in titled]
+    names = [" ".join(w for w in words if _is_name_word(w)) for words in titled]
     names += [p.name for p in catalog.providers if _has_phrase(text, p.name)]
     return [re.sub(r"['’]s$", "", n) for n in names if n]
+
+
+def _is_name_word(word: str) -> bool:
+    """Not a pronoun, sentence opener or contraction: in "Dr. Raman I'm worried" the name is
+    Raman. A possessive stays ("Raman's")."""
+    base = _CONTRACTION.sub("", word)
+    if base != word and word[-1] not in "sS":
+        return False
+    return base.casefold() not in _NOT_NAMES
 
 
 def _doctor_given(given: str, name: str) -> bool:
@@ -145,7 +159,13 @@ def amounts_said(text: str) -> list[tuple[Decimal, str]]:
                 if value is not None:
                     out.append((value, f"{prev} {tok}"))
                 continue
-            run = tokens[run_ending_at.get(i, i) : i]
+            start = run_ending_at.get(i, i)
+            before = [t.casefold() for t in tokens[max(start - 2, 0) : start]]
+            if before[-1:] == ["of"]:
+                before.pop()
+            if tokens[start].casefold() in _SCALES and before and before[-1] in _VAGUE:
+                continue  # "a couple hundred dollars" is no exact figure
+            run = tokens[start:i]
             value = _words_value(run)
             if value is not None:
                 out.append((value, " ".join([*run, tok])))
@@ -222,18 +242,51 @@ def _words_value(words: Iterable[str]) -> Decimal | None:
         folded.pop()
     if not any(w in _NUMBER_WORDS for w in folded):
         return None
+    words = [w for w in folded if w in _NUMBER_WORDS]
+    if not any(w in _SCALES for w in words):
+        return _small_or_price(words)
     total = current = 0
-    for w in folded:
-        if w in _UNITS:
-            current += _UNITS[w]
-        elif w in _TENS:
-            current += _TENS[w]
-        elif w == "hundred":
+    small: list[str] = []
+    for w in [*words, ""]:
+        if w in _SCALES or not w:
+            value = _under_hundred(small) if small else 0
+            if value is None:
+                return None  # "one two hundred" is not one number
+            current += value
+            small = []
+        if w == "hundred":
             current = (current or 1) * 100
         elif w == "thousand":
             total += (current or 1) * 1000
             current = 0
+        elif w:
+            small.append(w)
     return Decimal(total + current)
+
+
+def _under_hundred(words: Sequence[str]) -> int | None:
+    """ "nineteen", "ninety", "ninety nine". None for anything else."""
+    match words:
+        case [w] if w in _UNITS:
+            return _UNITS[w]
+        case [w] if w in _TENS:
+            return _TENS[w]
+        case [t, u] if t in _TENS and u in _UNITS and 0 < _UNITS[u] < 10:
+            return _TENS[t] + _UNITS[u]
+    return None
+
+
+def _small_or_price(words: Sequence[str]) -> Decimal | None:
+    """A number under a hundred, or a price said as two of them: "nineteen ninety-nine" is
+    19.99, never 19 + 99. Any other string of number words is no one number."""
+    whole = _under_hundred(words)
+    if whole is not None:
+        return Decimal(whole)
+    for cut in range(1, len(words)):
+        dollars, cents = _under_hundred(words[:cut]), _under_hundred(words[cut:])
+        if dollars is not None and cents is not None and cents >= 10:
+            return Decimal(dollars) + Decimal(cents) / 100
+    return None
 
 
 def _decimal(digits: str) -> Decimal | None:

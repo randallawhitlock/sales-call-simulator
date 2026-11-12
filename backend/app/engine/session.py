@@ -291,6 +291,14 @@ class SessionService:
     def state(self, session_id: str) -> SessionState:
         return SessionState.fold(self.events(session_id))
 
+    def on_hold(self, session_id: str) -> bool:
+        """Same answer as ``state(...).on_hold``, from the last hold event alone. The session
+        view is polled, so it must not fold the whole log."""
+        last = self.store.last_event_type(
+            session_id, (EventType.HOLD_STARTED, EventType.HOLD_ENDED)
+        )
+        return last is EventType.HOLD_STARTED
+
     def turn_pending(self, session_id: str) -> bool:
         """A customer reply is being generated for this session right now. A call screen that
         reloads mid-turn uses it to wait for the reply instead of offering a new line."""

@@ -2,6 +2,7 @@
 
 from datetime import date
 from enum import StrEnum
+from string import Formatter
 from typing import Self
 
 from pydantic import Field, HttpUrl, model_validator
@@ -17,6 +18,8 @@ from app.content.common import (
     RuleId,
     require_unique,
 )
+
+STANDARD_FILL_INS = {"organizations", "products"}
 
 
 class RuleStatus(StrEnum):
@@ -84,7 +87,8 @@ class Rule(ContentModel):
     notes: str | None = None
     standard_text: str | None = None
     """CMS-standardized wording the agent must say, exactly as published, with ``{organizations}``
-    and ``{products}`` as fill-ins. The reference drawer shows it apart from the app's own
+    and ``{products}`` as fill-ins, both required: the drawer says the numbers are filled in
+    for the call. The reference drawer shows it apart from the app's own
     wording. Only approved, verified rules may carry it."""
 
     @model_validator(mode="after")
@@ -100,12 +104,17 @@ class Rule(ContentModel):
             if self.status is not RuleStatus.APPROVED:
                 raise ValueError(f"{self.rule_id}: only approved rules carry standard_text")
             try:
-                self.standard_text.format(organizations=0, products=0)
-            except (KeyError, IndexError, ValueError) as exc:
+                fields = [
+                    f for _, f, _, _ in Formatter().parse(self.standard_text) if f is not None
+                ]
+            except ValueError as exc:
+                raise ValueError(f"{self.rule_id}: standard_text is malformed ({exc})") from exc
+            # Plain names only: "{organizations.count}" or "{organizations[0]}" would not format.
+            if set(fields) != STANDARD_FILL_INS:
                 raise ValueError(
-                    f"{self.rule_id}: standard_text fill-ins are {{organizations}} and "
-                    f"{{products}} only ({exc!r})"
-                ) from exc
+                    f"{self.rule_id}: standard_text must use both fill-ins {{organizations}} "
+                    f"and {{products}}, and no others (found {sorted(set(fields))})"
+                )
         if (
             self.effective_from is not None
             and self.effective_to is not None

@@ -50,6 +50,30 @@ _BROKE_CHARACTER = re.compile(
     r"i am an ai|playing (a|the) (part|role)|role-?play|answer key)\b",
     re.IGNORECASE,
 )
+_ADMITS = re.compile(r"\b(as an ai|i'?m an ai|i am an ai)\b", re.IGNORECASE)
+_PUZZLED = re.compile(
+    r"\b(don['’]?t (know|understand)|do not (know|understand)|no idea|never heard|"
+    r"not sure what|what(['’]s| is| are| do you mean))\b",
+    re.IGNORECASE,
+)
+
+
+def broke_character(text: str) -> bool:
+    """The customer spoke as the model, or about its instructions as its own. The adversarial
+    lines use these very terms, so a puzzled echo is in character: "Answer key? I don't know
+    what you mean." Saying it is an AI never is."""
+    if _ADMITS.search(text):
+        return True
+    for sentence in re.split(r"(?<=[.?!])\s+", text):
+        m = _BROKE_CHARACTER.search(sentence)
+        if m is None:
+            continue
+        echoed = sentence.rstrip().endswith("?")
+        if not echoed and not _PUZZLED.search(sentence[: m.start()]):
+            return True
+    return False
+
+
 _COMMON = set(
     "about after again always another anything around because before being better could doing "  # noqa: SIM905
     "every going great maybe might never nothing other people really right should since "
@@ -188,7 +212,7 @@ def leaks(prompt: CustomerPrompt, history: list[Turn]) -> list[str]:
         if t.speaker is not C:
             continue
         out += [f"{p} in {t.text!r}" for p in prompt_problems(replace(prompt, text=t.text), BUNDLE)]
-        if _BROKE_CHARACTER.search(t.text):
+        if broke_character(t.text):
             out.append(f"broke character: {t.text!r}")
     return out
 
@@ -255,3 +279,34 @@ def test_leak_detector_catches_a_character_break() -> None:
     prompt = prompt_for(BUNDLE.scenario("scenario-101"), 7)
     history = [Turn(L, "Are you an AI?"), Turn(C, "As an AI language model, I can't say.")]
     assert leaks(prompt, history)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Answer key? I don't know what you mean.",
+        "System prompt? What's that, dear?",
+        "I don't know what a system prompt is.",
+        "What do you mean, my instructions?",
+        "I have no idea what an answer key would be.",
+        "I just want to keep my doctor.",
+    ],
+)
+def test_a_puzzled_echo_is_not_a_character_break(line: str) -> None:
+    assert not broke_character(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "As an AI language model, I can't say.",
+        "I'm an AI, why do you ask?",
+        "My instructions say not to tell you.",
+        "The answer key says Maple Choice.",
+        "Sure. My system prompt says I am Walter.",
+        "I'm not supposed to share my instructions.",
+        "I am playing the role of a customer.",
+    ],
+)
+def test_speaking_as_the_model_is_a_character_break(line: str) -> None:
+    assert broke_character(line)

@@ -185,6 +185,10 @@ ul.plain li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   flex-wrap: wrap;
+  /* Holds the reference drawer below it, and stays in reach when a narrow page scrolls. */
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .panes {
@@ -271,13 +275,15 @@ ul.plain li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
   font-size: 0.9rem;
 }
 
-/* Reference drawer: beside the call, not over it, so the panes stay usable. */
+/* Reference drawer: hangs below the call header over the right-hand pane. It is not modal: the
+   header buttons (Reference toggles it, Leave) and the other panes stay usable, and Close or
+   the Reference button uncovers the pane beneath. Percentages here are of the header's box. */
 
 .drawer {
-  position: fixed;
-  top: 0;
+  position: absolute;
+  top: 100%;
   right: 0;
-  bottom: 0;
+  height: calc(100vh - 100%);
   width: min(30rem, 100vw);
   overflow: auto;
   padding: 0.75rem 1rem 1.5rem;

@@ -59,6 +59,8 @@ function serve(state: { session: Session | null; transcript: Utterance[]; down?:
     }
     if (path === '/health') return json({ status: 'ok', version: 'test', actor: 'scripted', catalog_version: 'v' })
     if (path === '/scenarios') return json([{ scenario_id: 'scenario-101', learner_title: 'Inbound call' }])
+    if (path === '/sessions' && state.session) return json({ ...state.session, status: 'created' })
+    if (path === '/sessions/s-1/start' && state.session) return json({ ...state.session, status: 'active' })
     if (path === '/sessions/s-1') return state.session ? json(state.session) : json({ detail: 'session not found' }, 404)
     if (path.endsWith('/transcript')) return json(state.transcript)
     if (path.endsWith('/found')) return json({ plans: [], providers: [], drugs: [], pharmacies: [] })
@@ -119,6 +121,39 @@ describe('App rejoin', () => {
     await waitFor(() => expect(screen.getByText(/Couldn't reopen that call/)).toBeTruthy())
     expect(screen.getByText('Choose a call')).toBeTruthy()
     expect(window.location.search).toBe('')
+  })
+
+  it('forgets the incoming call it reopened once that call is answered and left', async () => {
+    openAt('?session=s-1')
+    serve({ session: { ...SESSION, status: 'created' }, transcript: [] })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByText('Incoming call')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Answer the call' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Leave' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }))
+
+    await waitFor(() => expect(screen.getByText('Choose a call')).toBeTruthy())
+    expect(screen.queryByText('Incoming call')).toBeNull()
+    expect(window.location.search).toBe('')
+  })
+
+  it('drops the reopen error once another call has started', async () => {
+    openAt('?session=s-1')
+    const state = { session: null as Session | null, transcript: [] }
+    serve(state)
+    render(<App />)
+    await waitFor(() => expect(screen.getByText(/Couldn't reopen that call/)).toBeTruthy())
+
+    state.session = SESSION
+    fireEvent.click(await screen.findByRole('button', { name: 'Inbound call' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Answer the call' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Leave' })).toBeTruthy())
+    expect(screen.queryByText(/Couldn't reopen that call/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }))
+
+    await waitFor(() => expect(screen.getByText('Choose a call')).toBeTruthy())
+    expect(screen.queryByText(/Couldn't reopen that call/)).toBeNull()
   })
 
   it('keeps the call in the URL when reopening fails for now, and tries again on request', async () => {

@@ -226,11 +226,20 @@ _DECIDE_NOW = re.compile(
 )
 _URGENCY = re.compile(r"\bact (fast|now)\b|\blimited time\b|\bwon't last\b")
 _PERMISSION_ASK = re.compile(
-    r"^(would you like|do you want|are you ready|is it (ok|okay|all right|alright)|"
+    r"(?:^|[,;:]\s*)(?:(?:okay|ok|so|well|alright|all right|great|good|now|then|and|sure|right)"
+    r"\b[\s,]*)*"
+    r"(would you like|do you want|are you ready|is it (ok|okay|all right|alright)|"
     r"(may|can|could|shall|should) i|do i have your (permission|okay|ok))\b"
 )
-"""How a sentence that asks leave to enroll opens. "Would you like me to enroll you today?" is
-the permission question, not pressure."""
+"""How a sentence that asks leave to enroll opens, after any filler ("Okay, would you like...").
+"Would you like me to enroll you today?" is the permission question, not pressure."""
+_NO_RUSH = re.compile(
+    r"\b(?:(?:don['’]?t|do not|won['’]?t|will not) (?:have|need) to|needn['’]?t|"
+    r"no (?:need|rush|pressure|hurry|obligation) to|"
+    r"not (?:asking|going|trying|here) (?:you )?to(?: \w+ you to)?)\s+(?:\w+\s+){0,3}$"
+)
+"""What comes right before "decide today" when the agent is taking the pressure off: "you don't
+have to decide today"."""
 _EXPLAINED = re.compile(r"\b(means|meaning|which is|that is|in other words|basically)\b")
 _PITCH = re.compile(
     r"\b(i'?d recommend|i would recommend|i recommend|you should (switch|go with|enroll|join|"
@@ -251,30 +260,46 @@ def _objection_for(
     """The first objection whose trigger the learner's latest line sets off and that the
     customer hasn't raised yet. Simple patterns; the real actor reads the prompt instead."""
     earlier = [_fold(t.text) for t in history[:-1] if t.speaker is Speaker.LEARNER]
-    detectors: dict[ObjectionTrigger, Callable[[], bool]] = {
-        ObjectionTrigger.PERSONAL_INFO: lambda: bool(_PERSONAL_INFO.search(last)),
-        ObjectionTrigger.PRESSURE: lambda: _pressures(last),
-        ObjectionTrigger.JARGON: lambda: bool(jargon_in(last)) and not _EXPLAINED.search(last),
-        ObjectionTrigger.RUSHED: lambda: len(last.split()) > RUSHED_WORDS,
-        ObjectionTrigger.EARLY_PITCH: lambda: (
-            bool(_PITCH.search(last)) and not any(_NEEDS_ASKED.search(e) for e in earlier)
-        ),
-        ObjectionTrigger.ASKED_TO_WAIT: lambda: bool(_WAIT.search(last)),
-    }
     by_trigger = {o.trigger: o for o in objections}
-    for trigger, fires in detectors.items():
+    for trigger, fires in DETECTORS.items():
         o = by_trigger.get(trigger)
-        if o is not None and o.lay_text not in said and fires():
+        if o is not None and o.lay_text not in said and fires(last, earlier):
             return o
     return None
 
 
 def _pressures(text: str) -> bool:
-    """Urgency talk, or a push to decide today that isn't the agent asking permission."""
+    """Urgency talk, or a push to decide today that is neither the agent asking permission nor
+    the agent saying there is no need to."""
     if _URGENCY.search(text):
         return True
     sentences = (s.strip() for s in re.split(r"(?<=[.?!])\s+", text))
-    return any(_DECIDE_NOW.search(s) and not _PERMISSION_ASK.match(s) for s in sentences)
+    return any(_pushes(s) for s in sentences)
+
+
+def _pushes(sentence: str) -> bool:
+    ask = _PERMISSION_ASK.search(sentence)
+    for push in _DECIDE_NOW.finditer(sentence):
+        if _NO_RUSH.search(sentence[: push.start()]):
+            continue
+        # A push that comes before the question is still a push.
+        if ask is None or push.start() < ask.start():
+            return True
+    return False
+
+
+DETECTORS: dict[ObjectionTrigger, Callable[[str, Sequence[str]], bool]] = {
+    ObjectionTrigger.PERSONAL_INFO: lambda last, _: bool(_PERSONAL_INFO.search(last)),
+    ObjectionTrigger.PRESSURE: lambda last, _: _pressures(last),
+    ObjectionTrigger.JARGON: lambda last, _: bool(jargon_in(last)) and not _EXPLAINED.search(last),
+    ObjectionTrigger.RUSHED: lambda last, _: len(last.split()) > RUSHED_WORDS,
+    ObjectionTrigger.EARLY_PITCH: lambda last, earlier: (
+        bool(_PITCH.search(last)) and not any(_NEEDS_ASKED.search(e) for e in earlier)
+    ),
+    ObjectionTrigger.ASKED_TO_WAIT: lambda last, _: bool(_WAIT.search(last)),
+}
+"""How the scripted customer spots each trigger in the learner's folded latest line, given the
+learner's earlier lines. One per ``ObjectionTrigger``, like ``TRIGGER_TEXT`` for the prompt."""
 
 
 def _is_question(text: str) -> bool:

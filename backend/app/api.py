@@ -188,7 +188,7 @@ def session_view(service: SessionService, row: SessionRow) -> SessionView:
         created_at=row.created_at,
         started_at=row.started_at,
         ended_at=row.ended_at,
-        on_hold=row.status is SessionStatus.ACTIVE and service.state(row.session_id).on_hold,
+        on_hold=row.status is SessionStatus.ACTIVE and service.on_hold(row.session_id),
         turn_pending=service.turn_pending(row.session_id),
     )
 
