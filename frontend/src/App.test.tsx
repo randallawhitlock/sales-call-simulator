@@ -247,4 +247,27 @@ describe('App rejoin', () => {
     expect((screen.getByLabelText('Your line') as HTMLTextAreaElement).disabled).toBe(false)
     expect(polls() - before).toBe(5)
   })
+
+  it('rings another attempt with what the last debrief said to work on', async () => {
+    openAt('?session=s-2')
+    const retry: Session = {
+      ...SESSION,
+      session_id: 's-2',
+      status: 'created',
+      retry_of: 's-1',
+      retry_focus: ['Asked which pharmacy the customer uses'],
+    }
+    const fetchMock = vi.fn(async (input: string) => {
+      const path = String(input).replace(/^\/api/, '')
+      const body = path === '/sessions/s-2' ? retry : path === '/scenarios' ? [] : { status: 'ok', actor: 'scripted' }
+      return new Response(JSON.stringify(body), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByText('Incoming call')).toBeTruthy())
+    expect(screen.getByText('Another attempt at this call.')).toBeTruthy()
+    expect(screen.getByText('Asked which pharmacy the customer uses')).toBeTruthy()
+    expect(new URLSearchParams(window.location.search).get('session')).toBe('s-2')
+  })
 })

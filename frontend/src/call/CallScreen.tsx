@@ -18,7 +18,18 @@ import { useLatest } from './useLatest.ts'
 
 const EMPTY_SEEN: Seen = { plans: [], providers: [], drugs: [], pharmacies: [] }
 
-export function CallScreen({ initial, actor, onExit }: { initial: Session; actor: string; onExit: () => void }) {
+export function CallScreen({
+  initial,
+  actor,
+  onExit,
+  onRetry,
+}: {
+  initial: Session
+  actor: string
+  onExit: () => void
+  /** Another attempt at this case was created from the debrief. */
+  onRetry: (next: Session) => void
+}) {
   const [session, setSession] = useState(initial)
   const [transcript, setTranscriptState] = useState<Utterance[]>([])
   const [source, setSource] = useState<Utterance | null>(null)
@@ -103,7 +114,7 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
           </div>
         </header>
         {session.status === 'ended' ? (
-          <Review />
+          <Review onRetry={onRetry} />
         ) : (
           <div className="panes">
             <CallPane onSession={setSession} />

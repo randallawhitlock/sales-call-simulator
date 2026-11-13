@@ -302,11 +302,106 @@ ul.plain li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
   font-size: 0.95rem;
 }
 
-.review { padding: 1rem; overflow: auto; max-width: 70rem; margin: 0 auto; width: 100%; }
+/* Debrief: the scorecard on the left, the call record its evidence links point into on the
+   right. The record stays in view while the scorecard scrolls. */
+
+.review { padding: 1rem; overflow: auto; width: 100%; }
+.review > * { max-width: 84rem; margin-left: auto; margin-right: auto; }
+
+.debrief-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.debrief-head p { margin: 0.2rem 0; }
+.debrief-state { max-width: 34rem; }
+.score { font-size: 1.1rem; }
+.score-number { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.critical {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.75rem;
+}
+.critical ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+
+.debrief-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.dimension { margin-bottom: 1rem; }
+.criteria { list-style: none; margin: 0; padding: 0; }
+.criterion {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+  margin: 0.4rem 0;
+  font-size: 0.92rem;
+}
+.criterion.pass { border-left-color: var(--good); }
+.criterion.fail { border-left-color: var(--bad); }
+.criterion.not_observed, .criterion.review_required { border-left-color: var(--warn); }
+.criterion p { margin: 0.3rem 0; }
+.criterion-head { display: flex; justify-content: space-between; gap: 0.75rem; align-items: flex-start; }
+.criterion-title { font-weight: 600; }
+.criterion-result { white-space: nowrap; }
+.points { font-variant-numeric: tabular-nums; color: var(--muted); margin-left: 0.25rem; }
+.claims { margin: 0.3rem 0; padding-left: 1.1rem; }
+.claims li { margin: 0.2rem 0; }
+.source + .source::before { content: " · "; }
+
+.quote {
+  margin: 0.3rem 0;
+  padding: 0.2rem 0.6rem;
+  border-left: 3px solid var(--accent);
+  background: var(--bg);
+}
+.quote.unverified { border-left-color: var(--warn); }
+
+button.chip {
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  margin: 0 0.15rem 0.15rem 0;
+  font-size: 0.8rem;
+  background: var(--info-bg);
+  color: var(--info);
+  border-color: transparent;
+}
+button.chip:hover:not(:disabled) { border-color: var(--info); }
+
+.call-record {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 5.5rem);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.6rem 0.75rem;
+}
+.activity { font-size: 0.82rem; padding: 0.2rem 0.4rem; margin: 0.15rem 0; border-radius: 6px; }
+.call-record .shown { outline: 2px solid var(--pick); }
+
+.retry ol { padding-left: 1.2rem; }
+.retry-focus { margin: 0.6rem 0; }
+.retry-focus ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+.case-notes summary { cursor: pointer; font-weight: 600; }
+.case-notes li { margin: 0.3rem 0; }
 
 .markdown table { font-size: 0.85rem; }
 
 @media (max-width: 1100px) {
+  .debrief-body { grid-template-columns: 1fr; }
+  .call-record { position: static; max-height: 28rem; }
   .call { height: auto; }
   .panes { grid-template-columns: 1fr; }
   .pane { border-right: none; border-bottom: 1px solid var(--line); overflow: visible; }

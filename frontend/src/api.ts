@@ -89,6 +89,8 @@ export interface Health {
   version: string
   actor: string
   catalog_version: string
+  /** The model that grades conversation, or null when only the rule checks grade. */
+  judge?: string | null
 }
 
 export interface ScenarioCard {
@@ -130,6 +132,9 @@ export interface Session {
   /** Live state, so a reloaded call screen shows hold and a reply in flight correctly. */
   on_hold: boolean
   turn_pending: boolean
+  /** The earlier call this one is another attempt at, and what its debrief said to work on. */
+  retry_of?: string | null
+  retry_focus?: string[]
 }
 
 export interface Utterance {
@@ -139,6 +144,7 @@ export interface Utterance {
   text: string
   heard_text: string
   t_ms: number
+  interrupted?: boolean
 }
 
 export interface TurnOut {
@@ -397,4 +403,120 @@ export interface ActorQa {
   actor: string | null
   prompt_version: string | null
   flags: ConsistencyFlag[]
+}
+
+// Debrief
+
+export type GradeStatus = 'pass' | 'fail' | 'not_applicable' | 'not_observed' | 'review_required' | 'ungraded'
+
+export type Dimension =
+  | 'discovery'
+  | 'eligibility'
+  | 'verification'
+  | 'recommendation'
+  | 'documentation'
+  | 'communication'
+  | 'completion'
+
+/** A quote the judge cited, and whether the server found it where the judge said. */
+export interface Quote {
+  /** Null when the quote is from the saved notes. */
+  utt_id: string | null
+  quote: string
+  verified: boolean
+}
+
+export interface RuleLabel {
+  rule_id: string
+  title: string
+  authority: Authority
+  citation: string
+  status: 'approved' | 'unverified' | 'retired' | 'disputed'
+  verified_as_of: string | null
+}
+
+export interface ClaimResult {
+  utt_id: string
+  quote: string
+  label: string
+  status: 'backed' | 'unbacked' | 'unverifiable'
+  detail: string
+  event_seqs: number[]
+}
+
+export interface CriterionResult {
+  criterion_id: string
+  dimension: Dimension
+  title: string
+  points: number
+  earned: number
+  method: 'deterministic' | 'judged' | 'hybrid'
+  status: GradeStatus
+  critical: boolean
+  detail: string
+  /** The judge's reasoning, in its own words. */
+  rationale: string | null
+  utt_ids: string[]
+  event_seqs: number[]
+  quotes: Quote[]
+  claims: ClaimResult[]
+  rules: RuleLabel[]
+}
+
+export interface Score {
+  earned: number
+  possible: number
+  percent: number | null
+}
+
+export interface DimensionScore extends Score {
+  dimension: Dimension
+  weight: number
+}
+
+export interface JudgeInfo {
+  state: 'graded' | 'not_run' | 'off' | 'failed'
+  judge: string | null
+  served_model: string | null
+  prompt_version: string | null
+  attempt: number | null
+  graded_at: string | null
+  error: string | null
+}
+
+export interface TimelineEntry {
+  seq: number
+  t_ms: number
+  type: string
+  utt_id: string | null
+  summary: string
+}
+
+export interface CaseNotes {
+  title: string
+  outcomes: { kind: string; plans: string[]; acceptable: boolean; rationale: string }[]
+  traps: { description: string; rationale: string }[]
+}
+
+export interface RetryFocus {
+  criterion_id: string
+  title: string
+  why: string
+}
+
+export interface Debrief {
+  session_id: string
+  scenario_id: string
+  versions: { scenario_version: number; catalog_version: string; ruleset_version: string; rubric: string }
+  state: 'complete' | 'needs_review' | 'incomplete'
+  score: Score
+  dimensions: DimensionScore[]
+  criteria: CriterionResult[]
+  /** Criterion ids of the critical findings. */
+  critical: string[]
+  judge: JudgeInfo
+  outcome: { kind: string | null; plan_name: string | null }
+  timeline: TimelineEntry[]
+  case: CaseNotes
+  retry_focus: RetryFocus[]
 }

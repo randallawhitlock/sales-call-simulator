@@ -86,8 +86,23 @@ export function App() {
   if (rejoining) {
     return <main className="home muted">Rejoining the call…</main>
   }
+  /** The debrief started another attempt: leave this call and show the new one ringing. */
+  function retry(next: Session): void {
+    setSession(null)
+    putSessionInUrl(next.session_id)
+    setIncoming(next)
+  }
+
   if (session) {
-    return <CallScreen initial={session} actor={health && health !== 'down' ? health.actor : ''} onExit={() => setSession(null)} />
+    return (
+      <CallScreen
+        key={session.session_id}
+        initial={session}
+        actor={health && health !== 'down' ? health.actor : ''}
+        onExit={() => setSession(null)}
+        onRetry={retry}
+      />
+    )
   }
   return (
     <main className="home">
@@ -159,6 +174,22 @@ function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s
           organizations with {pending.frame.products_offered} products in {pending.frame.county_name}. Today is{' '}
           {pending.frame.call_date}.
         </p>
+        {pending.retry_of && (
+          <div className="notice retry-focus">
+            <strong>Another attempt at this call.</strong>
+            {(pending.retry_focus ?? []).length > 0 && (
+              <>
+                {' '}
+                Your last debrief said to work on:
+                <ul>
+                  {(pending.retry_focus ?? []).map((title) => (
+                    <li key={title}>{title}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
         <div className="row">
           <button
             type="button"
