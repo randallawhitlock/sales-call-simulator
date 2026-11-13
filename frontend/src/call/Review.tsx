@@ -272,13 +272,15 @@ function Summary({
         {waiting > 0 && (
           <p className="small-text">
             {waiting} points are not graded yet, so they are left out of the total.{' '}
-            {judging || judge.state === 'not_run'
+            {judging
               ? 'The judge is reading the call. This can take a minute or two.'
-              : judge.state === 'off'
-                ? 'No judge is configured: set ANTHROPIC_API_KEY on the server to grade the conversation.'
-                : judge.state === 'failed'
-                  ? `The judge did not answer: ${judge.error ?? 'unknown error'}.`
-                  : 'The judge returned no ruling on them.'}
+              : judge.state === 'not_run'
+                ? 'The judge has not graded this call yet.'
+                : judge.state === 'off'
+                  ? 'No judge is configured: set ANTHROPIC_API_KEY on the server to grade the conversation.'
+                  : judge.state === 'failed'
+                    ? `The judge did not answer: ${judge.error ?? 'unknown error'}.`
+                    : 'The judge returned no ruling on them.'}
           </p>
         )}
         {heldCount > 0 && (
@@ -294,7 +296,7 @@ function Summary({
             {judge.error && ` The last regrade failed: ${judge.error}.`}
           </p>
         )}
-        {(judge.state === 'failed' || judge.state === 'graded') && (
+        {judge.state !== 'off' && (
           <button
             type="button"
             className="small"
@@ -305,7 +307,13 @@ function Summary({
               void onJudge(regrade)
             }}
           >
-            {judging ? 'Judging…' : judge.state === 'failed' ? 'Ask the judge again' : 'Regrade'}
+            {judging
+              ? 'Judging…'
+              : judge.state === 'graded'
+                ? 'Regrade'
+                : judge.state === 'failed'
+                  ? 'Ask the judge again'
+                  : 'Ask the judge'}
           </button>
         )}
       </div>

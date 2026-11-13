@@ -64,6 +64,18 @@ def test_quote_must_appear_in_heard_text() -> None:
     assert not u.contains_quote("head")
 
 
+def test_a_quote_cannot_drop_the_part_of_a_word_that_changes_its_meaning() -> None:
+    cannot = utterance("No, you can't keep that doctor, and it's non-preferred on that plan.")
+    for partial in ("you can", "preferred on that plan", "it", "can't keep that doc"):
+        assert not cannot.contains_quote(partial), partial
+    for whole in ("you can't keep that doctor", "it's non-preferred", "non-preferred on that plan"):
+        assert cannot.contains_quote(whole), whole
+    # Quote marks and dashes around a phrase are punctuation, not part of a word.
+    said = utterance("She said 'go ahead' and then - well - 'sign me up'.")
+    assert said.contains_quote("go ahead") and said.contains_quote("sign me up")
+    assert said.contains_quote("and then - well")
+
+
 def test_cut_off_speech_does_not_count() -> None:
     cut = utterance("Yes, go", interrupted=True)
     assert cut.delivered

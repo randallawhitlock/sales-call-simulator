@@ -72,8 +72,12 @@ need at least one quote; not_observed and not_applicable usually have none. Quot
 lines for what the agent did. Quote a customer line only when the criterion turns on it, such \
 as a misconception the agent should have corrected or the customer's yes.
 
+Quote whole words: include the n't, the 's or the hyphenated part a word carries in the line. \
+"you can" is not a quote of "you can't".
+
 For a criterion about the saved notes, quote from the notes and use "{NOTES_REF}" as the \
-utt_id.
+utt_id. The notes are evidence for that criterion only: what the agent wrote down afterwards \
+does not show what was said.
 
 Coverage claims
 
@@ -90,6 +94,8 @@ none, the office the customer said they use. For a drug use the strength the age
 and if the agent named none, the strength the customer takes.
 - covered: true if the agent said it is covered or in network, false if the agent said it \
 is not.
+- year: the year the statement is about. Use the plan year given in the call section unless \
+the agent plainly meant another year, as in "she is in your plan's network this year".
 - Give the utt_id and an exact quote of the claim, under the same quoting rules.
 - Leave out questions, plans to check ("let me look that up"), things the customer said, and \
 statements you cannot tie to one plan and one doctor, drug or pharmacy in the reference.

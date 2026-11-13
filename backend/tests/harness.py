@@ -37,7 +37,13 @@ def ruling(criterion_id: str, verdict: str, *evidence: tuple[str, str]) -> Judge
 
 
 def claim(
-    utt_id: str, quote: str, kind: str, plan_id: str, subject_id: str, covered: bool = True
+    utt_id: str,
+    quote: str,
+    kind: str,
+    plan_id: str,
+    subject_id: str,
+    covered: bool = True,
+    year: int = 2027,
 ) -> JudgeClaim:
     return JudgeClaim.model_validate(
         {
@@ -47,6 +53,7 @@ def claim(
             "plan_id": plan_id,
             "subject_id": subject_id,
             "covered": covered,
+            "year": year,
         }
     )
 

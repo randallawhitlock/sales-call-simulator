@@ -112,6 +112,10 @@ class ClaudeJudge:
             raise JudgeError(f"{self.name} is rate limited; try again shortly") from exc
         except anthropic.APIStatusError as exc:
             raise JudgeError(f"{self.name} failed ({exc.status_code}): {exc.message}") from exc
+        except Exception as exc:
+            # A stream that breaks after the response started raises the transport's own
+            # error, and missing credentials surface as a TypeError on the first request.
+            raise JudgeError(f"{self.name} failed: {type(exc).__name__}: {exc}") from exc
         if message.stop_reason == "refusal":
             raise JudgeError(f"{self.name} declined to grade this call")
         if message.stop_reason == "max_tokens":

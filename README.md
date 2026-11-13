@@ -122,8 +122,9 @@ The debrief scores the 100-point rubric from those checks and the judge:
   the wording check couldn't tell, and if it reads a failed line as fine, the item goes to
   review instead of flipping to a pass.
 - **Coverage claims are checked against the log.** The judge lists each time the learner said a
-  doctor, drug or pharmacy is covered or in network. Code looks for a lookup, made before that
-  line, that showed it. A claim with nothing behind it is a critical finding.
+  doctor, drug or pharmacy is covered or in network, and for which year. Code looks for a
+  lookup, made before that line, that showed it for that year. A claim with nothing behind it
+  is a critical finding.
 - **What counts toward the score.** Pass, fail and not-observed items count toward the total.
   Not-applicable, ungraded and held items leave it. "Not observed" is the judge saying the
   agent never did something; there is no line to quote for an absence, so it scores zero but

@@ -54,6 +54,8 @@ class JudgeClaim(_Strict):
     subject_id: str
     """practice_id, drug_id or pharmacy_id from the catalog reference."""
     covered: bool
+    year: int
+    """The year the statement is about: the plan year unless the agent plainly meant another."""
 
 
 class JudgeOutput(_Strict):

@@ -44,6 +44,9 @@ class CheckResult(BaseModel):
     """The result rests on how a line reads (a pattern match), not on events or state. Only
     then may a quote-verified judge dispute a failure, and the dispute goes to review; it never
     turns the failure into a pass on its own."""
+    held: bool = False
+    """More than one application's result needs a reader, and one ruling can't settle them
+    all. Graded as held for review; the judge is not asked."""
 
 
 @dataclass
@@ -513,10 +516,41 @@ def _audit_submissions(
             [s for _, r in results for s in r.event_seqs],
             [u for _, r in results for u in r.utt_ids],
         )
-    app, worst = min(bad, key=lambda pair: _SEVERITY.get((pair[1].status, pair[1].critical), 9))
-    withdrawn = " (later withdrawn)" if app.status == "withdrawn" else ""
-    return worst.model_copy(
-        update={"detail": f"Application {app.application_id}{withdrawn}: {worst.detail}"}
+
+    def label(app: Application) -> str:
+        withdrawn = " (later withdrawn)" if app.status == "withdrawn" else ""
+        return f"Application {app.application_id}{withdrawn}"
+
+    unsettled = [(app, r) for app, r in bad if needs_reader(r)]
+    if len(unsettled) == len(bad) and len(bad) > 1:
+        # Nothing here failed outright, and each application needs its own reading. The judge
+        # gives one ruling per criterion, which could clear one and silently cover the others.
+        return CheckResult(
+            check_id=check,
+            status=CheckStatus.UNGRADED,
+            detail=" ".join(f"{label(app)}: {r.detail}" for app, r in unsettled)
+            + " One ruling can't cover more than one application, so this is held for review.",
+            event_seqs=sorted({s for _, r in unsettled for s in r.event_seqs}),
+            utt_ids=sorted({u for _, r in unsettled for u in r.utt_ids}),
+            held=True,
+        )
+    # A failure that rests on events outranks one that rests on wording, so a reading of one
+    # application's line can't stand in for another application's missing consent.
+    app, worst = min(
+        bad,
+        key=lambda pair: (
+            _SEVERITY.get((pair[1].status, pair[1].critical), 9),
+            pair[1].disputable,
+        ),
+    )
+    return worst.model_copy(update={"detail": f"{label(app)}: {worst.detail}"})
+
+
+def needs_reader(result: CheckResult) -> bool:
+    """Whether a result is still open to a reading of the lines: the check couldn't tell, or
+    it failed on wording alone."""
+    return result.status is CheckStatus.UNGRADED or (
+        result.disputable and result.status in (CheckStatus.FAIL, CheckStatus.NOT_OBSERVED)
     )
 
 
@@ -695,10 +729,8 @@ def _consent(f: Facts, app: Application) -> CheckResult:
         return fail("Consent points to something the customer did not say.")
     if utt.interrupted or not utt.delivered:
         return fail("Consent points to speech that was cut off.")
-    signal = _consent_signal(utt.heard_text)
-    if not _AFFIRMATIVE.search(_fold(utt.heard_text)) or signal == "objection":
-        return fail("The consent utterance is not a clear yes.", reads_text=True)
-    hedges = [utt.utt_id] if signal == "hedge" else []
+    # When things happened comes before how the line reads: no reading of the line repairs a
+    # yes given at the wrong time, so these failures are never the judge's to dispute.
     utt_seq = f.utt_seq(utt.utt_id)
     last_mark = max(app.pecl_marks.values(), default=0)
     if utt_seq < last_mark:
@@ -708,6 +740,10 @@ def _consent(f: Facts, app: Application) -> CheckResult:
     if app.updated_seq is not None and utt_seq < app.updated_seq < submitted:
         seqs.append(app.updated_seq)
         return fail("The application changed after the customer said yes.")
+    signal = _consent_signal(utt.heard_text)
+    if not _AFFIRMATIVE.search(_fold(utt.heard_text)) or signal == "objection":
+        return fail("The consent utterance is not a clear yes.", reads_text=True)
+    hedges = [utt.utt_id] if signal == "hedge" else []
     for later in f.utterances:
         later_seq = f.utt_seq(later.utt_id)
         if later.speaker is not Speaker.CUSTOMER or not utt_seq < later_seq < submitted:
@@ -1081,6 +1117,10 @@ class CoverageClaim(BaseModel):
     """practice_id, drug_id or pharmacy_id."""
     covered: bool = True
     """What was claimed: covered or in network (True), or not (False)."""
+    year: int | None = None
+    """The year a network claim is about. None means the plan year. "She is in network this
+    year" is a different claim from "she is in network for 2027", and each needs its own
+    lookup."""
 
 
 _CLAIM_SUBJECT = {
@@ -1101,9 +1141,10 @@ provider networks."""
 def claim_backing(f: Facts, claim: CoverageClaim) -> list[int]:
     """The lookups made before the claim was spoken that showed what the learner claimed, as
     event seqs. A compare counts for the drugs and the pharmacy it showed. Looking something up
-    doesn't back a claim the lookup contradicted, and a provider lookup for another year backs
-    nothing."""
+    doesn't back a claim the lookup contradicted, and a provider lookup backs only a claim
+    about the year it was for."""
     spoken = f.utt_seq(claim.utt_id)
+    year = f.plan_year if claim.year is None else claim.year
     key, result = _CLAIM_SUBJECT[claim.kind], _CLAIM_RESULT[claim.kind]
 
     def shows(row: JsonValue) -> bool:
@@ -1119,7 +1160,7 @@ def claim_backing(f: Facts, claim: CoverageClaim) -> list[int]:
             return any(shows(row) for row in rows)
         if p.get("kind") != claim.kind:
             return False
-        if claim.kind == "provider_network" and p.get("year") != f.plan_year:
+        if claim.kind == "provider_network" and p.get("year") != year:
             return False
         return shows(p)
 

@@ -129,6 +129,12 @@ class _KeyedLocks:
         with self._guard:
             return set(self._entries)
 
+    def users(self, key: str) -> int:
+        """Requests holding or waiting on ``key``'s lock."""
+        with self._guard:
+            entry = self._entries.get(key)
+            return entry[1][0] if entry else 0
+
 
 class _InFlight:
     """One customer reply being generated, for one learner line. Hold and end trip this turn's
@@ -590,9 +596,13 @@ class SessionService:
         items ungraded and says why."""
         row = self.require_ended(session_id)
         content = self.pinned_content(row)
+        before = self.store.latest_judgment(session_id)
         with self._judge_locks.hold(session_id):
             stored = self.store.latest_judgment(session_id)
-            if self.judge is None or (stored is not None and not regrade):
+            # A judgment that landed while this request waited answers it, regrade or not: two
+            # requests sent together are one ask, not two.
+            landed = stored is not None and (before is None or stored.attempt > before.attempt)
+            if self.judge is None or landed or (stored is not None and not regrade):
                 return self._debrief(row, content, stored)
             judge = self.judge
             prompt = build_judge_prompt(self._facts(row, content), content.rubric)
@@ -600,6 +610,9 @@ class SessionService:
                 reply = judge.grade(prompt)
             except JudgeError as exc:
                 return self._debrief(row, content, stored, error=str(exc))
+            except Exception as exc:  # a judge bug still has to leave a readable debrief
+                error = f"{judge.name} failed: {type(exc).__name__}: {exc}"
+                return self._debrief(row, content, stored, error=error)
             judgment = self.store.add_judgment(
                 session_id,
                 lambda attempt: Judgment(

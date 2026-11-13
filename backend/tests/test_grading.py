@@ -7,6 +7,7 @@ server does with a ruling, never about what a model said.
 """
 
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -128,7 +129,7 @@ def test_a_verified_quote_earns_the_points_and_links_the_line(client: TestClient
         ([("CLAIM", "which office do you see them at")], "not in u"),
         ([("u0999", "which office do you see them at")], "not a line of this call"),
         ([], "cited no line"),
-        ([("notes", "Maple Choice keeps Dr. Raman")], "not in the saved notes"),
+        ([("notes", "Maple Choice keeps Dr. Raman")], "not evidence of what was said"),
         ([("ASK", "which office do you see them at"), ("ASK", "a made-up line")], "not in u"),
     ],
     ids=["paraphrase", "wrong-line", "no-such-line", "no-evidence", "notes-on-speech", "one-bad"],
@@ -212,6 +213,29 @@ def test_the_notes_criterion_quotes_the_saved_notes(client: TestClient) -> None:
     assert result["event_seqs"] == sorted([saved["notes"], saved["disposition"]])
 
 
+def test_notes_are_evidence_for_the_notes_criterion_only(client: TestClient) -> None:
+    # What the learner wrote down afterwards can't show what was said. The quotes below are
+    # really in the notes; on a criterion about the conversation they still verify nothing.
+    call, utt = consent_call(client, "Okay, sure, why not.", notes="Customer gave a clear yes")
+    in_notes = ("notes", "Customer gave a clear yes")
+    answering(
+        call,
+        ruling("doc-consent", "pass", in_notes),
+        ruling("doc-pecl", "fail", in_notes),
+        ruling("elig-scope", "pass", in_notes),
+        ruling("comp-notes", "pass", (utt, "Okay, sure, why not")),
+    )
+    debrief = call.debrief()
+    for criterion_id in ("doc-consent", "doc-pecl", "elig-scope"):
+        assert debrief.status(criterion_id) == ("review_required", False), criterion_id
+        assert "not evidence of what was said" in debrief[criterion_id]["detail"]
+        assert debrief[criterion_id]["quotes"][0]["verified"] is False
+    assert debrief.body["critical"] == []
+    # And the notes criterion needs something from the notes, not a line of the call.
+    assert debrief.status("comp-notes") == ("review_required", False)
+    assert "cited nothing from the saved notes" in debrief["comp-notes"]["detail"]
+
+
 # Hybrid: both
 
 
@@ -268,12 +292,14 @@ def test_scope_recorded_in_order_still_needs_the_ask(client: TestClient) -> None
 # Hybrid: backstop
 
 
-def consent_call(client: TestClient, yes: str) -> tuple[Call, str]:
+def consent_call(client: TestClient, yes: str, notes: str = "") -> tuple[Call, str]:
     call, app_id = enroll_to_consent(client)
     call.say("Would you like me to submit your enrollment in this plan?")
     utt = call.hear(yes)
     call.consent(app_id, utt)
     call.submit(app_id)
+    if notes:
+        call.save("notes", {"rationale": notes})
     return call.end(), utt
 
 
@@ -324,6 +350,76 @@ def test_a_yes_the_check_misread_goes_to_review_not_to_a_critical_finding(
     debrief = call.debrief()
     assert debrief.status("doc-consent") == ("fail", True)
     assert debrief["doc-consent"]["rationale"] is None
+
+
+def test_a_yes_at_the_wrong_time_fails_however_it_reads(client: TestClient) -> None:
+    # The wording check can't read this yes, and it also came before the checklist review.
+    # When it happened decides, so the judge is not asked and can't send it to review.
+    call = researched(client)
+    call.document("sob-maple-choice-2027")
+    app_id = call.apply(MAPLE_CHOICE, "Loretta Banks", "00041")
+    early = call.hear("Absolutely, let's get it done.")
+    call.review_checklist(app_id)
+    call.consent(app_id, early)
+    call.submit(app_id)
+    call.end()
+    check = call.detail("consent_before_submit")
+    assert "before the checklist review finished" in check["detail"]
+    assert (check["status"], check["critical"], check["disputable"]) == ("fail", True, False)
+    judge = answering(call, ruling("doc-consent", "pass", (early, "Absolutely, let's get it done")))
+    debrief = call.debrief()
+    assert "doc-consent" not in judge.prompts[0].asked
+    assert debrief.status("doc-consent") == ("fail", True)
+    assert "doc-consent" in debrief.body["critical"]
+
+
+def two_submissions(client: TestClient, first_yes: str | None, second_yes: str | None) -> Call:
+    """Two applications submitted in one call, the first withdrawn. None: no consent marked.
+    The second yes answers a question that isn't about enrolling."""
+    call, first = enroll_to_consent(client)
+    call.say("Would you like me to submit your enrollment in this plan?")
+    if first_yes is not None:
+        call.consent(first, call.hear(first_yes))
+    call.submit(first, key="first-key-0001")
+    call.post(f"/applications/{first}/withdraw")
+    second = call.apply(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.review_checklist(second)
+    call.say("Do you have your Medicare card handy?")
+    if second_yes is not None:
+        call.consent(second, call.hear(second_yes))
+    call.submit(second, key="second-key-0002")
+    return call.end()
+
+
+def test_one_applications_wording_cannot_cover_anothers_missing_consent(
+    client: TestClient,
+) -> None:
+    call = two_submissions(client, "Absolutely, let's get it done.", None)
+    check = call.detail("consent_before_submit")
+    assert check["detail"].startswith("Application app-2: No consent was marked")
+    assert (check["status"], check["critical"], check["disputable"]) == ("fail", True, False)
+    line = call.utt("Absolutely, let's get it done.")
+    judge = answering(call, ruling("doc-consent", "pass", (line, "Absolutely, let's get it done")))
+    debrief = call.debrief()
+    assert "doc-consent" not in judge.prompts[0].asked
+    assert debrief.status("doc-consent") == ("fail", True)
+
+
+def test_two_unread_consents_are_held_not_settled_by_one_ruling(client: TestClient) -> None:
+    call = two_submissions(client, "Okay, sure, why not.", "Yes.")
+    check = call.detail("consent_before_submit")
+    assert (check["status"], check["held"], check["critical"]) == ("ungraded", True, False)
+    assert "Application app-1 (later withdrawn): " in check["detail"]
+    assert "Application app-2: " in check["detail"]
+    line = call.utt("Okay, sure, why not.")
+    judge = answering(call, ruling("doc-consent", "pass", (line, "Okay, sure, why not")))
+    debrief = call.debrief()
+    assert "doc-consent" not in judge.prompts[0].asked
+    assert debrief.status("doc-consent") == ("review_required", False)
+    assert "held for review" in debrief["doc-consent"]["detail"]
+    # With no judge at all it is held the same way, not left as merely ungraded.
+    call.service.judge = None
+    assert call.debrief(judge=False).status("doc-consent") == ("review_required", False)
 
 
 def test_missing_consent_is_not_the_judges_to_dispute(client: TestClient) -> None:
@@ -431,6 +527,82 @@ def test_a_lookup_that_said_otherwise_backs_nothing(client: TestClient) -> None:
     assert [c["status"] for c in result["claims"]] == ["unbacked", "unbacked", "backed"]
     assert (result["status"], result["critical"]) == ("fail", True)
     assert "2 of 3 coverage claims" in result["detail"]
+
+
+def test_a_claim_about_this_year_is_checked_against_this_years_lookup(
+    client: TestClient,
+) -> None:
+    call = a_call(client)
+    call.network("raman-northside", SUMMIT_CLASSIC, year=2026)  # in network this year
+    call.network("raman-northside", SUMMIT_CLASSIC)  # out for 2027
+    said = call.say("Dr. Raman is in network on Summit Classic this year, but not next year.")
+    call.end()
+    now = claim(
+        said,
+        "is in network on Summit Classic this year",
+        "provider_network",
+        SUMMIT_CLASSIC,
+        "raman-northside",
+        year=2026,
+    )
+    later = claim(
+        said,
+        "but not next year",
+        "provider_network",
+        SUMMIT_CLASSIC,
+        "raman-northside",
+        covered=False,
+    )
+    answering(call, claims=(now, later))
+    result = call.debrief()["ver-claims"]
+    assert [c["status"] for c in result["claims"]] == ["backed", "backed"]
+    assert (result["status"], result["critical"]) == ("pass", False)
+    assert result["claims"][0]["label"].endswith("is in network on Summit Classic HMO for 2026")
+    assert result["claims"][1]["label"].endswith("is not in network on Summit Classic HMO")
+
+    # The same words with only the 2027 lookup behind them are not backed.
+    other = a_call(client)
+    other.network("raman-northside", SUMMIT_CLASSIC)
+    said = other.say("Dr. Raman is in network on Summit Classic this year.")
+    other.end()
+    answering(
+        other,
+        claims=(
+            claim(
+                said,
+                "is in network on Summit Classic this year",
+                "provider_network",
+                SUMMIT_CLASSIC,
+                "raman-northside",
+                year=2026,
+            ),
+        ),
+    )
+    result = other.debrief()["ver-claims"]
+    assert (result["status"], result["critical"]) == ("fail", True)
+    assert "No lookup for 2026 made before" in result["claims"][0]["detail"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "subject", "year"),
+    [
+        ("provider_network", "raman-northside", 2025),
+        ("provider_network", "raman-northside", 2028),
+        ("formulary", "apixaban-5mg-tab", 2026),
+        ("pharmacy_network", "alder-family-rx", 2026),
+    ],
+)
+def test_a_claim_about_a_year_the_catalog_lacks_is_held_not_failed(
+    client: TestClient, kind: str, subject: str, year: int
+) -> None:
+    call = enrolled(client)
+    said = call.utt(CLAIM)
+    answering(
+        call, claims=(claim(said, "is in network on", kind, MAPLE_CHOICE, subject, year=year),)
+    )
+    result = call.debrief()["ver-claims"]
+    assert (result["status"], result["critical"]) == ("review_required", False)
+    assert f"nothing for {year}" in result["claims"][0]["detail"]
 
 
 def test_a_compare_backs_the_drugs_and_pharmacy_it_showed(client: TestClient) -> None:
@@ -606,8 +778,26 @@ def test_a_judge_outage_leaves_the_call_incomplete(client: TestClient) -> None:
     assert kept["judge"]["error"] == "rate limited" and kept["state"] == "complete"
 
 
-def test_two_grading_requests_at_once_ask_the_judge_once(client: TestClient) -> None:
+def test_a_judge_that_crashes_still_leaves_a_debrief(client: TestClient) -> None:
     call = enrolled(client)
+
+    def crash(prompt: JudgePrompt) -> JudgeOutput:
+        raise RuntimeError("stream broke")
+
+    call.service.judge = FakeJudge(crash)
+    body = call.debrief().body
+    assert body["judge"]["state"] == "failed" and body["state"] == "incomplete"
+    assert body["judge"]["error"] == "fake:judge-1 failed: RuntimeError: stream broke"
+    assert call.debrief(judge=False).body["judge"]["state"] == "not_run"
+
+
+@pytest.mark.parametrize("regrade", [False, True])
+def test_two_grading_requests_at_once_ask_the_judge_once(client: TestClient, regrade: bool) -> None:
+    call = enrolled(client)
+    if regrade:
+        answering(call)
+        call.debrief()
+    first = 2 if regrade else 1
     started, release = threading.Event(), threading.Event()
 
     def slow(prompt: JudgePrompt) -> JudgeOutput:
@@ -620,17 +810,26 @@ def test_two_grading_requests_at_once_ask_the_judge_once(client: TestClient) -> 
     results: list[int] = []
 
     def ask() -> None:
-        results.append(client.post(f"{call.base}/debrief/judge").json()["judge"]["attempt"])
+        resp = client.post(f"{call.base}/debrief/judge", json={"regrade": regrade})
+        results.append(resp.json()["judge"]["attempt"])
 
     threads = [threading.Thread(target=ask) for _ in range(2)]
     threads[0].start()
     assert started.wait(5)
     threads[1].start()
+    # Both requests are in before the first one finishes: one holds the lock, one waits.
+    deadline = time.monotonic() + 5
+    while call.service._judge_locks.users(call.sid) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert call.service._judge_locks.users(call.sid) == 2
     release.set()
     for t in threads:
         t.join(5)
-    assert results == [1, 1] and len(judge.prompts) == 1
+    assert results == [first, first] and len(judge.prompts) == 1
     assert call.service._judge_locks.keys() == set()
+    # A regrade asked for afterwards is a new ask.
+    call.post("/debrief/judge", {"regrade": True})
+    assert len(judge.prompts) == 2
 
 
 def test_a_stored_log_and_judgment_replay_to_the_same_debrief(

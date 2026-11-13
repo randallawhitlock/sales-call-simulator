@@ -306,6 +306,8 @@ def request() -> httpx2.Request:
             ),
             "failed (529)",
         ),
+        (httpx2.ReadTimeout("the stream stalled"), "failed: ReadTimeout: the stream stalled"),
+        (TypeError("Could not resolve authentication method"), "failed: TypeError: Could not"),
     ],
     ids=[
         "refusal",
@@ -317,6 +319,8 @@ def request() -> httpx2.Request:
         "429",
         "400",
         "529",
+        "mid-stream",
+        "no-credentials",
     ],
 )
 def test_anything_but_valid_rulings_is_a_judge_error(result: Any, says: str) -> None:

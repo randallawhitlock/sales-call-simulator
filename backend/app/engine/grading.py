@@ -38,6 +38,7 @@ from app.engine.checks import (
     Facts,
     check_facts,
     claim_backing,
+    needs_reader,
 )
 from app.engine.events import Speaker, Utterance, quote_in
 from app.engine.records import CustomerRecord
@@ -101,6 +102,7 @@ class ClaimResult(BaseModel):
     plan_id: str
     subject_id: str
     covered: bool
+    year: int
     label: str
     status: ClaimStatus
     detail: str
@@ -186,13 +188,11 @@ def _ruling_matters(c: RubricCriterion, det: CheckResult | None) -> bool:
     if c.method is Evaluation.JUDGED:
         return True
     assert det is not None, c.criterion_id
+    if det.held:
+        return False
     if c.combine is Combine.BOTH:
         return det.status is CheckStatus.PASS
-    return det.status is CheckStatus.UNGRADED or _disputable_failure(det)
-
-
-def _disputable_failure(det: CheckResult) -> bool:
-    return det.disputable and det.status in (CheckStatus.FAIL, CheckStatus.NOT_OBSERVED)
+    return needs_reader(det)
 
 
 # The judge's rulings, verified
@@ -242,15 +242,18 @@ class _Context:
 
 
 def _verify(ctx: _Context, c: RubricCriterion, verdict: JudgeVerdict) -> _Ruling:
+    # The saved notes are evidence only for a criterion about the records themselves. What
+    # the learner wrote down afterwards can't show what was said on the call.
+    about_records = c.evidence_policy is EvidencePolicy.EVENT
     quotes: list[Quote] = []
     problems: list[str] = []
     for ev in verdict.evidence:
         if ev.utt_id == NOTES_REF:
-            ok = c.evidence_policy is not EvidencePolicy.TRANSCRIPT and quote_in(
-                ev.quote, ctx.notes
-            )
+            ok = about_records and quote_in(ev.quote, ctx.notes)
             quotes.append(Quote(utt_id=None, quote=ev.quote, verified=ok))
-            if not ok:
+            if not about_records:
+                problems.append("it cited the saved notes, which are not evidence of what was said")
+            elif not ok:
                 problems.append("a quote it cited is not in the saved notes")
             continue
         utt = ctx.utterance(ev.utt_id)
@@ -261,8 +264,11 @@ def _verify(ctx: _Context, c: RubricCriterion, verdict: JudgeVerdict) -> _Ruling
         elif not ok:
             problems.append(f"a quote it cited is not in {ev.utt_id}")
     status = GradeStatus(verdict.verdict.value)
-    if verdict.verdict in (Verdict.PASS, Verdict.FAIL) and not quotes:
-        problems.append("it cited no line")
+    if verdict.verdict in (Verdict.PASS, Verdict.FAIL):
+        if not quotes:
+            problems.append("it cited no line")
+        elif about_records and all(q.utt_id is not None for q in quotes):
+            problems.append("it cited nothing from the saved notes")
     if problems:
         return _Ruling(
             GradeStatus.REVIEW_REQUIRED,
@@ -399,7 +405,7 @@ def _both(ctx: _Context, c: RubricCriterion, det: CheckResult) -> CriterionResul
 def _backstop(ctx: _Context, c: RubricCriterion, det: CheckResult) -> CriterionResult:
     if det.status is CheckStatus.UNGRADED:
         return _after_check_passed(ctx, c, det, _ruling(ctx, c))
-    if not _disputable_failure(det):
+    if not needs_reader(det):
         return _deterministic(ctx, c, det)
     ruling = _ruling(ctx, c)
     if ruling.status is GradeStatus.PASS:
@@ -462,7 +468,16 @@ def _claim(ctx: _Context, raw: JudgeClaim) -> ClaimResult:
         why = "The judge named a plan, doctor, drug or pharmacy that is not in the catalog."
         return result(ClaimStatus.UNVERIFIABLE, raw.quote, why, [])
     word = "in network" if raw.kind != "formulary" else "covered"
-    label = f"{subject} is {'' if raw.covered else 'not '}{word} on {plan}"
+    plan_year = ctx.facts.plan_year
+    other_year = f" for {raw.year}" if raw.year != plan_year else ""
+    label = f"{subject} is {'' if raw.covered else 'not '}{word} on {plan}{other_year}"
+    # Directories exist for the plan year and the one before; drug lists and pharmacy
+    # networks only for the plan year. A claim about any other year has nothing to be checked
+    # against, which is not the same as having no lookup behind it.
+    checkable = (plan_year - 1, plan_year) if raw.kind == "provider_network" else (plan_year,)
+    if raw.year not in checkable:
+        why = f"The catalog has nothing for {raw.year} to check this against."
+        return result(ClaimStatus.UNVERIFIABLE, raw.quote, why, [])
     seqs = claim_backing(
         ctx.facts,
         CoverageClaim(
@@ -471,11 +486,12 @@ def _claim(ctx: _Context, raw: JudgeClaim) -> ClaimResult:
             kind=raw.kind,
             subject_id=raw.subject_id,
             covered=raw.covered,
+            year=raw.year,
         ),
     )
     if seqs:
         return result(ClaimStatus.BACKED, label, "A lookup made before the claim showed it.", seqs)
-    year = f" for {ctx.facts.plan_year}" if raw.kind == "provider_network" else ""
+    year = f" for {raw.year}" if raw.kind == "provider_network" else ""
     why = f"No lookup{year} made before {raw.utt_id} showed this."
     return result(ClaimStatus.UNBACKED, label, why, [])
 
@@ -487,7 +503,7 @@ def _claims(ctx: _Context, c: RubricCriterion, det: CheckResult) -> CriterionRes
     # server could check over one it couldn't.
     by_claim: dict[tuple[object, ...], ClaimResult] = {}
     for raw in ctx.output.coverage_claims:
-        key = (raw.utt_id, raw.kind, raw.plan_id, raw.subject_id, raw.covered)
+        key = (raw.utt_id, raw.kind, raw.plan_id, raw.subject_id, raw.covered, raw.year)
         kept = by_claim.get(key)
         if kept is None or kept.status is ClaimStatus.UNVERIFIABLE:
             checked = _claim(ctx, raw)
@@ -545,6 +561,8 @@ def _criterion(
         return _judged(ctx, c)
     assert c.check_id is not None
     det = checks[c.check_id]
+    if det.held:
+        return _result(ctx, c, GradeStatus.REVIEW_REQUIRED, detail=det.detail, det=det)
     if c.method is Evaluation.DETERMINISTIC:
         return _deterministic(ctx, c, det)
     if c.combine is Combine.BOTH:

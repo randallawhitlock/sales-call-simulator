@@ -290,6 +290,39 @@ describe('Review', () => {
     expect(posts(fetchMock, '/debrief/judge')).toHaveLength(1)
   })
 
+  it('hands the grading back when the request itself fails, instead of waiting forever', async () => {
+    const waiting = debrief({
+      state: 'incomplete',
+      judge: { ...debrief().judge, state: 'not_run', served_model: null, attempt: null },
+      criteria: debrief().criteria.map((c) =>
+        c.criterion_id === 'disc-pharmacy' ? { ...c, status: 'ungraded', earned: 0, rationale: null, quotes: [] } : c,
+      ),
+    })
+    let broken = true
+    const fetchMock = vi.fn(async (input: string) => {
+      const url = String(input)
+      if (url.endsWith('/debrief/judge')) {
+        // Not JSON: what a crashed server or a proxy in front of it sends.
+        return broken
+          ? new Response('Internal Server Error', { status: 500 })
+          : new Response(JSON.stringify(debrief()), { status: 200 })
+      }
+      const body = url.endsWith('/debrief') ? waiting : url.endsWith('/transcript') ? TRANSCRIPT : { flags: [] }
+      return new Response(JSON.stringify(body), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Harness />)
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('HTTP 500'))
+    const head = screen.getByRole('banner')
+    expect(head.textContent).toContain('The judge has not graded this call yet.')
+    expect(head.textContent).not.toContain('The judge is reading the call')
+    broken = false
+    fireEvent.click(screen.getByRole('button', { name: 'Ask the judge' }))
+    await waitFor(() => expect(screen.getByText('Grading complete')).toBeTruthy())
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('regrades only when asked, after a confirmation', async () => {
     const fetchMock = serve({ debrief: debrief() })
     const confirm = vi.fn(() => false)

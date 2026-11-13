@@ -18,11 +18,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   const res = await fetch(`/api${path}`, init)
   const text = await res.text()
-  const data: unknown = text ? JSON.parse(text) : null
   if (!res.ok) {
-    throw new ApiError(res.status, describeError(data) ?? `HTTP ${res.status}`)
+    // An error body may not be JSON at all (a proxy's or the server's plain "Internal Server
+    // Error"); the status is still worth more than a parse failure.
+    throw new ApiError(res.status, describeError(parseJson(text)) ?? `HTTP ${res.status}`)
   }
-  return data as T
+  return (text ? JSON.parse(text) : null) as T
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return text ? JSON.parse(text) : null
+  } catch {
+    return null
+  }
 }
 
 function describeError(data: unknown): string | null {

@@ -98,7 +98,7 @@ class Utterance(_Frozen):
 
         Matching ignores case, whitespace runs, curly versus straight quotes and surrounding
         punctuation, and nothing else. A paraphrase does not match, and the quote has to start
-        and end on whole words: "no" is not in "I know".
+        and end on whole words: "no" is not in "I know", "you can" is not in "you can't".
         """
         return quote_in(quote, self.heard_text)
 
@@ -114,11 +114,15 @@ def normalize_for_quote(text: str) -> str:
 
 
 def quote_in(quote: str, text: str) -> bool:
-    """Whether ``quote`` appears in ``text`` as a run of whole words, after normalizing both."""
+    """Whether ``quote`` appears in ``text`` as a run of whole words, after normalizing both.
+
+    An apostrophe or hyphen inside a word is part of the word: "you can" is not in "you can't",
+    and "preferred" is not in "non-preferred". Either would let a quote verify against a line
+    that says the opposite."""
     needle = normalize_for_quote(quote)
     if not needle:
         return False
-    pattern = rf"(?<!\w){re.escape(needle)}(?!\w)"
+    pattern = rf"(?<!\w)(?<!\w['-]){re.escape(needle)}(?!\w|['-]\w)"
     return re.search(pattern, normalize_for_quote(text)) is not None
 
 
