@@ -7,9 +7,10 @@ review instead of being scored. Hybrid criteria combine the two the way the rubr
 the same scorecard.
 
 Scoring: a pass earns the criterion's points. Pass, fail and not-observed count toward the
-total; not-applicable, ungraded and review-required items leave it, so a penalty only ever
-rests on an event or a verified quote. Any ungraded item makes the call "incomplete", never
-failed.
+total; not-applicable, ungraded and review-required items leave it, so a judged pass or fail
+only ever rests on a verified quote. "Not observed" is the one judged result with nothing to
+verify, because an absence can't be quoted: it scores zero and is never critical. Any ungraded
+item makes the call "incomplete", never failed.
 """
 
 from collections.abc import Iterable

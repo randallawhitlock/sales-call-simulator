@@ -284,7 +284,7 @@ function Summary({
         {heldCount > 0 && (
           <p className="small-text">
             {heldCount === 1 ? '1 item is' : `${heldCount} items are`} held for review ({held} points) and left
-            out of the total: a ruling that can’t be traced to a line of the call never counts against you.
+            out of the total: a pass or fail that can’t be traced to a line of the call is not scored.
           </p>
         )}
         {judge.state === 'graded' && (

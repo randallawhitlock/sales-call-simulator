@@ -124,9 +124,11 @@ The debrief scores the 100-point rubric from those checks and the judge:
 - **Coverage claims are checked against the log.** The judge lists each time the learner said a
   doctor, drug or pharmacy is covered or in network. Code looks for a lookup, made before that
   line, that showed it. A claim with nothing behind it is a critical finding.
-- **Only verified findings cost points.** Pass, fail and not-observed items count toward the
-  total. Not-applicable, ungraded and held items leave it. With no judge, or a judge that
-  didn't answer, the call is "incomplete", never failed.
+- **What counts toward the score.** Pass, fail and not-observed items count toward the total.
+  Not-applicable, ungraded and held items leave it. "Not observed" is the judge saying the
+  agent never did something; there is no line to quote for an absence, so it scores zero but
+  can never be a critical finding. With no judge, or a judge that didn't answer, the call is
+  "incomplete", never failed.
 - **Graded once.** `GET .../debrief` never calls the judge. `POST .../debrief/judge` asks it
   once and stores the output with the model that answered; later debriefs reuse it until
   someone sends `{"regrade": true}`, which adds an attempt and keeps the old one.
