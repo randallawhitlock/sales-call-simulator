@@ -1,4 +1,4 @@
-"""SQLite persistence for sessions, the event log and utterances.
+"""SQLite persistence for sessions, the event log, utterances and judge output.
 
 The event log is append-only. Every piece of session state (records, applications, evidence)
 is a fold over it, so replaying a stored log reproduces the state that was graded.
@@ -11,11 +11,11 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from app.engine.events import Event, EventType, Utterance
+from app.judge.contract import Judgment
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -39,6 +39,12 @@ CREATE TABLE IF NOT EXISTS utterances (
     data TEXT NOT NULL,
     PRIMARY KEY (session_id, utt_id),
     UNIQUE (session_id, client_utt_id)
+);
+CREATE TABLE IF NOT EXISTS judgments (
+    session_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (session_id, attempt)
 );
 """
 
@@ -70,6 +76,10 @@ class SessionRow(BaseModel):
     seed: int
     mood: str
     voice: str
+    retry_of: str | None = None
+    """The earlier session this one is another attempt at."""
+    retry_focus: tuple[str, ...] = ()
+    """What that attempt's debrief said to work on, fixed when this session was created."""
     status: SessionStatus
     created_at: datetime
     started_at: datetime | None = None
@@ -266,8 +276,26 @@ class Store:
             ).fetchall()
         return [Utterance.model_validate_json(r[0]) for r in rows]
 
+    # Judgments. Append-only: a regrade adds an attempt and the latest one is used.
 
-def dump_payload(model: BaseModel) -> dict[str, Any]:
-    """A model as JSON-safe values for an event payload."""
-    data: dict[str, Any] = model.model_dump(mode="json")
-    return data
+    def add_judgment(self, session_id: str, build: Callable[[int], Judgment]) -> Judgment:
+        """``build`` receives the next attempt number."""
+        with self.transaction() as conn:
+            (last,) = conn.execute(
+                "SELECT COALESCE(MAX(attempt), 0) FROM judgments WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            judgment = build(last + 1)
+            conn.execute(
+                "INSERT INTO judgments (session_id, attempt, data) VALUES (?, ?, ?)",
+                (session_id, judgment.attempt, judgment.model_dump_json()),
+            )
+            return judgment
+
+    def latest_judgment(self, session_id: str) -> Judgment | None:
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT data FROM judgments WHERE session_id = ? ORDER BY attempt DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        return None if found is None else Judgment.model_validate_json(found[0])

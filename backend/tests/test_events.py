@@ -59,6 +59,9 @@ def test_quote_must_appear_in_heard_text() -> None:
     assert u.contains_quote("“Yes, go ahead”")
     assert not u.contains_quote("Yes, please enroll me")
     assert not u.contains_quote("   ")
+    # Whole words only: a short quote can't be found inside a longer word.
+    assert u.contains_quote("go ahead") and not u.contains_quote("o ahead and sig")
+    assert not u.contains_quote("head")
 
 
 def test_cut_off_speech_does_not_count() -> None:

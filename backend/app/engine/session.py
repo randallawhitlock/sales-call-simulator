@@ -18,6 +18,8 @@ from app.actor.actors import DEFAULT_TIMEOUT_S, Actor, ActorError, ScriptedActor
 from app.actor.prompt import PROMPT_VERSION, CustomerPrompt, build_customer_prompt
 from app.content.catalog import DocumentKind
 from app.content.loader import ContentBundle
+from app.engine.checks import Facts
+from app.engine.debrief import Debrief, build_debrief, judge_info, retry_focus, scorecard
 from app.engine.events import (
     Channel,
     ClientUttId,
@@ -40,6 +42,9 @@ from app.engine.records import (
     SubmitIn,
 )
 from app.engine.store import SessionRow, SessionStatus, Store
+from app.judge.contract import Judgment
+from app.judge.judges import Judge, JudgeError
+from app.judge.prompt import build_judge_prompt
 
 Clock = Callable[[], datetime]
 
@@ -97,10 +102,32 @@ MAX_ACTOR_CALLS = 8
 haven't stopped yet. A model that ignores cancellation can't pile up threads past this."""
 
 
-class _TurnLock:
+class _KeyedLocks:
+    """One lock per key. A key's entry lives only while a request holds or waits on it, so
+    the registry stays as small as the work in flight. In-process only, which fits the
+    single-process SQLite MVP."""
+
     def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.users = 0
+        self._guard = threading.Lock()
+        self._entries: dict[str, tuple[threading.Lock, list[int]]] = {}
+
+    @contextmanager
+    def hold(self, key: str) -> Iterator[None]:
+        with self._guard:
+            lock, users = self._entries.setdefault(key, (threading.Lock(), [0]))
+            users[0] += 1
+        try:
+            with lock:
+                yield
+        finally:
+            with self._guard:
+                users[0] -= 1
+                if users[0] == 0:
+                    del self._entries[key]
+
+    def keys(self) -> set[str]:
+        with self._guard:
+            return set(self._entries)
 
 
 class _InFlight:
@@ -129,46 +156,41 @@ class SessionService:
         actor: Actor | None = None,
         actor_deadline_s: float = DEFAULT_TIMEOUT_S,
         max_actor_calls: int = MAX_ACTOR_CALLS,
+        judge: Judge | None = None,
     ) -> None:
         self.store = store
         self.content = content
         self.clock = clock
         self.actor: Actor = actor or ScriptedActor()
         self.actor_deadline_s = actor_deadline_s
-        self._turn_locks: dict[str, _TurnLock] = {}
-        self._turn_locks_guard = threading.Lock()
+        self.judge = judge
+        """None: grading runs on the deterministic checks alone."""
+        self._turn_locks = _KeyedLocks()
+        self._judge_locks = _KeyedLocks()
         self._inflight: dict[str, _InFlight] = {}
+        self._inflight_guard = threading.Lock()
         self._actor_slots = threading.BoundedSemaphore(max_actor_calls)
 
     @contextmanager
     def turn_lock(self, session_id: str) -> Iterator[None]:
         """One customer turn at a time per session. Hold and end don't take it: they change
         state at once, and a reply still being generated is checked against that state before
-        it is saved, so it is dropped instead of landing after a hold or the end of the call.
-
-        A session's entry lives only while a request holds or waits on it, so the registry
-        stays as small as the number of turns in flight. In-process only, which fits the
-        single-process SQLite MVP."""
-        with self._turn_locks_guard:
-            entry = self._turn_locks.get(session_id)
-            if entry is None:
-                entry = self._turn_locks[session_id] = _TurnLock()
-            entry.users += 1
-        try:
-            with entry.lock:
-                yield
-        finally:
-            with self._turn_locks_guard:
-                entry.users -= 1
-                if entry.users == 0:
-                    del self._turn_locks[session_id]
+        it is saved, so it is dropped instead of landing after a hold or the end of the call."""
+        with self._turn_locks.hold(session_id):
+            yield
 
     # Lifecycle
 
-    def create(self, scenario_id: str, seed: int | None = None) -> SessionRow:
+    def create(
+        self, scenario_id: str, seed: int | None = None, retry_of: str | None = None
+    ) -> SessionRow:
+        """A new call. ``retry_of`` names an ended call on the same case that this one is
+        another attempt at; what its debrief said to work on is fixed here, so the new call
+        shows the same focus however that call is graded later."""
         scenario = self.content.scenarios.get(scenario_id)
         if scenario is None:
             raise NotFound(f"unknown scenario {scenario_id}")
+        focus = self._retry_focus(scenario_id, retry_of) if retry_of is not None else ()
         seed = secrets.randbelow(2**31) if seed is None else seed
         rolls = random.Random(seed)
         row = SessionRow(
@@ -185,11 +207,28 @@ class SessionService:
             seed=seed,
             mood=rolls.choice(scenario.persona.moods),
             voice=rolls.choice(scenario.persona.voices),
+            retry_of=retry_of,
+            retry_focus=focus,
             status=SessionStatus.CREATED,
             created_at=self.clock(),
         )
         self.store.put_session(row)
         return row
+
+    def _retry_focus(self, scenario_id: str, retry_of: str) -> tuple[str, ...]:
+        earlier = self.get(retry_of)
+        if earlier.status is not SessionStatus.ENDED:
+            raise Conflict("that call has not ended, so there is nothing to retry yet")
+        if earlier.scenario_id != scenario_id:
+            raise Invalid("a retry is another attempt at the same case")
+        try:
+            content = self.pinned_content(earlier)
+        except Conflict:
+            return ()  # graded on content that is no longer loaded: retry without a focus
+        card = scorecard(
+            self._facts(earlier, content), content, self.store.latest_judgment(retry_of)
+        )
+        return tuple(f.title for f in retry_focus(card.criteria))
 
     def get(self, session_id: str) -> SessionRow:
         row = self.store.get_session(session_id)
@@ -378,7 +417,7 @@ class SessionService:
                     return TurnOut(learner=learner, customer=None)
                 transcript = self.store.utterances(session_id)
                 flight = _InFlight(learner.utt_id, self.events(session_id)[-1].seq)
-                with self._turn_locks_guard:
+                with self._inflight_guard:
                     self._inflight[session_id] = flight
             try:
                 history = [Turn(u.speaker, u.heard_text) for u in transcript if u.delivered]
@@ -401,7 +440,7 @@ class SessionService:
                     )
                 return TurnOut(learner=learner, customer=customer)
             finally:
-                with self._turn_locks_guard:
+                with self._inflight_guard:
                     if self._inflight.get(session_id) is flight:
                         del self._inflight[session_id]
 
@@ -447,7 +486,7 @@ class SessionService:
 
     def _cut_off(self, session_id: str) -> None:
         """Hold or end: stop the turn in flight, if any, now."""
-        with self._turn_locks_guard:
+        with self._inflight_guard:
             flight = self._inflight.get(session_id)
         if flight is not None:
             flight.cut_off = True
@@ -507,6 +546,74 @@ class SessionService:
     def transcript(self, session_id: str) -> list[Utterance]:
         self.get(session_id)
         return self.store.utterances(session_id)
+
+    # Review
+
+    def _facts(self, row: SessionRow, content: ContentBundle) -> Facts:
+        return Facts(
+            content.scenario(row.scenario_id),
+            content.catalog,
+            content.frame,
+            self.store.events(row.session_id),
+            self.store.utterances(row.session_id),
+        )
+
+    def _debrief(
+        self,
+        row: SessionRow,
+        content: ContentBundle,
+        judgment: Judgment | None,
+        error: str | None = None,
+    ) -> Debrief:
+        info = judge_info(judgment, self.judge.name if self.judge else None, error)
+        return build_debrief(
+            row,
+            content,
+            self.store.events(row.session_id),
+            self.store.utterances(row.session_id),
+            judgment,
+            info,
+        )
+
+    def debrief(self, session_id: str) -> Debrief:
+        """The debrief from what is stored. Never calls the judge: until a judgment exists,
+        judged items are ungraded and the call is incomplete."""
+        row = self.require_ended(session_id)
+        return self._debrief(row, self.pinned_content(row), self.store.latest_judgment(session_id))
+
+    def judge_call(self, session_id: str, regrade: bool = False) -> Debrief:
+        """Asks the judge once and stores its output; later debriefs reuse it. A second request
+        for the same call waits for the first and gets its judgment. ``regrade`` asks again
+        and adds a new attempt, leaving the earlier ones stored.
+
+        A judge that is off or fails is not an error: the debrief comes back with the judged
+        items ungraded and says why."""
+        row = self.require_ended(session_id)
+        content = self.pinned_content(row)
+        with self._judge_locks.hold(session_id):
+            stored = self.store.latest_judgment(session_id)
+            if self.judge is None or (stored is not None and not regrade):
+                return self._debrief(row, content, stored)
+            judge = self.judge
+            prompt = build_judge_prompt(self._facts(row, content), content.rubric)
+            try:
+                reply = judge.grade(prompt)
+            except JudgeError as exc:
+                return self._debrief(row, content, stored, error=str(exc))
+            judgment = self.store.add_judgment(
+                session_id,
+                lambda attempt: Judgment(
+                    attempt=attempt,
+                    judge=judge.name,
+                    served_model=reply.served_model,
+                    prompt_version=prompt.version,
+                    created_at=self.clock(),
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
+                    output=reply.output,
+                ),
+            )
+            return self._debrief(row, content, judgment)
 
     # Records
 

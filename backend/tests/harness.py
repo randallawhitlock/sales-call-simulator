@@ -6,12 +6,16 @@ Everything the learner does goes through HTTP, so tests exercise the endpoints t
 """
 
 import itertools
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from fastapi.testclient import TestClient
 
 from app.engine.events import Channel, Speaker, UtteranceIn
 from app.engine.session import SessionService
+from app.judge.contract import JudgeClaim, JudgeEvidence, JudgeOutput, JudgeVerdict, Verdict
+from app.judge.judges import JudgeError, JudgeReply
+from app.judge.prompt import JudgePrompt
 
 DISCLAIMER = (
     "Before we go further: we do not offer every plan available in your area. Currently we "
@@ -20,6 +24,53 @@ DISCLAIMER = (
 )
 GREETING = "Thanks for calling Larkspur Benefits Group, this is Sam. This call is recorded."
 SCOPE_ASK = "Which kinds of coverage would you like to talk about today? Medicare Advantage?"
+
+
+def ruling(criterion_id: str, verdict: str, *evidence: tuple[str, str]) -> JudgeVerdict:
+    """A judge ruling. ``evidence`` is (utt_id, quote) pairs."""
+    return JudgeVerdict(
+        criterion_id=criterion_id,
+        verdict=Verdict(verdict),
+        rationale=f"Because of what was said ({verdict}).",
+        evidence=[JudgeEvidence(utt_id=u, quote=q) for u, q in evidence],
+    )
+
+
+def claim(
+    utt_id: str, quote: str, kind: str, plan_id: str, subject_id: str, covered: bool = True
+) -> JudgeClaim:
+    return JudgeClaim.model_validate(
+        {
+            "utt_id": utt_id,
+            "quote": quote,
+            "kind": kind,
+            "plan_id": plan_id,
+            "subject_id": subject_id,
+            "covered": covered,
+        }
+    )
+
+
+class FakeJudge:
+    """Returns scripted rulings and records what it was asked. ``answer`` may be the output,
+    a function of the prompt, or a JudgeError to raise."""
+
+    name = "fake:judge-1"
+
+    def __init__(
+        self, answer: JudgeOutput | JudgeError | Callable[[JudgePrompt], JudgeOutput]
+    ) -> None:
+        self.answer = answer
+        self.prompts: list[JudgePrompt] = []
+
+    def grade(self, prompt: JudgePrompt) -> JudgeReply:
+        self.prompts.append(prompt)
+        if isinstance(self.answer, JudgeError):
+            raise self.answer
+        output = self.answer(prompt) if callable(self.answer) else self.answer
+        return JudgeReply(
+            output=output, served_model="judge-1", input_tokens=1200, output_tokens=340
+        )
 
 
 class Call:
@@ -215,3 +266,40 @@ class Call:
         body = self.get("/findings")
         found: dict[str, Any] = next(r for r in body["results"] if r["check_id"] == check_id)
         return found
+
+    def utt(self, fragment: str) -> str:
+        """The id of the one utterance containing ``fragment``."""
+        hits = [u.utt_id for u in self.service.transcript(self.sid) if fragment in u.text]
+        assert len(hits) == 1, f"{fragment!r} is in {len(hits)} utterances"
+        return hits[0]
+
+    def judged(
+        self, verdicts: Iterable[JudgeVerdict] = (), claims: Iterable[JudgeClaim] = ()
+    ) -> FakeJudge:
+        """Installs a judge that returns these rulings."""
+        judge = FakeJudge(JudgeOutput(verdicts=list(verdicts), coverage_claims=list(claims)))
+        self.service.judge = judge
+        return judge
+
+    def debrief(self, judge: bool = True) -> "DebriefView":
+        """The debrief, after asking the judge unless ``judge`` is false."""
+        body = self.post("/debrief/judge") if judge else self.get("/debrief")
+        return DebriefView(body)
+
+
+class DebriefView:
+    def __init__(self, body: dict[str, Any]) -> None:
+        self.body = body
+
+    def __getitem__(self, criterion_id: str) -> dict[str, Any]:
+        found: dict[str, Any] = next(
+            c for c in self.body["criteria"] if c["criterion_id"] == criterion_id
+        )
+        return found
+
+    def status(self, criterion_id: str) -> tuple[str, bool]:
+        c = self[criterion_id]
+        return c["status"], c["critical"]
+
+    def statuses(self) -> dict[str, str]:
+        return {c["criterion_id"]: c["status"] for c in self.body["criteria"]}

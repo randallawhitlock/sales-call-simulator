@@ -97,10 +97,10 @@ class Utterance(_Frozen):
         """Whether a judge's quote really appears in what was heard.
 
         Matching ignores case, whitespace runs, curly versus straight quotes and surrounding
-        punctuation, and nothing else. A paraphrase does not match.
+        punctuation, and nothing else. A paraphrase does not match, and the quote has to start
+        and end on whole words: "no" is not in "I know".
         """
-        needle = normalize_for_quote(quote)
-        return bool(needle) and needle in normalize_for_quote(self.heard_text)
+        return quote_in(quote, self.heard_text)
 
 
 _QUOTE_MAP = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
@@ -111,6 +111,15 @@ _EDGE_PUNCT = " \t\n.,;:!?\"'()[]-–—…"
 def normalize_for_quote(text: str) -> str:
     folded = unicodedata.normalize("NFKC", text).translate(_QUOTE_MAP).casefold()
     return _SPACE.sub(" ", folded).strip(_EDGE_PUNCT)
+
+
+def quote_in(quote: str, text: str) -> bool:
+    """Whether ``quote`` appears in ``text`` as a run of whole words, after normalizing both."""
+    needle = normalize_for_quote(quote)
+    if not needle:
+        return False
+    pattern = rf"(?<!\w){re.escape(needle)}(?!\w)"
+    return re.search(pattern, normalize_for_quote(text)) is not None
 
 
 class EventType(StrEnum):

@@ -2,7 +2,7 @@
 
 Responses carry only catalog data, the CRM seed and what the learner produced. Scenario
 truth, customer knowledge, persona rolls and seeded document defects stay server-side until
-the call ends, when the answer key and findings unlock.
+the call ends, when the answer key, the findings and the debrief unlock.
 """
 
 from collections.abc import Sequence
@@ -19,6 +19,7 @@ from app.content.scenario import CrmSeed, ElectionPeriod, Scenario
 from app.engine import research
 from app.engine.checks import CheckResult, run_checks
 from app.engine.consistency import ConsistencyFlag, check_consistency
+from app.engine.debrief import Debrief
 from app.engine.events import Event, EventType, Utterance, UtteranceIn
 from app.engine.records import (
     Application,
@@ -79,11 +80,22 @@ class SessionView(BaseModel):
     """The customer is on hold. Live state, so a reloaded call screen shows it correctly."""
     turn_pending: bool
     """A customer reply is being generated right now."""
+    retry_of: str | None
+    """The learner's own earlier call that this one is another attempt at."""
+    retry_focus: list[str]
+    """What that call's debrief said to work on: rubric criterion titles, nothing about the
+    case."""
 
 
 class CreateSession(BaseModel):
     scenario_id: str
     seed: int | None = Field(default=None, ge=0)
+    retry_of: str | None = Field(default=None, max_length=64)
+
+
+class JudgeIn(BaseModel):
+    regrade: bool = False
+    """Ask the judge again even though a judgment is stored. The earlier one is kept."""
 
 
 class HoldIn(BaseModel):
@@ -190,6 +202,8 @@ def session_view(service: SessionService, row: SessionRow) -> SessionView:
         ended_at=row.ended_at,
         on_hold=row.status is SessionStatus.ACTIVE and service.on_hold(row.session_id),
         turn_pending=service.turn_pending(row.session_id),
+        retry_of=row.retry_of,
+        retry_focus=list(row.retry_focus),
     )
 
 
@@ -249,7 +263,7 @@ def list_scenarios(service: Service) -> list[ScenarioCard]:
 
 @router.post("/sessions", status_code=201)
 def create_session(body: CreateSession, service: Service) -> SessionView:
-    return session_view(service, service.create(body.scenario_id, body.seed))
+    return session_view(service, service.create(body.scenario_id, body.seed, body.retry_of))
 
 
 @router.get("/sessions/{session_id}")
@@ -644,6 +658,22 @@ def findings(session_id: str, service: Service) -> Findings:
         ruleset_version=row.ruleset_version,
         results=results,
     )
+
+
+@router.get("/sessions/{session_id}/debrief")
+def debrief(session_id: str, service: Service) -> Debrief:
+    """The scorecard with its evidence, from the event log and the stored judge output.
+    Reading it never calls the judge."""
+    return service.debrief(session_id)
+
+
+@router.post("/sessions/{session_id}/debrief/judge")
+def judge_debrief(
+    session_id: str, service: Service, body: Annotated[JudgeIn | None, Body()] = None
+) -> Debrief:
+    """Has the judge grade the call, once. The output is stored and reused, so calling this
+    again returns the same debrief unless ``regrade`` is set. Can take a few minutes."""
+    return service.judge_call(session_id, regrade=body.regrade if body else False)
 
 
 @router.get("/sessions/{session_id}/actor-qa")

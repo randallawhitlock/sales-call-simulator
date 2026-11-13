@@ -15,6 +15,8 @@ from app.api import router
 from app.content.loader import ContentError, load_bundle
 from app.engine.session import SessionError, SessionService
 from app.engine.store import Store
+from app.judge.judges import judge_from_env
+from app.judge.prompt import JUDGE_PROMPT_VERSION
 
 DB_PATH_ENV = "SIM_DB_PATH"
 
@@ -29,6 +31,9 @@ class Health(BaseModel):
     actor: str
     """The model playing the customer. ``scripted`` is the offline stand-in."""
     prompt_version: str
+    judge: str | None
+    """The model that grades conversation. None: only the rule checks grade."""
+    judge_prompt_version: str
 
 
 @asynccontextmanager
@@ -40,9 +45,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if problems:
         raise ContentError(problems)
     actor = actor_from_env()
+    judge = judge_from_env()
     store = Store(os.environ.get(DB_PATH_ENV, "simulator.db"))
     app.state.sessions = SessionService(
-        store, content, actor=actor, actor_deadline_s=actor_timeout_from_env()
+        store, content, actor=actor, actor_deadline_s=actor_timeout_from_env(), judge=judge
     )
     yield
     store.close()
@@ -70,4 +76,6 @@ def health(request: Request) -> Health:
         scenarios=len(content.scenarios),
         actor=service.actor.name,
         prompt_version=PROMPT_VERSION,
+        judge=service.judge.name if service.judge else None,
+        judge_prompt_version=JUDGE_PROMPT_VERSION,
     )

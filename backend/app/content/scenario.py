@@ -208,6 +208,13 @@ class Scenario(ContentModel):
     leak_canaries: tuple[str, ...] = Field(min_length=1)
     """Strings planted in truth-only text. The leak sweep fails if any reaches the learner."""
 
+    def without_canaries(self, text: str) -> str:
+        """Truth text as a person reads it after the call. The canaries exist for the leak
+        sweep and mean nothing to a reader."""
+        for canary in self.leak_canaries:
+            text = text.replace(canary, "")
+        return " ".join(text.split())
+
     @model_validator(mode="after")
     def _consistent(self) -> Self:
         require_unique("knowledge ids", (k.item_id for k in self.knowledge))

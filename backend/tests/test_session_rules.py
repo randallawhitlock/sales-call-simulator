@@ -112,7 +112,7 @@ def test_sessions_pin_versions_and_seeded_rolls(client: TestClient) -> None:
     second = Call(client, CASE_A, seed=11)
     a, b = first.service.get(first.sid), second.service.get(second.sid)
     assert (a.mood, a.voice) == (b.mood, b.voice)
-    assert (a.catalog_version, a.ruleset_version, a.rubric_version) == ("2027-v1", "mvp-2027.1", 1)
+    assert (a.catalog_version, a.ruleset_version, a.rubric_version) == ("2027-v1", "mvp-2027.1", 2)
 
 
 def test_findings_refuse_content_the_session_was_not_pinned_to(client: TestClient) -> None:

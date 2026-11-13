@@ -614,20 +614,20 @@ def test_an_actor_bug_ends_the_turn_cleanly(client: TestClient) -> None:
     call = Call(client, CASE_A).start()
     call.service.actor = Broken()
     assert "failed" in call.turn("Hello?", expect=502)["detail"]
-    assert call.service._turn_locks == {}
+    assert call.service._turn_locks.keys() == set()
     assert call.service._inflight == {}
 
 
 def test_turn_locks_live_only_while_a_turn_is_in_flight(client: TestClient) -> None:
     call = Call(client, CASE_A).start()
     call.turn("Hello?")
-    assert call.service._turn_locks == {} and call.service._inflight == {}
+    assert call.service._turn_locks.keys() == set() and call.service._inflight == {}
     actor, (t1, _) = blocked_turn(call)
-    assert set(call.service._turn_locks) == {call.sid}
+    assert call.service._turn_locks.keys() == {call.sid}
     assert set(call.service._inflight) == {call.sid}
     actor.release.set()
     t1.join(5)
-    assert call.service._turn_locks == {} and call.service._inflight == {}
+    assert call.service._turn_locks.keys() == set() and call.service._inflight == {}
 
 
 def test_actor_timeout_from_env() -> None:

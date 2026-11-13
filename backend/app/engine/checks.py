@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, JsonValue
 
@@ -40,6 +41,10 @@ class CheckResult(BaseModel):
     detail: str
     event_seqs: list[int] = []
     utt_ids: list[str] = []
+    disputable: bool = False
+    """The result rests on how a line reads (a pattern match), not on events or state. Only
+    then may a quote-verified judge dispute a failure, and the dispute goes to review; it never
+    turns the failure into a pass on its own."""
 
 
 @dataclass
@@ -156,6 +161,7 @@ def _result(
     seqs: Iterable[int] = (),
     utts: Iterable[str] = (),
     critical: bool = False,
+    disputable: bool = False,
 ) -> CheckResult:
     return CheckResult(
         check_id=check,
@@ -164,6 +170,7 @@ def _result(
         detail=detail,
         event_seqs=sorted(set(seqs)),
         utt_ids=sorted(set(utts)),
+        disputable=disputable,
     )
 
 
@@ -680,8 +687,10 @@ def _consent(f: Facts, app: Application) -> CheckResult:
     seqs = [app.consent_seq or 0, submitted]
     utts = [app.consent_utt_id]
 
-    def fail(why: str) -> CheckResult:
-        return _result(check, CheckStatus.FAIL, why, seqs, utts, critical=True)
+    def fail(why: str, reads_text: bool = False) -> CheckResult:
+        return _result(
+            check, CheckStatus.FAIL, why, seqs, utts, critical=True, disputable=reads_text
+        )
 
     if utt is None or utt.speaker is not Speaker.CUSTOMER:
         return fail("Consent points to something the customer did not say.")
@@ -689,7 +698,7 @@ def _consent(f: Facts, app: Application) -> CheckResult:
         return fail("Consent points to speech that was cut off.")
     signal = _consent_signal(utt.heard_text)
     if not _AFFIRMATIVE.search(_fold(utt.heard_text)) or signal == "objection":
-        return fail("The consent utterance is not a clear yes.")
+        return fail("The consent utterance is not a clear yes.", reads_text=True)
     hedges = [utt.utt_id] if signal == "hedge" else []
     utt_seq = f.utt_seq(utt.utt_id)
     last_mark = max(app.pecl_marks.values(), default=0)
@@ -707,7 +716,9 @@ def _consent(f: Facts, app: Application) -> CheckResult:
         later_signal = _consent_signal(later.heard_text)
         if later_signal == "objection":
             utts.append(later.utt_id)
-            return fail("The customer objected after saying yes, before submission.")
+            return fail(
+                "The customer objected after saying yes, before submission.", reads_text=True
+            )
         if later_signal == "hedge":
             hedges.append(later.utt_id)
     if not _yes_to_enrollment(f, utt):
@@ -949,10 +960,11 @@ def disclaimer_before_benefits(f: Facts) -> CheckResult:
     for at in (strong_at, weak_at):
         if at is not None:
             cited.add(learner[at[0]].utt_id)
+    # Every failure here is a pattern match on wording, so a quote-verified judge may dispute it.
     if missing:
         detail = f"Disclaimer elements not found: {', '.join(missing)}."
         if first_hit or strong_at is not None:
-            return _result(check, CheckStatus.FAIL, detail, utts=cited)
+            return _result(check, CheckStatus.FAIL, detail, utts=cited, disputable=True)
         if weak_at is not None:
             return _result(
                 check,
@@ -960,7 +972,7 @@ def disclaimer_before_benefits(f: Facts) -> CheckResult:
                 detail + " Possible benefit talk; needs the judge.",
                 utts=cited,
             )
-        return _result(check, CheckStatus.NOT_OBSERVED, detail, utts=cited)
+        return _result(check, CheckStatus.NOT_OBSERVED, detail, utts=cited, disputable=True)
     complete_at = max(first_hit.values())
     if strong_at is not None and strong_at < complete_at:
         return _result(
@@ -968,6 +980,7 @@ def disclaimer_before_benefits(f: Facts) -> CheckResult:
             CheckStatus.FAIL,
             "Benefits came up before the disclaimer was complete.",
             utts=cited,
+            disputable=True,
         )
     if weak_at is not None and weak_at < complete_at:
         return _result(
@@ -1056,7 +1069,10 @@ def _plan_ids(e: Event) -> set[str]:
     return ids
 
 
-# Claims (hybrid; the judge supplies claims in M3)
+# Claims (hybrid: the judge finds each claim in the learner's speech, code verifies it)
+
+
+ClaimKind = Literal["provider_network", "formulary", "pharmacy_network"]
 
 
 class CoverageClaim(BaseModel):
@@ -1064,8 +1080,7 @@ class CoverageClaim(BaseModel):
 
     utt_id: str
     plan_id: str
-    kind: str
-    """provider_network, formulary or pharmacy_network."""
+    kind: ClaimKind
     subject_id: str
     """practice_id, drug_id or pharmacy_id."""
     covered: bool = True
@@ -1082,27 +1097,45 @@ _CLAIM_RESULT = {
     "formulary": "covered",
     "pharmacy_network": "in_network",
 }
+_COMPARE_ROWS = {"formulary": "lines", "pharmacy_network": "pharmacy"}
+"""Where a compare event keeps what it showed for each kind of claim. Compare shows no
+provider networks."""
+
+
+def claim_backing(f: Facts, claim: CoverageClaim) -> list[int]:
+    """The lookups made before the claim was spoken that showed what the learner claimed, as
+    event seqs. A compare counts for the drugs and the pharmacy it showed. Looking something up
+    doesn't back a claim the lookup contradicted, and a provider lookup for another year backs
+    nothing."""
+    spoken = f.utt_seq(claim.utt_id)
+    key, result = _CLAIM_SUBJECT[claim.kind], _CLAIM_RESULT[claim.kind]
+
+    def shows(row: JsonValue) -> bool:
+        return (
+            _get(row, "plan_id") == claim.plan_id
+            and _get(row, key) == claim.subject_id
+            and _get(row, result) is claim.covered
+        )
+
+    def backs(p: dict[str, JsonValue]) -> bool:
+        if p.get("kind") == "compare":
+            rows = _list(p.get(_COMPARE_ROWS.get(claim.kind, "")))
+            return any(shows(row) for row in rows)
+        if p.get("kind") != claim.kind:
+            return False
+        if claim.kind == "provider_network" and p.get("year") != f.plan_year:
+            return False
+        return shows(p)
+
+    return [
+        e.seq
+        for e in f.events
+        if e.seq < spoken and e.type is EventType.LOOKUP and backs(e.payload)
+    ]
 
 
 def claim_backed(f: Facts, claim: CoverageClaim) -> bool:
-    """Whether a lookup made before the claim was spoken showed what the learner claimed.
-    Looking something up doesn't back a claim the lookup contradicted."""
-    spoken = f.utt_seq(claim.utt_id)
-    key, result = _CLAIM_SUBJECT[claim.kind], _CLAIM_RESULT[claim.kind]
-    for e in f.events:
-        if e.seq >= spoken or e.type is not EventType.LOOKUP:
-            continue
-        p = e.payload
-        if (
-            p.get("kind") == claim.kind
-            and p.get("plan_id") == claim.plan_id
-            and p.get(key) == claim.subject_id
-        ):
-            if claim.kind == "provider_network" and p.get("year") != f.plan_year:
-                continue
-            if p.get(result) is claim.covered:
-                return True
-    return False
+    return bool(claim_backing(f, claim))
 
 
 def coverage_claims_backed(f: Facts) -> CheckResult:
@@ -1145,7 +1178,10 @@ def run_checks(
 ) -> list[CheckResult]:
     """Every deterministic check, in ``CheckId`` order. Pure: the same log gives the same
     results."""
-    facts = Facts(scenario, catalog, frame, events, utterances)
+    return check_facts(Facts(scenario, catalog, frame, events, utterances))
+
+
+def check_facts(facts: Facts) -> list[CheckResult]:
     results = {check: fn(facts) for check, fn in _INDEPENDENT.items()}
     results[CheckId.OUTCOME_ACCEPTABLE] = outcome_acceptable(facts, results)
     return [results[c] for c in CheckId]

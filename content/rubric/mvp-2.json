@@ -1,6 +1,6 @@
 {
   "rubric_id": "mvp",
-  "version": 1,
+  "version": 2,
   "criteria": [
     {
       "criterion_id": "disc-doctors",
@@ -82,7 +82,8 @@
         "R-SOA"
       ],
       "check_id": "scope_before_plan_discussion",
-      "judged_spec": "The learner asked which products the customer wanted to discuss rather than assuming it."
+      "judged_spec": "The learner asked which products the customer wanted to discuss rather than assuming it.",
+      "combine": "both"
     },
     {
       "criterion_id": "elig-disclaimer",
@@ -95,7 +96,8 @@
         "R-DISC"
       ],
       "check_id": "disclaimer_before_benefits",
-      "judged_spec": "The learner gave all three disclaimer elements, with the right numbers, before discussing any benefits. Use this to confirm paraphrases the element match missed."
+      "judged_spec": "The agent gave all three disclaimer elements, with the right numbers, before discussing any benefits. Rule on what the lines mean where the wording match could not tell: a paraphrase it missed, or a mention of benefits that was not a benefit discussion.",
+      "combine": "backstop"
     },
     {
       "criterion_id": "elig-recording",
@@ -159,7 +161,8 @@
       "method": "hybrid",
       "evidence_policy": "both",
       "check_id": "restriction_seen",
-      "judged_spec": "The learner told the customer about prior authorization, step therapy or quantity limits on their drugs and what they mean."
+      "judged_spec": "The learner told the customer about prior authorization, step therapy or quantity limits on their drugs and what they mean.",
+      "combine": "both"
     },
     {
       "criterion_id": "ver-pharmacy",
@@ -182,7 +185,8 @@
       "evidence_policy": "both",
       "critical": true,
       "check_id": "coverage_claims_backed",
-      "judged_spec": "Find each statement that a provider, drug or pharmacy is covered or in network on a plan. Cite the utterance."
+      "judged_spec": "Find each statement by the agent that a specific doctor, drug or pharmacy is, or is not, covered or in network on a specific plan. Cite the utterance.",
+      "combine": "claims"
     },
     {
       "criterion_id": "rec-outcome",
@@ -281,20 +285,23 @@
         "R-PECL"
       ],
       "check_id": "pecl_complete_before_submit",
-      "judged_spec": "The learner went through the checklist items with the customer rather than only opening the document."
+      "judged_spec": "The learner went through the checklist items with the customer rather than only opening the document.",
+      "combine": "both"
     },
     {
       "criterion_id": "doc-consent",
       "dimension": "documentation",
       "title": "Enrollment consent documented from a heard customer yes",
       "points": 3,
-      "method": "deterministic",
+      "method": "hybrid",
       "evidence_policy": "both",
       "critical": true,
       "rule_ids": [
         "R-CONSENT"
       ],
-      "check_id": "consent_before_submit"
+      "check_id": "consent_before_submit",
+      "judged_spec": "The customer line the agent marked as consent is a clear, willing yes to enrolling in this plan, not a yes to some other question, a hesitation, or a yes the customer took back before the application was submitted.",
+      "combine": "backstop"
     },
     {
       "criterion_id": "doc-application",
