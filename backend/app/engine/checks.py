@@ -14,12 +14,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
-from typing import Literal
 
 from pydantic import BaseModel, JsonValue
 
 from app.content.catalog import Catalog, DocumentKind
-from app.content.common import CheckId, OutcomeKind
+from app.content.common import CheckId, ClaimKind, OutcomeKind
 from app.content.loader import aep_end
 from app.content.scenario import CallFrame, OutcomeVerdict, Scenario
 from app.engine.events import Event, EventType, Speaker, Utterance
@@ -237,7 +236,7 @@ def outcome_acceptable(f: Facts, prior: dict[CheckId, CheckResult]) -> CheckResu
             critical=enroll,
         )
     failed = [
-        c.value
+        c.value.replace("_", " ")
         for c in match.required_checks
         if c in prior and prior[c].status is not CheckStatus.PASS
     ]
@@ -1070,9 +1069,6 @@ def _plan_ids(e: Event) -> set[str]:
 
 
 # Claims (hybrid: the judge finds each claim in the learner's speech, code verifies it)
-
-
-ClaimKind = Literal["provider_network", "formulary", "pharmacy_network"]
 
 
 class CoverageClaim(BaseModel):

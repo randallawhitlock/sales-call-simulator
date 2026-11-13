@@ -722,7 +722,10 @@ def test_the_debrief_links_findings_to_a_readable_timeline(client: TestClient) -
     body = call.debrief().body
     by_seq = {t["seq"]: t["summary"] for t in body["timeline"]}
     events = call.get("/events")
-    assert set(by_seq) == {e["seq"] for e in events if e["type"] != "utterance"}
+    assert [t["seq"] for t in body["timeline"]] == [e["seq"] for e in events]
+    spoken = {t["utt_id"] for t in body["timeline"] if t["type"] == "utterance"}
+    assert spoken == {u["utt_id"] for u in call.get("/transcript")}
+    assert all(t["summary"] for t in body["timeline"] if t["type"] != "utterance")
     cited = {s for c in body["criteria"] for s in c["event_seqs"]}
     assert cited and cited <= set(by_seq)
     lookup = body["criteria"][11]

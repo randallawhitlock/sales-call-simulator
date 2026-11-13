@@ -19,14 +19,20 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
-from app.content.common import Authority, CheckId, Evaluation, EvidencePolicy, OutcomeKind
+from app.content.common import (
+    Authority,
+    CheckId,
+    ClaimKind,
+    Evaluation,
+    EvidencePolicy,
+    OutcomeKind,
+)
 from app.content.rubric import DIMENSION_WEIGHTS, Combine, Dimension, Rubric, RubricCriterion
 from app.content.rules import RuleSet, RuleStatus
 from app.content.scenario import Scenario
 from app.engine.checks import (
     CheckResult,
     CheckStatus,
-    ClaimKind,
     CoverageClaim,
     Facts,
     check_facts,

@@ -120,7 +120,7 @@ def test_a_prior_auth_drug_never_looked_up(client: TestClient) -> None:
     assert call.findings() == expected(
         ENROLLED_CLEAN, outcome_acceptable=F, drugs_checked=F, restriction_seen=F
     )
-    assert "restriction_seen" in call.detail("outcome_acceptable")["detail"]
+    assert "restriction seen" in call.detail("outcome_acceptable")["detail"]
 
 
 def test_a_same_doctor_at_the_wrong_office(client: TestClient) -> None:

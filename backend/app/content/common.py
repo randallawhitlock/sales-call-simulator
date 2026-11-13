@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import Iterable
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -96,6 +96,11 @@ class CheckId(StrEnum):
     DISCLAIMER_BEFORE_BENEFITS = "disclaimer_before_benefits"
     RECORDING_NOTICE_GIVEN = "recording_notice_given"
     PCP_MATCHES_PLAN_RULE = "pcp_matches_plan_rule"
+
+
+ClaimKind = Literal["provider_network", "formulary", "pharmacy_network"]
+"""What a coverage claim is about: a doctor's network status, a drug on the formulary, or a
+pharmacy's network status. The names match the lookup kinds in the event log."""
 
 
 def require_unique(label: str, ids: Iterable[str]) -> None:

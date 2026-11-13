@@ -33,15 +33,22 @@ class TimelineEntry(BaseModel):
     seq: int
     t_ms: int
     type: EventType
+    utt_id: str | None = None
+    """Set on utterance entries, which carry no summary: the transcript has the words."""
     summary: str
 
 
 def timeline(events: list[Event], catalog: Catalog) -> list[TimelineEntry]:
-    """Every logged action except the utterances, which the transcript shows."""
+    """The whole log in order, so a reader can see what was said around each action."""
     return [
-        TimelineEntry(seq=e.seq, t_ms=e.t_ms, type=e.type, summary=describe(e, catalog))
+        TimelineEntry(
+            seq=e.seq,
+            t_ms=e.t_ms,
+            type=e.type,
+            utt_id=e.utt_id,
+            summary="" if e.type is EventType.UTTERANCE else describe(e, catalog),
+        )
         for e in events
-        if e.type is not EventType.UTTERANCE
     ]
 
 

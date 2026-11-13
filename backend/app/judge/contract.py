@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from app.engine.checks import ClaimKind
+from app.content.common import ClaimKind
 
 NOTES_REF = "notes"
 """Stands in for an utterance id when the quote comes from the learner's saved notes."""
