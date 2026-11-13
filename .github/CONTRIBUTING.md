@@ -27,9 +27,11 @@ for PR titles, for example `feat(engine): add reveal rules to customer knowledge
 
 ## Local checks
 
+These are the checks CI runs:
+
 ```bash
-cd backend && uv run ruff check . && uv run pytest -q
-cd frontend && npx tsc --noEmit && npm run build
+cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q
+cd frontend && npm run lint && npm run typecheck && npm test && npm run build
 ```
 
 Tests that call real model APIs are opt-in: `uv run pytest -m live`.

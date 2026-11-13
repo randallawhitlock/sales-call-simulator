@@ -4,8 +4,8 @@
 
 ## How it was tested
 
-- [ ] `uv run ruff check . && uv run pytest -q` (backend)
-- [ ] `npx tsc --noEmit && npm run build` (frontend)
+- [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy . && uv run pytest -q` (backend)
+- [ ] `npm run lint && npm run typecheck && npm test && npm run build` (frontend)
 - [ ] Manually checked in the browser (if UI changed)
 
 ## Checklist

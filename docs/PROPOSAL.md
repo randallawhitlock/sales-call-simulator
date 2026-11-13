@@ -219,6 +219,8 @@ The judge cites evidence as `{utt_id, quote}`. The server looks for each quote i
 
 Statuses are pass, fail, not applicable, not observed, review required and ungraded; not-applicable and ungraded items leave the denominator. Missing judged items make a call "incomplete," never "fail." Critical findings are enrolling without consent, enrolling when the case excludes it, claiming unverified coverage, and submitting before the checklist review. A judge eval set runs on every grader change, and debriefs end with a targeted retry.
 
+Note, November 2026: M3 built this, with three decisions the text above leaves open. Review-required items also leave the denominator, because scoring them as zero would let a ruling with no verified quote cost points. A hybrid criterion names how its two halves combine: both must pass, or the judge is a backstop that rules where a wording check could not tell and sends a disagreement to review, or the judge finds coverage claims and code verifies each. And a critical finding needs a deterministic failure or a verified quote, so something the judge merely did not observe scores zero without being critical. The eval set is six labeled calls; it has not yet been run against the real judge.
+
 ## 13. Testing
 
 | Layer | Coverage |
