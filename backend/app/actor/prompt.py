@@ -165,6 +165,7 @@ def prompt_problems(prompt: CustomerPrompt, content: ContentBundle) -> list[str]
     out += [f"internal id {i!r}" for i in internal_ids(content.catalog) if i.casefold() in folded]
     out += [f"leak canary {c!r}" for c in s.leak_canaries if c.casefold() in folded]
     truth = [o.rationale for o in s.outcomes] + [t.description for t in s.traps]
+    truth += [t.rationale for t in s.traps]
     out += [f"scenario truth {t[:40]!r}" for t in truth if t.casefold() in folded]
     if s.title.casefold() in folded:
         out.append(f"author-facing title {s.title!r}")

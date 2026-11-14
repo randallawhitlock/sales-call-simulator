@@ -18,7 +18,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   const res = await fetch(`/api${path}`, init)
   const text = await res.text()
-  const data: unknown = text ? JSON.parse(text) : null
+  let data: unknown = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}`)
+    throw new ApiError(res.status, 'The server sent a response the app could not read')
+  }
   if (!res.ok) {
     throw new ApiError(res.status, describeError(data) ?? `HTTP ${res.status}`)
   }
@@ -30,10 +36,10 @@ function describeError(data: unknown): string | null {
   const detail = (data as Record<string, unknown>)['detail']
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) {
-    return detail
-      .map((d) => (typeof d === 'object' && d !== null ? String((d as { msg?: unknown }).msg) : ''))
-      .filter(Boolean)
-      .join('; ')
+    const msgs = detail
+      .map((d) => (typeof d === 'object' && d !== null ? (d as { msg?: unknown }).msg : null))
+      .filter((m): m is string => typeof m === 'string' && m !== '')
+    return msgs.length ? msgs.join('; ') : null
   }
   return null
 }

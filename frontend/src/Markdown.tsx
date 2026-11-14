@@ -4,9 +4,10 @@ import type { ReactNode } from 'react'
  * paragraphs, **bold**) as React elements. No HTML is injected. */
 export function Markdown({ text }: { text: string }) {
   const blocks: ReactNode[] = []
-  const lines = text.split('\n')
+  const lines = text.split(/\r?\n/)
   let i = 0
   while (i < lines.length) {
+    const start = i
     const line = lines[i] ?? ''
     if (!line.trim()) {
       i++
@@ -16,7 +17,7 @@ export function Markdown({ text }: { text: string }) {
     if (heading) {
       const level = Math.min(6, (heading[1]?.length ?? 1) + 2)
       const Tag = `h${level}` as 'h3'
-      blocks.push(<Tag key={i}>{inline(heading[2] ?? '')}</Tag>)
+      blocks.push(<Tag key={start}>{inline(heading[2] ?? '')}</Tag>)
       i++
       continue
     }
@@ -29,7 +30,7 @@ export function Markdown({ text }: { text: string }) {
       }
       const [head, ...body] = rows
       blocks.push(
-        <table key={i}>
+        <table key={start}>
           {head && (
             <thead>
               <tr>{head.map((c, j) => <th key={j}>{inline(c)}</th>)}</tr>
@@ -52,15 +53,24 @@ export function Markdown({ text }: { text: string }) {
         i++
       }
       const List = ordered ? 'ol' : 'ul'
-      blocks.push(<List key={i}>{items.map((t, k) => <li key={k}>{inline(t)}</li>)}</List>)
+      blocks.push(<List key={start}>{items.map((t, k) => <li key={k}>{inline(t)}</li>)}</List>)
       continue
     }
-    const para: string[] = []
-    while (i < lines.length && (lines[i] ?? '').trim() && !/^(#|\||\s*[-*]\s|\s*\d+\.\s)/.test(lines[i] ?? '')) {
+    // Always consume the current line, even one that looks like the start of another block
+    // (`#hashtag`), so the loop can't stall.
+    const para: string[] = [line]
+    i++
+    while (
+      i < lines.length &&
+      (lines[i] ?? '').trim() &&
+      !/^#{1,4}\s/.test(lines[i] ?? '') &&
+      !(lines[i] ?? '').trimStart().startsWith('|') &&
+      !/^\s*([-*]|\d+\.)\s+/.test(lines[i] ?? '')
+    ) {
       para.push(lines[i] ?? '')
       i++
     }
-    blocks.push(<p key={i}>{inline(para.join(' '))}</p>)
+    blocks.push(<p key={start}>{inline(para.join(' '))}</p>)
   }
   return <div className="markdown">{blocks}</div>
 }

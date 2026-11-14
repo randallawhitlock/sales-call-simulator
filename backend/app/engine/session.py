@@ -356,31 +356,32 @@ class SessionService:
         checked again, and dropped if a newer learner line arrived or a hold or end happened
         at any point after generation started, even one already resumed."""
         with self.turn_lock(session_id):
-            with self.store.transaction():
-                row = self.require_active(session_id)
-                if self.state(session_id).on_hold:
-                    raise Conflict("the customer is on hold and can't hear you")
-                prompt = self.customer_prompt(row)
-                learner = self.add_learner_text(
-                    session_id,
-                    UtteranceIn(
-                        client_utt_id=body.client_utt_id,
-                        speaker=Speaker.LEARNER,
-                        channel=Channel.TEXT,
-                        text=body.text,
-                    ),
-                )
-                reply_key = f"reply-{learner.utt_id}"
-                existing = self.store.utterance_by_client_id(session_id, reply_key)
-                if existing is not None:
-                    return TurnOut(learner=learner, customer=existing)
-                if not self._still_current(session_id, learner):
-                    return TurnOut(learner=learner, customer=None)
-                transcript = self.store.utterances(session_id)
-                flight = _InFlight(learner.utt_id, self.events(session_id)[-1].seq)
-                with self._turn_locks_guard:
-                    self._inflight[session_id] = flight
+            flight: _InFlight | None = None
             try:
+                with self.store.transaction():
+                    row = self.require_active(session_id)
+                    if self.state(session_id).on_hold:
+                        raise Conflict("the customer is on hold and can't hear you")
+                    prompt = self.customer_prompt(row)
+                    learner = self.add_learner_text(
+                        session_id,
+                        UtteranceIn(
+                            client_utt_id=body.client_utt_id,
+                            speaker=Speaker.LEARNER,
+                            channel=Channel.TEXT,
+                            text=body.text,
+                        ),
+                    )
+                    reply_key = f"reply-{learner.utt_id}"
+                    existing = self.store.utterance_by_client_id(session_id, reply_key)
+                    if existing is not None:
+                        return TurnOut(learner=learner, customer=existing)
+                    if not self._still_current(session_id, learner):
+                        return TurnOut(learner=learner, customer=None)
+                    transcript = self.store.utterances(session_id)
+                    flight = _InFlight(learner.utt_id, self.events(session_id)[-1].seq)
+                    with self._turn_locks_guard:
+                        self._inflight[session_id] = flight
                 history = [Turn(u.speaker, u.heard_text) for u in transcript if u.delivered]
                 text = self._await_reply(flight, prompt, history, row.seed)
                 if text is None:
@@ -401,9 +402,10 @@ class SessionService:
                     )
                 return TurnOut(learner=learner, customer=customer)
             finally:
-                with self._turn_locks_guard:
-                    if self._inflight.get(session_id) is flight:
-                        del self._inflight[session_id]
+                if flight is not None:
+                    with self._turn_locks_guard:
+                        if self._inflight.get(session_id) is flight:
+                            del self._inflight[session_id]
 
     def _await_reply(
         self, flight: _InFlight, prompt: CustomerPrompt, history: list[Turn], seed: int
@@ -432,7 +434,11 @@ class SessionService:
                 self._actor_slots.release()
                 flight.wake.set()
 
-        threading.Thread(target=call, name="customer-reply", daemon=True).start()
+        try:
+            threading.Thread(target=call, name="customer-reply", daemon=True).start()
+        except Exception:
+            self._actor_slots.release()
+            raise
         answered = flight.wake.wait(self.actor_deadline_s)
         if flight.cut_off:
             return None

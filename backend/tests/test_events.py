@@ -61,6 +61,14 @@ def test_quote_must_appear_in_heard_text() -> None:
     assert not u.contains_quote("   ")
 
 
+def test_quote_matches_whole_words_only() -> None:
+    u = utterance("I cannot enroll you, and I know that.")
+    assert not u.contains_quote("i can")
+    assert not u.contains_quote("no")
+    assert u.contains_quote("i cannot enroll you")
+    assert u.contains_quote("“I KNOW that!”")
+
+
 def test_cut_off_speech_does_not_count() -> None:
     cut = utterance("Yes, go", interrupted=True)
     assert cut.delivered
