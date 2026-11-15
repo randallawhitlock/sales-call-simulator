@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   get,
   post,
@@ -43,24 +43,36 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
   const [grading, setGrading] = useState(false)
   const [actorFlags, setActorFlags] = useState<ConsistencyFlag[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [gradeError, setGradeError] = useState<string | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
-  const regrade = useAction()
   const retry = useAction()
+
+  /** Asks the server to run the judge. A request that fails outright (a timeout, a dropped
+   * connection) is kept apart from a judge failure the server reports, and either one leaves
+   * the learner a way to ask again. */
+  const grade = useCallback(
+    async (alive: () => boolean = () => true) => {
+      setGrading(true)
+      setGradeError(null)
+      try {
+        const graded = await post<Debrief>(`${base}/grade`)
+        if (alive()) setDebrief(graded)
+      } catch (err) {
+        if (alive()) setGradeError(errorText(err))
+      } finally {
+        if (alive()) setGrading(false)
+      }
+    },
+    [base],
+  )
 
   useEffect(() => {
     let current = true
     get<Debrief>(`${base}/debrief`)
-      .then(async (d) => {
+      .then((d) => {
         if (!current) return
         setDebrief(d)
-        if (d.judge.status !== 'pending') return
-        setGrading(true)
-        try {
-          const graded = await post<Debrief>(`${base}/grade`)
-          if (current) setDebrief(graded)
-        } finally {
-          if (current) setGrading(false)
-        }
+        if (d.judge.status === 'pending' && d.judge.runs_left > 0) void grade(() => current)
       })
       .catch((err: unknown) => current && setError(errorText(err)))
     // Content QA only; the debrief works without it.
@@ -77,7 +89,7 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
     return () => {
       current = false
     }
-  }, [base, setTranscript])
+  }, [base, grade, setTranscript])
 
   function show(uttId: string): void {
     setPicked(uttId)
@@ -93,20 +105,18 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
       {debrief && (
         <>
           <Summary debrief={debrief} grading={grading} />
-          {debrief.judge.status === 'failed' && (
+          {!grading && (gradeError !== null || debrief.judge.status === 'failed') && (
             <div className="error" role="alert">
-              The AI judge couldn't grade the conversation: {debrief.judge.error}{' '}
-              <button
-                type="button"
-                className="small"
-                disabled={regrade.busy}
-                onClick={() => void regrade.run(async () => setDebrief(await post<Debrief>(`${base}/grade`)))}
-              >
-                Grade again
-              </button>
+              The AI judge couldn't grade the conversation: {gradeError ?? debrief.judge.error}.{' '}
+              {debrief.judge.runs_left > 0 ? (
+                <button type="button" className="small" onClick={() => void grade()}>
+                  Grade again
+                </button>
+              ) : (
+                'This call has no grading runs left.'
+              )}
             </div>
           )}
-          <ErrorNote error={regrade.error} />
           {debrief.critical_findings.length > 0 && (
             <section className="critical" role="alert">
               <h3>Critical findings</h3>
@@ -225,6 +235,11 @@ function Summary({ debrief, grading }: { debrief: Debrief; grading: boolean }) {
           : `Scored on the ${debrief.possible} points graded so far. Items marked ungraded or needs review don't count yet.`}
       </p>
       {grading && <p className="notice" role="status">The AI judge is grading the conversation…</p>}
+      {judge.status === 'pending' && !grading && judge.runs_left === 0 && (
+        <p className="notice">
+          The AI judge couldn't grade this call, and it has no grading runs left. Conversation items stay ungraded.
+        </p>
+      )}
       {judge.status === 'off' && (
         <p className="notice">
           No AI judge is configured (set <code>ANTHROPIC_API_KEY</code>), so conversation items stay ungraded. Rule

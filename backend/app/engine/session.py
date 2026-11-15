@@ -76,11 +76,15 @@ class ActorUnavailable(SessionError):
     status_code = 502
 
 
+MAX_LEARNER_TEXT = 4000
+"""Characters in one learner line. The transcript goes to the customer model and the judge."""
+
+
 class TurnIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_utt_id: ClientUttId
-    text: str = Field(min_length=1, max_length=4000)
+    text: str = Field(min_length=1, max_length=MAX_LEARNER_TEXT)
 
 
 class TurnOut(BaseModel):
@@ -352,6 +356,8 @@ class SessionService:
         learner's browser."""
         if body.speaker is not Speaker.LEARNER or body.channel is not Channel.TEXT:
             raise Invalid("learners post their own text turns only")
+        if len(body.text) > MAX_LEARNER_TEXT:
+            raise Invalid(f"a line can be at most {MAX_LEARNER_TEXT} characters")
         return self.add_utterance(session_id, body)
 
     def take_turn(self, session_id: str, body: TurnIn) -> TurnOut:

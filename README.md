@@ -114,15 +114,25 @@ Each one cites the event sequence numbers or utterance ids it relied on.
 The debrief grades all 33 rubric items. Deterministic items come from those checks; judged and
 hybrid items come from the AI judge (Claude), which returns a status, a rationale and
 `{utt_id, quote}` evidence for each. The server looks for every quote in the line it cites; a
-missing quote, or a pass with no quote, marks the item "needs review" instead of counting. A
-hybrid item needs both halves: code can fail it outright, and when code can't tell, the judge
-decides. Coverage claims the judge finds are checked by code against the learner's earlier
-lookups, and an unbacked one is a critical finding. Only code makes a finding critical.
+missing quote marks the item "needs review" instead of counting. So does a pass that isn't
+carried by a quote of at least three words from the learner's own lines or the notes: what the
+customer said can support a pass, not earn it. A hybrid item needs both halves: code can fail
+it outright, and when code can't tell, the judge decides.
+
+Coverage claims the judge finds are checked by code against the learner's earlier lookups. An
+unbacked claim is a critical finding only when code can confirm it from the cited line itself:
+the quote says covered or not, the line names the plan and the doctor, drug or pharmacy, and no
+lookup backs any reading of the line ("Dr. Raman" means every Dr. Raman at every office until
+the line says which). Whatever the judge had to infer goes to "needs review". Only code makes a
+finding critical.
 
 `POST .../grade` runs the judge once and stores its output; `GET .../debrief` never calls a
 model and rebuilds the same debrief from the stored log and stored grade (`{"regrade": true}`
-asks again). A judge outage leaves judged items ungraded and the call "incomplete", never
-failed. Not-applicable, ungraded and needs-review items leave the score's denominator.
+asks again). A call gets five judge runs, failed ones and regrades included; after that
+`/grade` returns 429 and the stored grade keeps serving. A judge outage leaves judged items
+ungraded and the call "incomplete", never failed, and the debrief offers to grade again.
+Learner lines and notes fields are capped at 4,000 characters and sent to the judge on one line
+each, so typed text can't pose as another transcript line. Not-applicable, ungraded and needs-review items leave the score's denominator.
 
 The debrief ends with a targeted retry: `POST /sessions` with `retry_of` starts the same case
 again and carries the three costliest misses, critical ones first, as the call's `focus`.
@@ -225,7 +235,7 @@ are git-ignored. Never commit real values.
 | `ANTHROPIC_API_KEY` | Judge | M3 |
 | `SIM_JUDGE` | `claude` or `off` (default: `claude` when a key is set) | M3 |
 | `SIM_JUDGE_MODEL` | Judge model id (default `claude-opus-5-5`); every stored grade records it | M3 |
-| `SIM_JUDGE_TIMEOUT_S` | Seconds one grading run may take (1 to 900, default 180) | M3 |
+| `SIM_JUDGE_TIMEOUT_S` | Seconds one grading run may take in all, its one retry included (1 to 900, default 180) | M3 |
 | `SIM_LIVE_MODEL` | Gemini Live model id, always pinned | M4 |
 | `LIVEKIT_URL` | LiveKit server (default `ws://localhost:7880`) | M4 |
 | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | LiveKit credentials; `livekit-server --dev` prints its own | M4 |

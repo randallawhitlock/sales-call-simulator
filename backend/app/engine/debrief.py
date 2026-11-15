@@ -13,13 +13,24 @@ from pydantic import BaseModel
 from app.engine.checks import run_checks
 from app.engine.grading import Graded, grade_call
 from app.engine.records import SessionState
-from app.engine.session import Invalid, SessionService
+from app.engine.session import Invalid, SessionError, SessionService
 from app.engine.store import SessionRow
 from app.judge.judges import Judge, JudgeError
 from app.judge.models import GradeRow
 from app.judge.prompt import JUDGE_PROMPT_VERSION, JudgePrompt, build_prompt
 
 JudgeStatus = Literal["off", "pending", "done", "failed"]
+
+MAX_JUDGE_RUNS = 5
+"""Judge runs one call may use, failures and regrades included. Each run is a paid model call
+and the endpoint is open to whoever holds the session id."""
+MAX_PROMPT_CHARS = 400_000
+"""A call whose prompt is longer than this isn't sent to the judge. Far above any real call."""
+
+
+class TooManyGrades(SessionError):
+    status_code = 429
+
 
 _NOTES: dict[JudgeStatus, str] = {
     "off": "No judge is configured (set ANTHROPIC_API_KEY), so this item isn't graded.",
@@ -37,6 +48,8 @@ class JudgeInfo(BaseModel):
     prompt_version: str | None = None
     graded_at: datetime | None = None
     error: str | None = None
+    runs_left: int = MAX_JUDGE_RUNS
+    """Judge runs this call may still use."""
 
 
 class Debrief(Graded):
@@ -66,14 +79,24 @@ class DebriefService:
     def grade(self, session_id: str, *, regrade: bool = False) -> Debrief:
         """Runs the judge unless a stored run exists (or ``regrade``), stores the result, and
         returns the debrief. A failed run stores nothing and keeps any earlier run; the
-        debrief reports the error so the learner can try again."""
+        debrief reports the error so the learner can try again. A call gets
+        ``MAX_JUDGE_RUNS`` runs, failed ones included."""
         with self.sessions.turn_lock(f"{session_id}#grade"):
             row = self.sessions.require_ended(session_id)
             stored = self.sessions.store.get_grade(session_id)
             if self.judge is None or (stored is not None and not regrade):
                 return self._debrief(row, stored, None)
+            if self.sessions.store.judge_runs(session_id) >= MAX_JUDGE_RUNS:
+                raise TooManyGrades(
+                    f"this call has used its {MAX_JUDGE_RUNS} grading runs; the debrief shows "
+                    "the last grade that was stored"
+                )
+            prompt = self._prompt(row)
+            if len(prompt.user) > MAX_PROMPT_CHARS:
+                return self._debrief(row, stored, "this call is too long for the judge to grade")
+            self.sessions.store.count_judge_run(session_id)
             try:
-                output = self.judge.grade(self._prompt(row))
+                output = self.judge.grade(prompt)
             except JudgeError as exc:
                 return self._debrief(row, stored, str(exc))
             fresh = GradeRow(
@@ -148,5 +171,6 @@ class DebriefService:
                 prompt_version=stored.prompt_version if stored else None,
                 graded_at=stored.graded_at if stored else None,
                 error=error,
+                runs_left=max(0, MAX_JUDGE_RUNS - self.sessions.store.judge_runs(row.session_id)),
             ),
         )

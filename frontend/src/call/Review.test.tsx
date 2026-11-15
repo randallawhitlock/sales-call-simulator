@@ -80,7 +80,7 @@ const debrief = (over: Partial<Debrief> = {}): Debrief => ({
   complete: false,
   critical_findings: ['ver-claims'],
   focus: ['ver-claims'],
-  judge: { status: 'done', name: 'claude:test', prompt_version: 'judge-1', graded_at: '2026-11-12T16:00:00Z', error: null },
+  judge: { status: 'done', name: 'claude:test', prompt_version: 'judge-1', graded_at: '2026-11-12T16:00:00Z', error: null, runs_left: 4 },
   ...over,
 })
 
@@ -153,7 +153,7 @@ describe('Review', () => {
 
   it('runs the judge once when the call has not been graded yet', async () => {
     const mock = serve({
-      'GET /sessions/s-test/debrief': () => debrief({ judge: { status: 'pending', name: 'claude:test', prompt_version: null, graded_at: null, error: null } }),
+      'GET /sessions/s-test/debrief': () => debrief({ judge: { status: 'pending', name: 'claude:test', prompt_version: null, graded_at: null, error: null, runs_left: 5 } }),
       'POST /sessions/s-test/grade': () => debrief({ score: 100, complete: true, critical_findings: [], focus: [] }),
     })
     render(<Harness initial={TRANSCRIPT} />)
@@ -164,7 +164,7 @@ describe('Review', () => {
   })
 
   it('offers to grade again when the judge failed', async () => {
-    const failed = debrief({ judge: { status: 'failed', name: 'claude:test', prompt_version: null, graded_at: null, error: 'overloaded' } })
+    const failed = debrief({ judge: { status: 'failed', name: 'claude:test', prompt_version: null, graded_at: null, error: 'overloaded', runs_left: 4 } })
     const mock = serve({
       'GET /sessions/s-test/debrief': () => debrief({ judge: { ...failed.judge, status: 'pending', error: null } }),
       'POST /sessions/s-test/grade': () => (calls(mock, 'POST', '/grade').length > 1 ? debrief() : failed),
@@ -178,8 +178,44 @@ describe('Review', () => {
     expect(calls(mock, 'POST', '/grade')).toHaveLength(2)
   })
 
+  it('offers to grade again when the grading request itself fails', async () => {
+    const pending = debrief({ judge: { status: 'pending', name: 'claude:test', prompt_version: null, graded_at: null, error: null, runs_left: 5 } })
+    let attempts = 0
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      const path = String(input)
+      if (path.endsWith('/grade') && init?.method === 'POST') {
+        attempts += 1
+        if (attempts === 1) return new Response('Gateway Timeout', { status: 504 })
+        return new Response(JSON.stringify(debrief({ score: 100, complete: true, critical_findings: [], focus: [] })), { status: 200 })
+      }
+      if (path.endsWith('/debrief')) return new Response(JSON.stringify(pending), { status: 200 })
+      return new Response('[]', { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Harness initial={TRANSCRIPT} />)
+
+    const again = await screen.findByRole('button', { name: 'Grade again' })
+    expect(screen.getByText(/couldn't grade the conversation: HTTP 504/)).toBeTruthy()
+    expect(screen.queryByText(/is grading the conversation/)).toBeNull()
+    fireEvent.click(again)
+    await waitFor(() => expect(screen.getByText('100 / 100')).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Grade again' })).toBeNull()
+    expect(attempts).toBe(2)
+  })
+
+  it('stops offering when the call has no grading runs left', async () => {
+    serve({
+      'GET /sessions/s-test/debrief': () =>
+        debrief({ judge: { status: 'failed', name: 'claude:test', prompt_version: null, graded_at: null, error: 'overloaded', runs_left: 0 } }),
+    })
+    render(<Harness initial={TRANSCRIPT} />)
+
+    await waitFor(() => expect(screen.getByText(/no grading runs left/)).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Grade again' })).toBeNull()
+  })
+
   it('says so when no judge is configured', async () => {
-    serve({ 'GET /sessions/s-test/debrief': () => debrief({ judge: { status: 'off', name: null, prompt_version: null, graded_at: null, error: null } }) })
+    serve({ 'GET /sessions/s-test/debrief': () => debrief({ judge: { status: 'off', name: null, prompt_version: null, graded_at: null, error: null, runs_left: 5 } }) })
     render(<Harness initial={TRANSCRIPT} />)
 
     await waitFor(() => expect(screen.getByText(/No AI judge is configured/)).toBeTruthy())

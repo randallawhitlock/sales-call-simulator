@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS grades (
     session_id TEXT PRIMARY KEY,
     data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS judge_runs (
+    session_id TEXT PRIMARY KEY,
+    n INTEGER NOT NULL
+);
 """
 
 
@@ -155,6 +159,22 @@ class Store:
                 "SELECT data FROM grades WHERE session_id = ?", (session_id,)
             ).fetchone()
         return None if found is None else GradeRow.model_validate_json(found[0])
+
+    def judge_runs(self, session_id: str) -> int:
+        """How many times the judge has been asked to grade this call, failures included."""
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT n FROM judge_runs WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return 0 if found is None else int(found[0])
+
+    def count_judge_run(self, session_id: str) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO judge_runs (session_id, n) VALUES (?, 1) "
+                "ON CONFLICT(session_id) DO UPDATE SET n = n + 1",
+                (session_id,),
+            )
 
     # Events
 

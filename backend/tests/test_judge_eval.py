@@ -19,8 +19,8 @@ from pydantic import BaseModel, ConfigDict
 
 from app.content.common import Evaluation
 from app.content.loader import load_bundle
-from app.engine.events import Channel, Speaker, Utterance
-from app.engine.grading import verify_quote
+from app.engine.events import Channel, Speaker, Utterance, normalize_for_quote
+from app.engine.grading import MIN_PASS_QUOTE_WORDS, verify_quote
 from app.engine.records import NotesSection
 from app.judge.judges import judge_from_env
 from app.judge.models import NOTES, JudgedStatus, JudgeOutput, Quote
@@ -124,6 +124,8 @@ def test_labels_name_judged_criteria_and_their_quotes_verify(eval_id: str) -> No
         assert criterion_id in JUDGED, f"{criterion_id} is not a judged or hybrid criterion"
         if label.status is JudgedStatus.PASS:
             assert label.line is not None and label.quote, f"{criterion_id}: a pass needs a quote"
+            words = len(normalize_for_quote(label.quote).split())
+            assert words >= MIN_PASS_QUOTE_WORDS, f"{criterion_id}: quote at least three words"
         if label.line is None:
             continue
         assert label.quote

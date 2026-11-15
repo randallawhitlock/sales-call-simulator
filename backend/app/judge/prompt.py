@@ -17,7 +17,7 @@ from app.engine.events import Utterance
 from app.engine.records import NotesSection
 from app.judge.models import NOTES
 
-JUDGE_PROMPT_VERSION = "judge-1"
+JUDGE_PROMPT_VERSION = "judge-2"
 
 SYSTEM = f"""You grade a practice phone call from a Medicare sales training simulator. A \
 learner played a licensed agent and an AI played a synthetic beneficiary. Every carrier, plan, \
@@ -31,8 +31,9 @@ the criterion cannot apply to this call, and say why.
 what would have been better.
 - evidence: the lines that show it. Each item gives a utt_id and a quote copied word for word \
 from that line: a short run of whole words, at most 25. Use utt_id "{NOTES}" to quote the \
-saved notes. A pass needs at least one quote. A fail should quote the wrong statement when \
-there is one.
+saved notes. A pass needs at least one quote of three or more words from the learner's own \
+lines, or from the notes: what the customer said can support a pass but can't carry it. A \
+fail should quote the wrong statement when there is one.
 
 The server looks for every quote in the line it cites. A quote that isn't there sends the \
 criterion to human review, so never paraphrase inside a quote or join words from two lines.
@@ -49,8 +50,9 @@ Coverage claims: list every learner statement that a specific doctor or office, 
 pharmacy is covered or in network, or is not, on a specific plan. Use the ids from the \
 reference lists. kind is provider_network for a doctor or office, formulary for a drug, and \
 pharmacy_network for a pharmacy; covered is false when the learner said it is not covered or \
-not in network. Skip statements that name no plan, or no doctor, drug or pharmacy, and \
-questions. Return an empty list if there are none."""
+not in network. Quote the words that make the claim, including "in network", "covered" or \
+"not". Skip statements that name no plan, or no doctor, drug or pharmacy, and questions. \
+Return an empty list if there are none."""
 
 
 @dataclass(frozen=True)
@@ -175,7 +177,7 @@ def _notes(notes: NotesSection | None) -> str:
     if notes is None:
         return f'## Saved notes (quote with utt_id "{NOTES}")\n(none saved)'
     fields = notes.model_dump()
-    body = "\n".join(f"{k.replace('_', ' ')}: {v}" for k, v in fields.items() if v)
+    body = "\n".join(f"{k.replace('_', ' ')}: {_one_line(v)}" for k, v in fields.items() if v)
     return f'## Saved notes (quote with utt_id "{NOTES}")\n' + (body or "(empty)")
 
 
@@ -209,10 +211,16 @@ def _transcript(utterances: list[Utterance]) -> str:
         if not u.delivered:
             continue
         cut = " (cut off)" if u.interrupted else ""
-        lines.append(f"[{u.utt_id}] {u.speaker.value.upper()}{cut}: {u.heard_text}")
+        lines.append(f"[{u.utt_id}] {u.speaker.value.upper()}{cut}: {_one_line(u.heard_text)}")
     if len(lines) == 1:
         lines.append("(nothing was said)")
     return "\n".join(lines)
+
+
+def _one_line(text: str) -> str:
+    """Typed text on one line. A line break inside a learner's message would otherwise read
+    to the judge as a new transcript line, with whatever speaker label the learner typed."""
+    return " ".join(text.split())
 
 
 def _practice(catalog: Catalog, practice_id: str) -> str:

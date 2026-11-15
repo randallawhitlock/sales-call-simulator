@@ -7,18 +7,24 @@ Pure: the same log and the same stored judge output always give the same debrief
 - A hybrid criterion needs both halves: a code fail or a judge fail fails it, and an
   ungraded half leaves it ungraded. Only code can make a finding critical; a model's judgment
   alone never does.
+- A pass also needs a quote of at least three words from the learner's own lines or the
+  notes. A customer line or a stray word can support a grade but can't carry one.
 - ``coverage_claims_backed`` is decided by code from the claims the judge found: each claim
-  needs an earlier lookup that showed what the learner said.
+  needs an earlier lookup that showed what the learner said. An unbacked claim only fails,
+  critically, when code can confirm the claim from the cited line itself: the quote says
+  covered or not, the line names the plan and the doctor, drug or pharmacy, and no lookup
+  backs any reading of the line. Anything the judge had to infer goes to review instead.
 - Not-applicable, ungraded and review-required criteria leave the denominator. Any ungraded
   or review-required criterion makes the call incomplete, never failed.
 """
 
+import re
 from datetime import date
 from enum import StrEnum
 
 from pydantic import BaseModel
 
-from app.content.catalog import Catalog
+from app.content.catalog import Catalog, Drug, Practice
 from app.content.common import Authority, CheckId, Evaluation
 from app.content.rubric import DIMENSION_WEIGHTS, Dimension, Rubric, RubricCriterion
 from app.content.rules import RuleSet, RuleStatus
@@ -31,12 +37,20 @@ from app.engine.checks import (
     claim_backed,
     run_checks,
 )
-from app.engine.events import Event, Speaker, Utterance, quote_in_text
+from app.engine.events import (
+    Event,
+    Speaker,
+    Utterance,
+    normalize_for_quote,
+    quote_in_text,
+)
 from app.judge.models import NOTES, ClaimOut, JudgedCriterion, JudgedStatus, JudgeOutput, Quote
 from app.judge.prompt import notes_text
 
 FOCUS_SIZE = 3
 """How many missed criteria a targeted retry asks the learner to work on."""
+MIN_PASS_QUOTE_WORDS = 3
+"""A pass needs one verified quote this long from the learner's lines or the notes."""
 
 
 class GradeStatus(StrEnum):
@@ -295,13 +309,22 @@ def _judged(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, str, list[E
     if problems:
         why = "; ".join(problems)
         return GradeStatus.REVIEW_REQUIRED, f"{rationale} Needs review: {why}.".strip(), evidence
-    if j.status is JudgedStatus.PASS and not evidence:
-        return (
-            GradeStatus.REVIEW_REQUIRED,
-            f"{rationale} Needs review: the judge passed this without quoting a line.".strip(),
-            evidence,
+    if j.status is JudgedStatus.PASS and not any(_carries_a_pass(e) for e in evidence):
+        why = (
+            f"a pass needs a quote of at least {MIN_PASS_QUOTE_WORDS} words from your own "
+            "lines or the notes"
+            if evidence
+            else "the judge passed this without quoting a line"
         )
+        return GradeStatus.REVIEW_REQUIRED, f"{rationale} Needs review: {why}.".strip(), evidence
     return _FROM_JUDGE[j.status], rationale, evidence
+
+
+def _carries_a_pass(e: EvidenceView) -> bool:
+    """A quote that can carry a pass: verified, in the learner's own words (a line of theirs
+    or the notes), and long enough to say something."""
+    own = e.utt_id == NOTES or e.speaker is Speaker.LEARNER
+    return e.verified and own and len(normalize_for_quote(e.quote).split()) >= MIN_PASS_QUOTE_WORDS
 
 
 def verify_quote(q: Quote, utterances: dict[str, Utterance], notes: str) -> EvidenceView:
@@ -345,28 +368,24 @@ def _claims(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, bool, str, 
     evidence: list[EvidenceView] = []
     problems: list[str] = []
     unbacked: list[str] = []
+    seen: set[tuple[object, ...]] = set()
     for claim in ctx.claims:
+        key = (claim.utt_id, claim.plan_id, claim.kind, claim.subject_id, claim.covered)
+        if key in seen:
+            continue
+        seen.add(key)
         view = verify_quote(Quote(utt_id=claim.utt_id, quote=claim.quote), ctx.utterances, "")
         problem = view.problem or _claim_problem(claim, ctx)
         if problem is None and view.speaker is not Speaker.LEARNER:
             problem = "the line isn't the learner's"
-        view = view.model_copy(update={"verified": problem is None, "problem": problem})
-        evidence.append(view)
+        if problem is None and not _backed(ctx, claim, claim.plan_id, claim.subject_id):
+            line = ctx.utterances[claim.utt_id].heard_text
+            problem = _unconfirmed(claim, line, ctx)
+            if problem is None:
+                unbacked.append(_describe_claim(claim, ctx.catalog))
+        evidence.append(view.model_copy(update={"verified": problem is None, "problem": problem}))
         if problem is not None:
             problems.append(f"{claim.utt_id}: {problem}")
-            continue
-        backed = claim_backed(
-            ctx.facts,
-            CoverageClaim(
-                utt_id=claim.utt_id,
-                plan_id=claim.plan_id,
-                kind=claim.kind,
-                subject_id=claim.subject_id,
-                covered=claim.covered,
-            ),
-        )
-        if not backed:
-            unbacked.append(_describe_claim(claim, ctx.catalog))
     if unbacked:
         detail = (
             "Said before any lookup showed it: " + "; ".join(unbacked) + "."
@@ -384,6 +403,19 @@ def _claims(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, bool, str, 
     return GradeStatus.PASS, False, detail, evidence
 
 
+def _backed(ctx: _Context, claim: ClaimOut, plan_id: str, subject_id: str) -> bool:
+    return claim_backed(
+        ctx.facts,
+        CoverageClaim(
+            utt_id=claim.utt_id,
+            plan_id=plan_id,
+            kind=claim.kind,
+            subject_id=subject_id,
+            covered=claim.covered,
+        ),
+    )
+
+
 def _claim_problem(claim: ClaimOut, ctx: _Context) -> str | None:
     catalog = ctx.catalog
     try:
@@ -399,6 +431,134 @@ def _claim_problem(claim: ClaimOut, ctx: _Context) -> str | None:
         lookup(claim.subject_id)
     except KeyError:
         return f"unknown {claim.kind.replace('_', ' ')} subject {claim.subject_id}"
+    return None
+
+
+# An unbacked claim is a critical finding, so code has to be able to confirm it from the line.
+# The judge's plan, subject and polarity tags are its reading; these checks read the line.
+
+_COVERED = (
+    r"in[- ]network|covered|covers|accepts?|takes|"
+    r"on (?:its|the|their|that) (?:drug list|formulary)"
+)
+_NOT_COVERED = re.compile(
+    rf"(?<!\w)(?:not|never|no longer|\w+n't)\s+(?:\w+\s+){{0,3}}?(?:{_COVERED})"
+    r"|out[- ]of[- ]network|non-formulary|excluded"
+)
+_IS_COVERED = re.compile(rf"(?<!\w)(?:{_COVERED})(?!\w)")
+_GENERIC_PLACE_WORDS = {"office", "the", "and", "of"}
+_PHARMACY_WORDS = {"pharmacy", "rx", "drug", "drugs"}
+
+
+def said_covered(quote: str) -> bool | None:
+    """What the quoted words say: covered or in network (True), not (False), or neither."""
+    text = normalize_for_quote(quote)
+    if _NOT_COVERED.search(text):
+        return False
+    if _IS_COVERED.search(text):
+        return True
+    return None
+
+
+def plans_named(line: str, catalog: Catalog) -> list[str]:
+    """Plans the line names, with or without the HMO or PPO on the end."""
+    named = []
+    for plan in catalog.plans:
+        short = plan.name.rsplit(" ", 1)[0]
+        if quote_in_text(plan.name, line) or quote_in_text(short, line):
+            named.append(plan.plan_id)
+    return named
+
+
+def subjects_named(kind: str, line: str, catalog: Catalog) -> list[str]:
+    """Every doctor's office, drug or pharmacy the line could mean. "Dr. Raman" means every
+    Raman at every office until the line says which; "atorvastatin" means every strength
+    until it gives one."""
+    if kind == "provider_network":
+        return _practices_named(line, catalog)
+    if kind == "formulary":
+        return _drugs_named(line, catalog)
+    named = []
+    for pharmacy in catalog.pharmacies:
+        words = pharmacy.name.split()
+        stop = next((i for i, w in enumerate(words) if w.casefold() in _PHARMACY_WORDS), None)
+        stem = " ".join(words[:stop]) or pharmacy.name
+        if quote_in_text(stem, line):
+            named.append(pharmacy.pharmacy_id)
+    return named
+
+
+def _practices_named(line: str, catalog: Catalog) -> list[str]:
+    by_surname: dict[str, list[Practice]] = {}
+    for practice in catalog.practices:
+        surname = catalog.provider(practice.provider_id).name.split()[-1]
+        if quote_in_text(surname, line):
+            by_surname.setdefault(surname, []).append(practice)
+    named: list[str] = []
+    for group in by_surname.values():
+        first_names = [
+            p for p in group if quote_in_text(catalog.provider(p.provider_id).name.split()[0], line)
+        ]
+        group = first_names or group
+        # Each word of an office name the line uses narrows the reading to the offices with it.
+        place_words: dict[str, set[str]] = {}
+        for practice in group:
+            name = catalog.location(practice.location_id).name
+            for word in normalize_for_quote(name).replace(",", " ").split():
+                if word not in _GENERIC_PLACE_WORDS:
+                    place_words.setdefault(word, set()).add(practice.practice_id)
+        keep = {p.practice_id for p in group}
+        for word, ids in place_words.items():
+            if quote_in_text(word, line) and keep & ids:
+                keep &= ids
+        named += [p.practice_id for p in group if p.practice_id in keep]
+    return named
+
+
+def _drugs_named(line: str, catalog: Catalog) -> list[str]:
+    text = normalize_for_quote(line)
+
+    def strength_given(strength: str) -> bool:
+        number = re.escape(strength.split()[0])
+        unit = r"\s*(?:mg|mcg|milligrams?|micrograms?)(?!\w)"
+        return re.search(rf"(?<![\w.]){number}{unit}", text) is not None
+
+    by_name: dict[str, list[Drug]] = {}
+    for drug in catalog.drugs:
+        if quote_in_text(drug.name.split()[0], line):
+            by_name.setdefault(drug.name, []).append(drug)
+    named: list[str] = []
+    for group in by_name.values():
+        with_strength = [d for d in group if strength_given(d.strength)]
+        named += [d.drug_id for d in (with_strength or group)]
+    return named
+
+
+def _unconfirmed(claim: ClaimOut, line: str, ctx: _Context) -> str | None:
+    """Why code can't confirm an unbacked claim from the cited line, or None if it can: the
+    claim is then a real miss, whichever way the judge tagged it."""
+    if said_covered(claim.quote) is not claim.covered:
+        what = "is covered" if claim.covered else "isn't covered"
+        return f"the quote doesn't say it {what}"
+    plans = plans_named(line, ctx.catalog)
+    if claim.plan_id not in plans:
+        return f"the line doesn't name {ctx.catalog.plan(claim.plan_id).name}"
+    subjects = subjects_named(claim.kind, line, ctx.catalog)
+    if claim.subject_id not in subjects:
+        return (
+            "the line doesn't name the "
+            + {
+                "provider_network": "doctor and office",
+                "formulary": "drug",
+                "pharmacy_network": "pharmacy",
+            }[claim.kind]
+        )
+    for plan_id in plans:
+        for subject_id in subjects:
+            if _backed(ctx, claim, plan_id, subject_id):
+                other = claim.model_copy(update={"plan_id": plan_id, "subject_id": subject_id})
+                meant = _describe_claim(other, ctx.catalog)
+                return f"the line could mean {meant}, which was looked up"
     return None
 
 

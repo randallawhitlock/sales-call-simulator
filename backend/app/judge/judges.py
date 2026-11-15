@@ -10,12 +10,15 @@ Configuration:
   set, else ``off``.
 - ``SIM_JUDGE_MODEL``: the Claude model id (default ``claude-opus-5-5``). Every stored grade
   records the model that produced it.
-- ``SIM_JUDGE_TIMEOUT_S``: how long one grading run may take (default 180).
+- ``SIM_JUDGE_TIMEOUT_S``: how long one grading run may take in all, a retry included
+  (default 180).
 """
 
 import json
 import math
 import os
+import time
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -32,6 +35,10 @@ DEFAULT_TIMEOUT_S = 180.0
 MIN_TIMEOUT_S = 1.0
 MAX_TIMEOUT_S = 900.0
 MAX_TOKENS = 16000
+MAX_ATTEMPTS = 2
+RETRY_WAIT_S = 2.0
+MIN_RETRY_S = 20.0
+"""A retry isn't started with less than this left of the run's time."""
 
 
 class JudgeError(Exception):
@@ -53,12 +60,23 @@ class Judge(Protocol):
 
 
 class ClaudeJudge:
-    def __init__(self, *, model: str, api_key: str, timeout_s: float, client: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        api_key: str,
+        timeout_s: float,
+        client: Any = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.model = model
+        self.timeout_s = timeout_s
+        self._sleep = sleep
         if client is None:
             import anthropic
 
-            client = anthropic.Anthropic(api_key=api_key, timeout=timeout_s, max_retries=2)
+            # Retries happen here, inside one deadline, not in the SDK on top of it.
+            client = anthropic.Anthropic(api_key=api_key, timeout=timeout_s, max_retries=0)
         self._client = client
 
     @property
@@ -66,16 +84,7 @@ class ClaudeJudge:
         return f"claude:{self.model}"
 
     def grade(self, prompt: JudgePrompt) -> JudgeOutput:
-        try:
-            message = self._client.messages.create(
-                model=self.model,
-                max_tokens=MAX_TOKENS,
-                system=prompt.system,
-                messages=[{"role": "user", "content": prompt.user}],
-                output_config={"format": {"type": "json_schema", "schema": output_schema()}},
-            )
-        except Exception as exc:  # the SDK's errors, timeouts and transport failures alike
-            raise JudgeError(f"{self.name} failed: {exc}") from exc
+        message = self._ask(prompt)
         if getattr(message, "stop_reason", None) == "max_tokens":
             raise JudgeError(f"{self.name} ran out of output tokens")
         text = "".join(
@@ -87,6 +96,36 @@ class ClaudeJudge:
             return JudgeOutput.model_validate(json.loads(text))
         except (json.JSONDecodeError, ValidationError) as exc:
             raise JudgeError(f"{self.name} returned output that isn't a grade: {exc}") from exc
+
+    def _ask(self, prompt: JudgePrompt) -> Any:
+        """One request, retried once on a rate limit, an overload or a dropped connection.
+        The whole run, wait and retry included, fits in ``timeout_s``."""
+        deadline = time.monotonic() + self.timeout_s
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                return self._client.messages.create(
+                    model=self.model,
+                    max_tokens=MAX_TOKENS,
+                    system=prompt.system,
+                    messages=[{"role": "user", "content": prompt.user}],
+                    output_config={"format": {"type": "json_schema", "schema": output_schema()}},
+                    timeout=max(deadline - time.monotonic(), 1.0),
+                )
+            except Exception as exc:  # the SDK's errors, timeouts and transport failures alike
+                left = deadline - time.monotonic() - RETRY_WAIT_S
+                if attempt == MAX_ATTEMPTS or not _worth_retrying(exc) or left < MIN_RETRY_S:
+                    raise JudgeError(f"{self.name} failed: {exc}") from exc
+                self._sleep(RETRY_WAIT_S)
+        raise AssertionError("unreachable")
+
+
+def _worth_retrying(exc: Exception) -> bool:
+    """Rate limits, overloads and server errors by status; a dropped connection by name. A
+    timeout isn't: the run's time is spent."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status == 429 or status >= 500
+    return type(exc).__name__ == "APIConnectionError"
 
 
 def judge_from_env(env: dict[str, str] | None = None) -> Judge | None:

@@ -478,6 +478,8 @@ export interface JudgeInfo {
   prompt_version: string | null
   graded_at: string | null
   error: string | null
+  /** Judge runs this call may still use. */
+  runs_left: number
 }
 
 export interface Debrief {

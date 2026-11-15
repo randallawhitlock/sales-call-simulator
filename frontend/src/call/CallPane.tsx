@@ -216,6 +216,7 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
           placeholder={onHold ? `${customer} is on hold` : `Say something to ${customer}… (Enter to send)`}
           disabled={!live || waiting || onHold}
           rows={3}
+          maxLength={4000}
           aria-label="Your line"
         />
         <button type="submit" className="primary" disabled={!live || waiting || onHold || !draft.trim()}>

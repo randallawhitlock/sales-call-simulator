@@ -49,10 +49,80 @@ def message(text: str, stop_reason: str = "end_turn") -> Any:
     )
 
 
-def judge_with(reply: Any) -> tuple[ClaudeJudge, FakeMessages]:
+def judge_with(reply: Any, timeout_s: float = 120) -> tuple[ClaudeJudge, FakeMessages]:
     messages = FakeMessages(reply)
     client = SimpleNamespace(messages=messages)
-    return ClaudeJudge(model="m-1", api_key="k", timeout_s=5, client=client), messages
+    judge = ClaudeJudge(
+        model="m-1", api_key="k", timeout_s=timeout_s, client=client, sleep=lambda s: None
+    )
+    return judge, messages
+
+
+class Flaky(FakeMessages):
+    """Fails with each error in turn, then answers."""
+
+    def __init__(self, errors: list[Exception], reply: Any) -> None:
+        super().__init__(reply)
+        self.errors = errors
+        self.timeouts: list[float] = []
+
+    def create(self, **kwargs: Any) -> Any:
+        self.timeouts.append(kwargs["timeout"])
+        if self.errors:
+            raise self.errors.pop(0)
+        return super().create(**kwargs)
+
+
+class ApiStatus(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+
+
+class APIConnectionError(Exception):
+    pass
+
+
+class APITimeoutError(Exception):
+    pass
+
+
+def flaky_judge(errors: list[Exception], timeout_s: float = 120) -> tuple[ClaudeJudge, Flaky]:
+    messages = Flaky(errors, message(json.dumps(GRADE)))
+    judge = ClaudeJudge(
+        model="m-1",
+        api_key="k",
+        timeout_s=timeout_s,
+        client=SimpleNamespace(messages=messages),
+        sleep=lambda s: None,
+    )
+    return judge, messages
+
+
+@pytest.mark.parametrize("error", [ApiStatus(429), ApiStatus(529), APIConnectionError("reset")])
+def test_one_retry_inside_the_deadline(error: Exception) -> None:
+    judge, messages = flaky_judge([error])
+    assert judge.grade(PROMPT) == JudgeOutput.model_validate(GRADE)
+    assert len(messages.timeouts) == 2
+    assert all(0 < t <= 120 for t in messages.timeouts)  # each try gets only what's left
+
+
+@pytest.mark.parametrize(
+    ("errors", "timeout_s", "tries"),
+    [
+        ([ApiStatus(529), ApiStatus(529)], 120, 2),  # one retry, not more
+        ([ApiStatus(400)], 120, 1),  # our request is wrong; asking again won't help
+        ([APITimeoutError("timed out")], 120, 1),  # the run's time is spent
+        ([ApiStatus(529)], 15, 1),  # too little time left to start again
+    ],
+)
+def test_no_retry_when_it_cannot_help(
+    errors: list[Exception], timeout_s: float, tries: int
+) -> None:
+    judge, messages = flaky_judge(errors, timeout_s)
+    with pytest.raises(JudgeError):
+        judge.grade(PROMPT)
+    assert len(messages.timeouts) == tries
 
 
 def test_a_grade_is_parsed_from_structured_output() -> None:
@@ -63,6 +133,7 @@ def test_a_grade_is_parsed_from_structured_output() -> None:
     assert messages.kwargs["model"] == "m-1"
     assert messages.kwargs["system"] == "sys"
     assert messages.kwargs["messages"] == [{"role": "user", "content": "user"}]
+    assert 0 < messages.kwargs["timeout"] <= 120
     fmt = messages.kwargs["output_config"]["format"]
     assert fmt == {"type": "json_schema", "schema": output_schema()}
 
