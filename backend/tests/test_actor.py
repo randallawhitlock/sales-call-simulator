@@ -31,7 +31,7 @@ from app.actor.prompt import (
 from app.content.loader import load_bundle
 from app.content.scenario import Reveal
 from app.engine.events import EventType, Speaker
-from app.engine.session import TurnIn
+from app.engine.session import ActorUnavailable, TurnIn
 from tests.harness import Call
 
 BUNDLE = load_bundle()
@@ -613,8 +613,10 @@ def test_a_thread_that_cannot_start_gives_its_slot_back(
 
     with monkeypatch.context() as m:
         m.setattr("app.engine.session.threading.Thread", NoThreads)
-        with pytest.raises(RuntimeError, match="can't start"):
+        with pytest.raises(ActorUnavailable, match="couldn't be started") as failed:
             service.take_turn(call.sid, TurnIn(client_utt_id="turn-nothread-1", text="Hello?"))
+    assert isinstance(failed.value.__cause__, RuntimeError)
+    assert service.turn_pending(call.sid) is False
     assert service._actor_slots.acquire(blocking=False)
     service._actor_slots.release()
     retry = service.take_turn(call.sid, TurnIn(client_utt_id="turn-nothread-1", text="Hello?"))

@@ -69,6 +69,33 @@ def test_quote_matches_whole_words_only() -> None:
     assert u.contains_quote("“I KNOW that!”")
 
 
+@pytest.mark.parametrize(
+    "heard",
+    [
+        "I can't enroll you today.",
+        "I can’t enroll you today.",
+        "I can`t enroll you today.",
+        "I can´t enroll you today.",
+        "I can′t enroll you today.",
+    ],
+)
+def test_quote_cannot_drop_a_negation(heard: str) -> None:
+    u = utterance(heard)
+    assert not u.contains_quote("I can")
+    assert not u.contains_quote("can")
+    assert u.contains_quote("I can't enroll you")
+    assert u.contains_quote("I can’t")
+    assert not u.contains_quote("t enroll you")
+
+
+def test_quote_can_stop_before_a_possessive() -> None:
+    u = utterance("Dr. Raman's office is in network, isn't it?")
+    assert u.contains_quote("Dr. Raman")
+    assert u.contains_quote("Dr. Raman's office")
+    assert not u.contains_quote("isn")
+    assert not u.contains_quote("s office")
+
+
 def test_cut_off_speech_does_not_count() -> None:
     cut = utterance("Yes, go", interrupted=True)
     assert cut.delivered

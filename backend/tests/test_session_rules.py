@@ -369,3 +369,12 @@ def test_a_failed_commit_rolls_back_and_the_next_transaction_works(tmp_path: Pat
     assert not real.in_transaction
     with store.transaction() as conn:
         conn.execute("SELECT 1")
+
+
+def test_an_error_survives_when_sqlite_already_ended_the_transaction(tmp_path: Path) -> None:
+    store = Store(str(tmp_path / "ended.db"))
+    with pytest.raises(ValueError, match="the real error"), store.transaction() as conn:
+        conn.execute("ROLLBACK")  # what SQLite does by itself on a full disk or an I/O error
+        raise ValueError("the real error")
+    with store.transaction() as conn:
+        conn.execute("SELECT 1")

@@ -96,24 +96,35 @@ class Utterance(_Frozen):
     def contains_quote(self, quote: str) -> bool:
         """Whether a judge's quote really appears in what was heard.
 
-        Matching ignores case, whitespace runs, curly versus straight quotes and surrounding
-        punctuation, and nothing else. The quote must match whole words, so "I can" does not
-        match "I cannot". A paraphrase does not match.
+        Matching ignores case, whitespace runs, the different apostrophe and quote marks and
+        surrounding punctuation, and nothing else. The quote must match whole words, so "I can"
+        does not match "I cannot", and it can't stop just before "n't", so it doesn't match
+        "I can't" either. It can't start just after an apostrophe either, so "t enroll" is not
+        in "can't enroll". A possessive still matches: "Dr. Raman" is in "Dr. Raman's office".
+        A paraphrase does not match.
+
+        This checks the words, not the meaning: a quote that starts after a negation, like
+        "enroll you today" from "I can't enroll you today", still matches.
         """
         needle = normalize_for_quote(quote)
         if not needle:
             return False
         haystack = normalize_for_quote(self.heard_text)
-        return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
+        pattern = rf"(?<!\w)(?<!\w'){re.escape(needle)}(?!\w|'t(?!\w))"
+        return re.search(pattern, haystack) is not None
 
 
-_QUOTE_MAP = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+# Typed and transcribed text uses many marks for an apostrophe; they all become "'".
+_QUOTE_MAP = str.maketrans(
+    {"‘": "'", "’": "'", "‛": "'", "`": "'", "´": "'", "′": "'", "“": '"', "”": '"'}
+)
 _SPACE = re.compile(r"\s+")
 _EDGE_PUNCT = " \t\n.,;:!?\"'()[]-–—…"
 
 
 def normalize_for_quote(text: str) -> str:
-    folded = unicodedata.normalize("NFKC", text).translate(_QUOTE_MAP).casefold()
+    # Map the marks first: NFKC turns "´" into a space and a combining accent.
+    folded = unicodedata.normalize("NFKC", text.translate(_QUOTE_MAP)).casefold()
     return _SPACE.sub(" ", folded).strip(_EDGE_PUNCT)
 
 
