@@ -1,0 +1,207 @@
+{
+  "eval_id": "b-keep",
+  "scenario_id": "scenario-102",
+  "description": "The ad promised money, handled well: corrects the ad, finds the current plan still fits, customer keeps it.",
+  "notes": {
+    "reason_for_inquiry": "Saw a TV ad about a $150/month grocery allowance.",
+    "findings": "Only Summit Rewards HMO has a $150/month allowance; it needs diabetes, CHF or COPD plus care management. He has none of these.",
+    "options_discussed": "Keep Riverbend Essentials HMO; Maple Value HMO ($50/quarter OTC, specialist $35).",
+    "rationale": "Current plan keeps Dr. Okafor and covers his drugs at a $0 premium; the ad benefit doesn't apply to him.",
+    "next_steps": "Keeping his current plan. No change."
+  },
+  "lines": [
+    {
+      "speaker": "learner",
+      "text": "Thanks for calling Larkspur Benefits Group, this is Sam. This call is recorded."
+    },
+    {
+      "speaker": "customer",
+      "text": "I saw a TV ad that said everybody with Medicare can get $150 a month for groceries. I want that."
+    },
+    {
+      "speaker": "learner",
+      "text": "I can look into that with you. Before we go further: we do not offer every plan available in your area. Currently we represent 3 organizations which offer 6 products in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options."
+    },
+    {
+      "speaker": "learner",
+      "text": "Are you looking to talk about Medicare Advantage plans today, or other kinds of coverage too?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Medicare Advantage. The grocery thing."
+    },
+    {
+      "speaker": "learner",
+      "text": "First, what plan do you have now, and do you have any other insurance, like from a former employer or the VA?"
+    },
+    {
+      "speaker": "customer",
+      "text": "I'm on Riverbend Essentials HMO. Honestly, it's been fine. No other insurance."
+    },
+    {
+      "speaker": "learner",
+      "text": "Which doctors do you see, and is there anyone you'd want to keep? Which office do you go to?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Dr. Samuel Okafor at Cedar Street Family Medicine in Millbrook. Twelve years. I'm not changing doctors."
+    },
+    {
+      "speaker": "learner",
+      "text": "And your prescriptions, with the strength and how often you take each?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Lisinopril 20 milligrams, rosuvastatin 10 milligrams, amlodipine 5 milligrams. Three months at a time."
+    },
+    {
+      "speaker": "learner",
+      "text": "Once a day each? And which pharmacy fills them?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Once a day. Cedar Street Pharmacy, next door to Dr. Okafor."
+    },
+    {
+      "speaker": "learner",
+      "text": "Any conditions you're treated for, like diabetes, heart failure or COPD?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Just blood pressure and cholesterol."
+    },
+    {
+      "speaker": "learner",
+      "text": "Here's the straight story on that ad. The only plan near you with a $150 monthly allowance is Summit Rewards HMO, and it's only for members with diabetes, chronic heart failure or COPD who join a care-management program. With blood pressure and cholesterol, you wouldn't get it."
+    },
+    {
+      "speaker": "customer",
+      "text": "So the ad was baloney."
+    },
+    {
+      "speaker": "learner",
+      "text": "It's real for some people, just not for everybody the way the ad made it sound. Your Riverbend Essentials HMO still has Dr. Okafor in network for 2027, and lisinopril, rosuvastatin and amlodipine are all covered. It has a $0 premium, and you keep paying your Part B premium either way."
+    },
+    {
+      "speaker": "learner",
+      "text": "Maple Value HMO also has a $0 premium and adds a $50 a quarter over-the-counter allowance. Dr. Okafor is in that network too. You'd give up a plan you know works, and your specialist copay would go from $30 to $35."
+    },
+    {
+      "speaker": "customer",
+      "text": "Eh. I'd rather keep what I've got."
+    },
+    {
+      "speaker": "learner",
+      "text": "That's completely your decision, and keeping your plan fits what you told me. If you change your mind, the Annual Election Period runs through December 7, and any change would start January 1, 2027."
+    },
+    {
+      "speaker": "customer",
+      "text": "Good. Thanks for being straight with me."
+    }
+  ],
+  "labels": {
+    "disc-doctors": {
+      "status": "pass",
+      "line": 8,
+      "quote": "is there anyone you'd want to keep"
+    },
+    "disc-drugs": {
+      "status": "pass",
+      "line": 10,
+      "quote": "with the strength and how often you take each"
+    },
+    "disc-pharmacy": {
+      "status": "pass",
+      "line": 12,
+      "quote": "which pharmacy fills them"
+    },
+    "disc-coverage": {
+      "status": "pass",
+      "line": 6,
+      "quote": "do you have any other insurance"
+    },
+    "disc-health-needs": {
+      "status": "pass",
+      "line": 14,
+      "quote": "Any conditions you're treated for"
+    },
+    "elig-scope": {
+      "status": "pass",
+      "line": 4,
+      "quote": "Are you looking to talk about Medicare Advantage plans today"
+    },
+    "elig-disclaimer": {
+      "status": "pass",
+      "line": 3,
+      "quote": "we do not offer every plan available in your area"
+    },
+    "elig-timing": {
+      "status": "pass",
+      "line": 21,
+      "quote": "the Annual Election Period runs through December 7"
+    },
+    "rec-tradeoffs": {
+      "status": "pass",
+      "line": 19,
+      "quote": "your specialist copay would go from $30 to $35"
+    },
+    "rec-service-costs": {
+      "status": "pass",
+      "line": 19,
+      "quote": "your specialist copay would go from $30 to $35"
+    },
+    "rec-premiums": {
+      "status": "pass",
+      "line": 18,
+      "quote": "you keep paying your Part B premium either way"
+    },
+    "rec-benefits": {
+      "status": "pass",
+      "line": 16,
+      "quote": "only for members with diabetes, chronic heart failure or COPD"
+    },
+    "rec-needs-based": {
+      "status": "pass",
+      "line": 21,
+      "quote": "keeping your plan fits what you told me"
+    },
+    "com-choice": {
+      "status": "pass",
+      "line": 21,
+      "quote": "That's completely your decision"
+    },
+    "com-misconceptions": {
+      "status": "pass",
+      "line": 16,
+      "quote": "Here's the straight story on that ad"
+    },
+    "comp-notes": {
+      "status": "pass",
+      "line": "notes",
+      "quote": "ad benefit doesn't apply to him"
+    }
+  },
+  "claims": [
+    {
+      "line": 18,
+      "plan_id": "TRN-2002-001",
+      "kind": "provider_network",
+      "subject_id": "okafor-cedar",
+      "covered": true
+    },
+    {
+      "line": 18,
+      "plan_id": "TRN-2002-001",
+      "kind": "formulary",
+      "subject_id": "lisinopril-20mg-tab",
+      "covered": true
+    },
+    {
+      "line": 19,
+      "plan_id": "TRN-1001-001",
+      "kind": "provider_network",
+      "subject_id": "okafor-cedar",
+      "covered": true
+    }
+  ]
+}

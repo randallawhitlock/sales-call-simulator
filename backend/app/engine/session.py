@@ -165,7 +165,14 @@ class SessionService:
 
     # Lifecycle
 
-    def create(self, scenario_id: str, seed: int | None = None) -> SessionRow:
+    def create(
+        self,
+        scenario_id: str,
+        seed: int | None = None,
+        *,
+        retry_of: str | None = None,
+        focus: tuple[str, ...] = (),
+    ) -> SessionRow:
         scenario = self.content.scenarios.get(scenario_id)
         if scenario is None:
             raise NotFound(f"unknown scenario {scenario_id}")
@@ -187,6 +194,8 @@ class SessionService:
             voice=rolls.choice(scenario.persona.voices),
             status=SessionStatus.CREATED,
             created_at=self.clock(),
+            retry_of=retry_of,
+            focus=focus,
         )
         self.store.put_session(row)
         return row

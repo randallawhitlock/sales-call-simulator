@@ -1056,7 +1056,7 @@ def _plan_ids(e: Event) -> set[str]:
     return ids
 
 
-# Claims (hybrid; the judge supplies claims in M3)
+# Claims (hybrid: the judge finds them, app.engine.grading checks each with claim_backed)
 
 
 class CoverageClaim(BaseModel):

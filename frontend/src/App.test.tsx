@@ -25,6 +25,8 @@ const SESSION: Session = {
   ended_at: null,
   on_hold: false,
   turn_pending: false,
+  retry_of: null,
+  focus: [],
 }
 
 const EMPTY_RECORD: CustomerRecord = {
@@ -57,7 +59,7 @@ function serve(state: { session: Session | null; transcript: Utterance[]; down?:
       const sent = JSON.parse(String(init?.body)) as { text: string }
       return json({ learner: utt('u0001', 'learner', sent.text), customer: utt('u0002', 'customer', 'Sorry, yes.') })
     }
-    if (path === '/health') return json({ status: 'ok', version: 'test', actor: 'scripted', catalog_version: 'v' })
+    if (path === '/health') return json({ status: 'ok', version: 'test', actor: 'scripted', catalog_version: 'v', judge: 'off' })
     if (path === '/scenarios') return json([{ scenario_id: 'scenario-101', learner_title: 'Inbound call' }])
     if (path === '/sessions' && state.session) return json({ ...state.session, status: 'created' })
     if (path === '/sessions/s-1/start' && state.session) return json({ ...state.session, status: 'active' })
@@ -138,6 +140,18 @@ describe('App rejoin', () => {
     await waitFor(() => expect(screen.getByText('Choose a call')).toBeTruthy())
     expect(screen.queryByText('Incoming call')).toBeNull()
     expect(window.location.search).toBe('')
+  })
+
+  it('shows what a retry works on, before and during the call', async () => {
+    openAt('?session=s-1')
+    const focus = [{ criterion_id: 'ver-claims', title: 'Coverage claims were backed by a lookup' }]
+    serve({ session: { ...SESSION, status: 'created', retry_of: 's-0', focus }, transcript: [] })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByText(/This is a retry/)).toBeTruthy())
+    expect(screen.getByText('Coverage claims were backed by a lookup')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Answer the call' }))
+    await waitFor(() => expect(screen.getByText(/Retry. Work on: Coverage claims were backed/)).toBeTruthy())
   })
 
   it('drops the reopen error once another call has started', async () => {

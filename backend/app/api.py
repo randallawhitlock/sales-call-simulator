@@ -19,6 +19,7 @@ from app.content.scenario import CrmSeed, ElectionPeriod, Scenario
 from app.engine import research
 from app.engine.checks import CheckResult, run_checks
 from app.engine.consistency import ConsistencyFlag, check_consistency
+from app.engine.debrief import Debrief, DebriefService
 from app.engine.events import Event, EventType, Utterance, UtteranceIn
 from app.engine.records import (
     Application,
@@ -45,6 +46,14 @@ def get_service(request: Request) -> SessionService:
 Service = Annotated[SessionService, Depends(get_service)]
 
 
+def get_debriefs(request: Request) -> DebriefService:
+    debriefs: DebriefService = request.app.state.debriefs
+    return debriefs
+
+
+Debriefs = Annotated[DebriefService, Depends(get_debriefs)]
+
+
 # Views
 
 
@@ -65,6 +74,11 @@ class FrameView(BaseModel):
     products_offered: int
 
 
+class FocusItem(BaseModel):
+    criterion_id: str
+    title: str
+
+
 class SessionView(BaseModel):
     session_id: str
     scenario_id: str
@@ -79,11 +93,21 @@ class SessionView(BaseModel):
     """The customer is on hold. Live state, so a reloaded call screen shows it correctly."""
     turn_pending: bool
     """A customer reply is being generated right now."""
+    retry_of: str | None = None
+    focus: list[FocusItem] = []
+    """For a targeted retry: what to work on this time, from the earlier call's debrief."""
 
 
 class CreateSession(BaseModel):
     scenario_id: str
     seed: int | None = Field(default=None, ge=0)
+    retry_of: str | None = None
+    """An ended call of the same case to retry, working on what its debrief missed."""
+
+
+class GradeIn(BaseModel):
+    regrade: bool = False
+    """Run the judge again even if a stored grade exists."""
 
 
 class HoldIn(BaseModel):
@@ -167,6 +191,7 @@ class Findings(BaseModel):
 
 def session_view(service: SessionService, row: SessionRow) -> SessionView:
     scenario = service.content.scenario(row.scenario_id)
+    titles = {c.criterion_id: c.title for c in service.content.rubric.criteria}
     frame = service.content.frame
     return SessionView(
         session_id=row.session_id,
@@ -190,6 +215,8 @@ def session_view(service: SessionService, row: SessionRow) -> SessionView:
         ended_at=row.ended_at,
         on_hold=row.status is SessionStatus.ACTIVE and service.on_hold(row.session_id),
         turn_pending=service.turn_pending(row.session_id),
+        retry_of=row.retry_of,
+        focus=[FocusItem(criterion_id=c, title=titles[c]) for c in row.focus if c in titles],
     )
 
 
@@ -248,8 +275,12 @@ def list_scenarios(service: Service) -> list[ScenarioCard]:
 
 
 @router.post("/sessions", status_code=201)
-def create_session(body: CreateSession, service: Service) -> SessionView:
-    return session_view(service, service.create(body.scenario_id, body.seed))
+def create_session(body: CreateSession, service: Service, debriefs: Debriefs) -> SessionView:
+    focus: tuple[str, ...] = ()
+    if body.retry_of is not None:
+        focus = debriefs.retry_focus(body.scenario_id, body.retry_of)
+    row = service.create(body.scenario_id, body.seed, retry_of=body.retry_of, focus=focus)
+    return session_view(service, row)
 
 
 @router.get("/sessions/{session_id}")
@@ -644,6 +675,21 @@ def findings(session_id: str, service: Service) -> Findings:
         ruleset_version=row.ruleset_version,
         results=results,
     )
+
+
+@router.get("/sessions/{session_id}/debrief")
+def debrief(session_id: str, debriefs: Debriefs) -> Debrief:
+    """The graded call from the stored log and stored judge output. Never runs the judge."""
+    return debriefs.debrief(session_id)
+
+
+@router.post("/sessions/{session_id}/grade")
+def grade(
+    session_id: str, debriefs: Debriefs, body: Annotated[GradeIn | None, Body()] = None
+) -> Debrief:
+    """Runs the judge if this call has no stored grade yet (or on ``regrade``) and returns the
+    debrief. A judge failure still returns the debrief, with the error in ``judge.error``."""
+    return debriefs.grade(session_id, regrade=body.regrade if body else False)
 
 
 @router.get("/sessions/{session_id}/actor-qa")

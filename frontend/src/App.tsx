@@ -83,11 +83,27 @@ export function App() {
     setSessionState(s)
   }
 
+  /** A targeted retry: the new call waits on the incoming card, like any other. */
+  function openRetry(s: Session): void {
+    putSessionInUrl(s.session_id)
+    setRejoinError(null)
+    setCanRetry(false)
+    setSessionState(null)
+    setIncoming(s)
+  }
+
   if (rejoining) {
     return <main className="home muted">Rejoining the call…</main>
   }
   if (session) {
-    return <CallScreen initial={session} actor={health && health !== 'down' ? health.actor : ''} onExit={() => setSession(null)} />
+    return (
+      <CallScreen
+        initial={session}
+        actor={health && health !== 'down' ? health.actor : ''}
+        onExit={() => setSession(null)}
+        onRetry={openRetry}
+      />
+    )
   }
   return (
     <main className="home">
@@ -138,6 +154,16 @@ function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s
     return (
       <section className="incoming">
         <h2>Incoming call</h2>
+        {pending.focus.length > 0 && (
+          <div className="notice">
+            <p>This is a retry of your last call with this customer. Work on:</p>
+            <ol>
+              {pending.focus.map((f) => (
+                <li key={f.criterion_id}>{f.title}</li>
+              ))}
+            </ol>
+          </div>
+        )}
         <dl>
           <dt>Caller</dt>
           <dd>{crm.customer_name}</dd>

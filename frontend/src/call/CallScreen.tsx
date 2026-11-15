@@ -20,7 +20,18 @@ import { useLatest } from './useLatest.ts'
 
 const EMPTY_SEEN: Seen = { plans: [], providers: [], drugs: [], pharmacies: [] }
 
-export function CallScreen({ initial, actor, onExit }: { initial: Session; actor: string; onExit: () => void }) {
+export function CallScreen({
+  initial,
+  actor,
+  onExit,
+  onRetry,
+}: {
+  initial: Session
+  actor: string
+  onExit: () => void
+  /** Opens a targeted retry of this call once it has ended. */
+  onRetry?: (s: Session) => void
+}) {
   const [session, setSession] = useState(initial)
   const [transcript, setTranscriptState] = useState<Utterance[]>([])
   const [source, setSource] = useState<Utterance | null>(null)
@@ -113,8 +124,13 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
           </div>
         </header>
         <ErrorNote error={loadError} />
+        {session.focus.length > 0 && session.status !== 'ended' && (
+          <p className="notice focus-note">
+            Retry. Work on: {session.focus.map((f) => f.title).join('; ')}
+          </p>
+        )}
         {session.status === 'ended' ? (
-          <Review />
+          <Review onRetry={onRetry} />
         ) : (
           <div className="panes">
             <CallPane onSession={setSession} />
