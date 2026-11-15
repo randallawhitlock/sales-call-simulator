@@ -11,7 +11,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from app.content.loader import load_bundle
+from app.content.loader import internal_ids, load_bundle
 from tests.harness import Call
 
 BUNDLE = load_bundle()
@@ -93,6 +93,11 @@ def test_no_truth_reaches_the_learner(client: TestClient, scenario_id: str) -> N
     assert key.status_code == 200
     for secret in [*canaries, *DEFECTS]:
         assert secret in key.text
+
+
+def test_internal_ids_include_pharmacy_networks() -> None:
+    ids = internal_ids(BUNDLE.catalog)
+    assert {p.pharmacy_network_id for p in BUNDLE.catalog.plans} <= ids
 
 
 def test_session_view_hides_persona_rolls(client: TestClient) -> None:

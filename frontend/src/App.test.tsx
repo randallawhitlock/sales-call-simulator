@@ -48,7 +48,7 @@ const utt = (utt_id: string, speaker: Utterance['speaker'], text: string): Utter
 })
 
 /** A fake API. ``session`` is read on every call, so a test can change it mid-flight. */
-function serve(state: { session: Session | null; transcript: Utterance[]; down?: boolean }) {
+function serve(state: { session: Session | null; transcript: Utterance[]; down?: boolean; transcriptFails?: boolean }) {
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     const path = String(input).replace(/^\/api/, '').split('?')[0]!
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -62,7 +62,9 @@ function serve(state: { session: Session | null; transcript: Utterance[]; down?:
     if (path === '/sessions' && state.session) return json({ ...state.session, status: 'created' })
     if (path === '/sessions/s-1/start' && state.session) return json({ ...state.session, status: 'active' })
     if (path === '/sessions/s-1') return state.session ? json(state.session) : json({ detail: 'session not found' }, 404)
-    if (path.endsWith('/transcript')) return json(state.transcript)
+    if (path.endsWith('/transcript')) {
+      return state.transcriptFails ? new Response('Internal Server Error', { status: 500 }) : json(state.transcript)
+    }
     if (path.endsWith('/found')) return json({ plans: [], providers: [], drugs: [], pharmacies: [] })
     if (path.endsWith('/record')) return json(EMPTY_RECORD)
     if (path.endsWith('/applications') || path.endsWith('/evidence') || path.endsWith('/documents')) return json([])
@@ -169,6 +171,14 @@ describe('App rejoin', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     await waitFor(() => expect(screen.getByText('Hi there')).toBeTruthy())
     expect(window.location.search).toBe('?session=s-1')
+  })
+
+  it('says so when the transcript fails to load', async () => {
+    openAt('?session=s-1')
+    serve({ session: SESSION, transcript: [], transcriptFails: true })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain("Couldn't load this call: HTTP 500"))
   })
 
   it('treats an empty session in the URL as no call', async () => {

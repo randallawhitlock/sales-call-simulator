@@ -8,6 +8,8 @@ import {
   type Session,
   type Utterance,
 } from '../api.ts'
+import { ErrorNote } from '../ui.tsx'
+import { errorText } from '../util.ts'
 import { CallContext, mergeSeen, mergeTranscript, type CallContextValue, type Seen } from './context.tsx'
 import { CallPane } from './CallPane.tsx'
 import { RecordPane } from './RecordPane.tsx'
@@ -24,6 +26,7 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
   const [source, setSource] = useState<Utterance | null>(null)
   const [seen, setSeen] = useState<Seen>(EMPTY_SEEN)
   const [toast, setToast] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const base = `/sessions/${session.session_id}`
   const live = session.status === 'active'
 
@@ -43,11 +46,18 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
   )
 
   useEffect(() => {
+    const failed = (err: unknown) => setLoadError(`Couldn't load this call: ${errorText(err)}. Reload the page to try again.`)
     // Merge, don't replace: a turn sent while this load was in flight must survive it.
-    void get<Utterance[]>(`${base}/transcript`).then((t) => setTranscriptState((prev) => mergeTranscript(prev, t)))
+    void get<Utterance[]>(`${base}/transcript`)
+      .then((t) => setTranscriptState((prev) => mergeTranscript(prev, t)))
+      .catch(failed)
     // After a reload, offer again what earlier searches found, so record pickers still work.
-    void get<Seen>(`${base}/found`).then((f) => setSeen((prev) => mergeSeen(prev, f)))
-    void Promise.resolve().then(() => Promise.all([refreshRecord(), refreshApplications(), refreshEvidence()]))
+    void get<Seen>(`${base}/found`)
+      .then((f) => setSeen((prev) => mergeSeen(prev, f)))
+      .catch(failed)
+    void Promise.resolve()
+      .then(() => Promise.all([refreshRecord(), refreshApplications(), refreshEvidence()]))
+      .catch(failed)
   }, [base, refreshRecord, refreshApplications, refreshEvidence])
 
   useEffect(() => {
@@ -102,6 +112,7 @@ export function CallScreen({ initial, actor, onExit }: { initial: Session; actor
             </button>
           </div>
         </header>
+        <ErrorNote error={loadError} />
         {session.status === 'ended' ? (
           <Review />
         ) : (

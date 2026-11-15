@@ -160,6 +160,15 @@ def amounts_said(text: str) -> list[tuple[Decimal, str]]:
                     out.append((value, f"{prev} {tok}"))
                 continue
             start = run_ending_at.get(i, i)
+            if (
+                start > 0
+                and tokens[start - 1][:1].isdigit()
+                and tokens[start].casefold() in _SCALES
+            ):
+                led = _digit_led(tokens, start, i)
+                if led is not None:
+                    out.append((led, " ".join(tokens[start - 1 : i + 1])))
+                continue
             before = [t.casefold() for t in tokens[max(start - 2, 0) : start]]
             if before[-1:] == ["of"]:
                 before.pop()
@@ -180,6 +189,9 @@ def numbers_in(text: str) -> set[Decimal]:
         value = _words_value(tokens[start:end])
         if value is not None:
             out.add(value)
+        led = _digit_led(tokens, start, end)
+        if led is not None:
+            out.add(led)
     for tok in tokens:
         if tok.lstrip("$")[:1].isdigit():
             value = _decimal(tok.lstrip("$"))
@@ -262,6 +274,23 @@ def _words_value(words: Iterable[str]) -> Decimal | None:
         elif w:
             small.append(w)
     return Decimal(total + current)
+
+
+def _digit_led(tokens: Sequence[str], start: int, end: int) -> Decimal | None:
+    """ "5 hundred and fifty" -> 550: a digit right before a run that opens with a scale word
+    multiplies that scale. None if there's no such digit, or a later scale makes the reading
+    unclear ("5 hundred thousand")."""
+    if start <= 0 or tokens[start].casefold() not in _SCALES:
+        return None
+    if not tokens[start - 1][:1].isdigit():
+        return None
+    lead = _decimal(tokens[start - 1])
+    if lead is None:
+        return None
+    rest = [t.casefold() for t in tokens[start + 1 : end]]
+    if any(w in _SCALES for w in rest):
+        return None
+    return lead * _SCALES[tokens[start].casefold()] + (_words_value(rest) or 0)
 
 
 def _under_hundred(words: Sequence[str]) -> int | None:

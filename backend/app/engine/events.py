@@ -97,10 +97,14 @@ class Utterance(_Frozen):
         """Whether a judge's quote really appears in what was heard.
 
         Matching ignores case, whitespace runs, curly versus straight quotes and surrounding
-        punctuation, and nothing else. A paraphrase does not match.
+        punctuation, and nothing else. The quote must match whole words, so "I can" does not
+        match "I cannot". A paraphrase does not match.
         """
         needle = normalize_for_quote(quote)
-        return bool(needle) and needle in normalize_for_quote(self.heard_text)
+        if not needle:
+            return False
+        haystack = normalize_for_quote(self.heard_text)
+        return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
 
 
 _QUOTE_MAP = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})

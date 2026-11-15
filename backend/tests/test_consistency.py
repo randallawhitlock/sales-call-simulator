@@ -40,6 +40,11 @@ CASE_A = "scenario-101"
         ("nineteen ninety-nine dollars", [Decimal("19.99")]),
         ("one two three dollars", []),
         ("nineteen hundred ninety-nine dollars", [Decimal(1999)]),
+        ("5 hundred dollars", [Decimal(500)]),
+        ("2 thousand bucks", [Decimal(2000)]),
+        ("5 hundred and fifty dollars", [Decimal(550)]),
+        ("1.5 thousand dollars", [Decimal(1500)]),
+        ("5 hundred thousand dollars", []),
     ],
 )
 def test_amounts_said(text: str, amounts: list[Decimal]) -> None:
@@ -49,6 +54,12 @@ def test_amounts_said(text: str, amounts: list[Decimal]) -> None:
 def test_numbers_in_reads_digits_and_words() -> None:
     found = numbers_in("maybe fifty dollars a month, 40 milligrams, a hundred and twenty days")
     assert {Decimal(50), Decimal(40), Decimal(120)} <= found
+
+
+def test_a_digit_before_a_scale_word_multiplies_it() -> None:
+    assert amounts_said("5 hundred dollars") == [(Decimal(500), "5 hundred dollars")]
+    assert Decimal(500) in numbers_in("5 hundred")
+    assert Decimal(100) not in amounts_said("5 hundred dollars")
 
 
 def test_numbers_in_keeps_separate_numbers_apart() -> None:
