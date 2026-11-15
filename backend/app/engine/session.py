@@ -436,9 +436,11 @@ class SessionService:
 
         try:
             threading.Thread(target=call, name="customer-reply", daemon=True).start()
-        except Exception:
+        except Exception as exc:
             self._actor_slots.release()
-            raise
+            raise ActorUnavailable(
+                "the customer model couldn't be started; try again shortly"
+            ) from exc
         answered = flight.wake.wait(self.actor_deadline_s)
         if flight.cut_off:
             return None

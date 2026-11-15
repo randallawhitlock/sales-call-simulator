@@ -103,16 +103,13 @@ class Store:
             self._depth = 1
             try:
                 yield self._conn
+                self._conn.execute("COMMIT")
             except BaseException:
-                self._conn.execute("ROLLBACK")
+                # SQLite ends the transaction itself on some errors (disk full, I/O). Rolling
+                # back again would raise and hide the error that matters.
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
                 raise
-            else:
-                try:
-                    self._conn.execute("COMMIT")
-                except BaseException:
-                    if self._conn.in_transaction:
-                        self._conn.execute("ROLLBACK")
-                    raise
             finally:
                 self._depth = 0
 
