@@ -1,0 +1,148 @@
+{
+  "eval_id": "c-defer",
+  "scenario_id": "scenario-103",
+  "description": "Retiree coverage, handled well: finds the retiree plan and spouse, refuses to enroll, sends him to the administrator, books a follow-up.",
+  "notes": {
+    "reason_for_inquiry": "Wants his neighbor's Summit Classic HMO ($0 premium).",
+    "findings": "Has a Brightwater retiree plan with drug coverage that also covers his wife Joan (66). MA enrollment may end it.",
+    "options_discussed": "Defer until he checks with the Brightwater Retiree Benefits Center.",
+    "rationale": "Enrolling could end his and Joan's retiree drug coverage.",
+    "next_steps": "He calls the benefits center this week; follow-up call on Dec 2."
+  },
+  "lines": [
+    {
+      "speaker": "learner",
+      "text": "Thanks for calling Larkspur Benefits Group, this is Sam. This call is recorded."
+    },
+    {
+      "speaker": "customer",
+      "text": "My neighbor switched to a plan with no premium and says it's great. Can you just sign me up for the one my neighbor has, Summit Classic?"
+    },
+    {
+      "speaker": "learner",
+      "text": "I can help. Before we go further: we do not offer every plan available in your area. Currently we represent 3 organizations which offer 6 products in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options."
+    },
+    {
+      "speaker": "learner",
+      "text": "Is it Medicare Advantage plans you'd like to talk about today?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Yeah, the one my neighbor has."
+    },
+    {
+      "speaker": "learner",
+      "text": "Before we pick anything, do you have any other coverage now, like a retiree plan from a former employer, Medicaid or VA?"
+    },
+    {
+      "speaker": "customer",
+      "text": "I've got regular Medicare plus my retiree plan from Brightwater Manufacturing. It pays for my prescriptions."
+    },
+    {
+      "speaker": "learner",
+      "text": "Does anyone else get coverage through that retiree plan, like a spouse?"
+    },
+    {
+      "speaker": "customer",
+      "text": "My wife Joan is on my retiree plan too. She's 66. Her prescriptions go through it."
+    },
+    {
+      "speaker": "learner",
+      "text": "That matters a lot. With many retiree plans, joining a Medicare Advantage plan can end your retiree coverage, and it could end Joan's too. Did Brightwater send anything about joining other plans?"
+    },
+    {
+      "speaker": "customer",
+      "text": "They sent a booklet that said something about joining other plans, but I never read it."
+    },
+    {
+      "speaker": "learner",
+      "text": "Then I don't want to sign you up today. The safe step is to call the Brightwater Retiree Benefits Center and ask what happens to you and Joan if you join a Medicare Advantage plan. Meanwhile, what medications do you take, with the strengths and how often?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Metformin extended-release 500 milligrams twice a day, sitagliptin 100 milligrams once a day, levothyroxine 75 micrograms."
+    },
+    {
+      "speaker": "learner",
+      "text": "And which pharmacy do you use? Anything coming up, like specialist visits or tests?"
+    },
+    {
+      "speaker": "customer",
+      "text": "ValueMart on Mill Road. Just my diabetes checkups with Dr. Liu every three months."
+    },
+    {
+      "speaker": "customer",
+      "text": "My neighbor's been on that plan and loves it. Can't we just do it today?"
+    },
+    {
+      "speaker": "learner",
+      "text": "I understand wanting it done. But if your retiree plan ends, Joan could lose her drug coverage, and you may not be able to get it back. You have until December 7 to make a change for January 1, 2027, so there's time to check first."
+    },
+    {
+      "speaker": "customer",
+      "text": "Okay, that makes sense. I don't want to mess up Joan's coverage."
+    },
+    {
+      "speaker": "learner",
+      "text": "So here's the plan. You call the benefits center this week, and I'll call you back on December 2 to go over what they said. Does that work?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Yeah, that works."
+    }
+  ],
+  "labels": {
+    "disc-drugs": {
+      "status": "pass",
+      "line": 12,
+      "quote": "what medications do you take, with the strengths and how often"
+    },
+    "disc-pharmacy": {
+      "status": "pass",
+      "line": 14,
+      "quote": "which pharmacy do you use"
+    },
+    "disc-coverage": {
+      "status": "pass",
+      "line": 6,
+      "quote": "like a retiree plan from a former employer"
+    },
+    "disc-health-needs": {
+      "status": "pass",
+      "line": 14,
+      "quote": "Anything coming up, like specialist visits or tests"
+    },
+    "elig-scope": {
+      "status": "pass",
+      "line": 4,
+      "quote": "Is it Medicare Advantage plans you'd like to talk about today"
+    },
+    "elig-disclaimer": {
+      "status": "pass",
+      "line": 3,
+      "quote": "we do not offer every plan available in your area"
+    },
+    "elig-timing": {
+      "status": "pass",
+      "line": 17,
+      "quote": "You have until December 7 to make a change for January 1, 2027"
+    },
+    "rec-needs-based": {
+      "status": "pass",
+      "line": 17,
+      "quote": "Joan could lose her drug coverage"
+    },
+    "rec-premiums": {
+      "status": "not_observed"
+    },
+    "rec-service-costs": {
+      "status": "not_observed"
+    },
+    "comp-notes": {
+      "status": "pass",
+      "line": "notes",
+      "quote": "could end his and Joan's retiree drug coverage"
+    }
+  },
+  "claims": []
+}

@@ -61,6 +61,8 @@ export function clientId(prefix: string): string {
 
 export type Authority = 'regulatory' | 'cms_guidance' | 'plan' | 'organization' | 'training'
 
+export type RuleStatus = 'approved' | 'unverified' | 'retired' | 'disputed'
+
 export interface StandardText {
   rule_id: string
   title: string
@@ -77,7 +79,7 @@ export interface RuleReference {
   authority: Authority
   citation: string
   source_urls: string[]
-  status: 'approved' | 'unverified' | 'retired' | 'disputed'
+  status: RuleStatus
   verified_as_of: string | null
 }
 
@@ -95,6 +97,8 @@ export interface Health {
   version: string
   actor: string
   catalog_version: string
+  /** The model grading calls, or `off`. */
+  judge: string
 }
 
 export interface ScenarioCard {
@@ -136,6 +140,14 @@ export interface Session {
   /** Live state, so a reloaded call screen shows hold and a reply in flight correctly. */
   on_hold: boolean
   turn_pending: boolean
+  /** A targeted retry: the call it retries and what to work on this time. */
+  retry_of: string | null
+  focus: FocusItem[]
+}
+
+export interface FocusItem {
+  criterion_id: string
+  title: string
 }
 
 export interface Utterance {
@@ -403,4 +415,83 @@ export interface ActorQa {
   actor: string | null
   prompt_version: string | null
   flags: ConsistencyFlag[]
+}
+
+// Debrief
+
+export type GradeStatus = 'pass' | 'fail' | 'not_applicable' | 'not_observed' | 'review_required' | 'ungraded'
+
+export type Dimension =
+  | 'discovery'
+  | 'eligibility'
+  | 'verification'
+  | 'recommendation'
+  | 'documentation'
+  | 'communication'
+  | 'completion'
+
+export interface EvidenceView {
+  /** A transcript line, or `notes`. */
+  utt_id: string
+  speaker: Utterance['speaker'] | null
+  quote: string
+  /** The server found the quote in the cited line. */
+  verified: boolean
+  problem: string | null
+}
+
+export interface RuleCite {
+  rule_id: string
+  title: string
+  authority: Authority
+  citation: string
+  status: RuleStatus
+  verified_as_of: string | null
+}
+
+export interface CriterionResult {
+  criterion_id: string
+  dimension: Dimension
+  title: string
+  method: 'deterministic' | 'judged' | 'hybrid'
+  points: number
+  /** Null when the item leaves the denominator. */
+  earned: number | null
+  status: GradeStatus
+  critical: boolean
+  detail: string
+  evidence: EvidenceView[]
+  event_seqs: number[]
+  rules: RuleCite[]
+}
+
+export interface DimensionScore {
+  dimension: Dimension
+  weight: number
+  earned: number
+  possible: number
+}
+
+export interface JudgeInfo {
+  status: 'off' | 'pending' | 'done' | 'failed'
+  name: string | null
+  prompt_version: string | null
+  graded_at: string | null
+  error: string | null
+  /** Judge runs this call may still use. */
+  runs_left: number
+}
+
+export interface Debrief {
+  session_id: string
+  scenario_id: string
+  criteria: CriterionResult[]
+  dimensions: DimensionScore[]
+  earned: number
+  possible: number
+  score: number | null
+  complete: boolean
+  critical_findings: string[]
+  focus: string[]
+  judge: JudgeInfo
 }

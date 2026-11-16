@@ -1,71 +1,196 @@
-import { useEffect, useState } from 'react'
-import { get, type CheckResult, type ConsistencyFlag, type ActorQa, type Findings, type Utterance } from '../api.ts'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  get,
+  post,
+  type ActorQa,
+  type ConsistencyFlag,
+  type CriterionResult,
+  type Debrief,
+  type Dimension,
+  type EvidenceView,
+  type GradeStatus,
+  type Session,
+  type Utterance,
+} from '../api.ts'
 import { Badge, ErrorNote } from '../ui.tsx'
-import { errorText } from '../util.ts'
+import { errorText, useAction } from '../util.ts'
 import { mergeTranscript, useCall } from './context.tsx'
 
-const TONE: Record<CheckResult['status'], 'good' | 'bad' | 'warn' | 'info'> = {
-  pass: 'good',
-  fail: 'bad',
-  ungraded: 'warn',
-  not_observed: 'warn',
-  not_applicable: 'info',
+const STATUS: Record<GradeStatus, { label: string; tone: 'good' | 'bad' | 'warn' | 'info' }> = {
+  pass: { label: 'pass', tone: 'good' },
+  fail: { label: 'missed', tone: 'bad' },
+  not_observed: { label: 'not observed', tone: 'bad' },
+  not_applicable: { label: "doesn't apply", tone: 'info' },
+  review_required: { label: 'needs review', tone: 'warn' },
+  ungraded: { label: 'ungraded', tone: 'warn' },
 }
 
-/** Deterministic findings after the call. The evidence-linked debrief and the judge land in
- * M3; this lists what the rule checks found. */
-export function Review() {
-  const { base, transcript, setTranscript } = useCall()
-  const [findings, setFindings] = useState<CheckResult[] | null>(null)
+const DIMENSIONS: Record<Dimension, string> = {
+  discovery: 'Discovery and listening',
+  eligibility: 'Eligibility and timing',
+  verification: 'Provider, drug and pharmacy verification',
+  recommendation: 'Recommendation and trade-offs',
+  documentation: 'Documentation and application',
+  communication: 'Communication and customer choice',
+  completion: 'Completion and follow-up',
+}
+
+/** The debrief after the call: every rubric item with its evidence, the score over what could
+ * be graded, and a targeted retry. Asks the server to run the judge once if it hasn't yet. */
+export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
+  const { base, session, transcript, setTranscript } = useCall()
+  const [debrief, setDebrief] = useState<Debrief | null>(null)
+  const [grading, setGrading] = useState(false)
   const [actorFlags, setActorFlags] = useState<ConsistencyFlag[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [gradeError, setGradeError] = useState<string | null>(null)
+  const [picked, setPicked] = useState<string | null>(null)
+  const retry = useAction()
+
+  /** Asks the server to run the judge. A request that fails outright (a timeout, a dropped
+   * connection) is kept apart from a judge failure the server reports, and either one leaves
+   * the learner a way to ask again. */
+  const grade = useCallback(
+    async (alive: () => boolean = () => true) => {
+      setGrading(true)
+      setGradeError(null)
+      try {
+        const graded = await post<Debrief>(`${base}/grade`)
+        if (alive()) setDebrief(graded)
+      } catch (err) {
+        if (alive()) setGradeError(errorText(err))
+      } finally {
+        if (alive()) setGrading(false)
+      }
+    },
+    [base],
+  )
 
   useEffect(() => {
-    get<Findings>(`${base}/findings`).then(
-      (f) => setFindings(f.results),
-      (err: unknown) => setError(errorText(err)),
-    )
+    let current = true
+    get<Debrief>(`${base}/debrief`)
+      .then((d) => {
+        if (!current) return
+        setDebrief(d)
+        if (d.judge.status === 'pending' && d.judge.runs_left > 0) void grade(() => current)
+      })
+      .catch((err: unknown) => current && setError(errorText(err)))
     // Content QA only; the debrief works without it.
     get<ActorQa>(`${base}/actor-qa`).then(
-      (qa) => setActorFlags(qa.flags ?? []),
+      (qa) => current && setActorFlags(qa.flags ?? []),
       () => {},
     )
     // The call may have ended while a turn was in flight; show the transcript that was
     // graded, not whatever the call screen last had.
     get<Utterance[]>(`${base}/transcript`).then(
-      (t) => setTranscript((prev) => mergeTranscript(prev, t)),
+      (t) => current && setTranscript((prev) => mergeTranscript(prev, t)),
       () => {},
     )
-  }, [base, setTranscript])
+    return () => {
+      current = false
+    }
+  }, [base, grade, setTranscript])
+
+  function show(uttId: string): void {
+    setPicked(uttId)
+    document.getElementById(`line-${uttId}`)?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+  }
+
+  const titles = new Map(debrief?.criteria.map((c) => [c.criterion_id, c.title]) ?? [])
 
   return (
     <div className="review">
-      <h2>Call ended</h2>
-      <p className="muted">
-        Rule-check findings for this call. The full debrief with the AI judge comes in a later milestone.
-      </p>
+      <h2>Call debrief</h2>
       <ErrorNote error={error} />
-      {findings && (
-        <table>
-          <thead>
-            <tr><th>Check</th><th>Result</th><th>Detail</th><th>Cites</th></tr>
-          </thead>
-          <tbody>
-            {findings.map((f) => (
-              <tr key={f.check_id}>
-                <td>{f.check_id.replaceAll('_', ' ')}</td>
-                <td>
-                  <Badge tone={TONE[f.status]}>{f.status.replaceAll('_', ' ')}</Badge>
-                  {f.critical && <> <Badge tone="bad">critical</Badge></>}
-                </td>
-                <td>{f.detail}</td>
-                <td className="muted small-text">
-                  {[...f.utt_ids, ...f.event_seqs.map((s) => `event ${s}`)].join(', ')}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {debrief && (
+        <>
+          <Summary debrief={debrief} grading={grading} />
+          {!grading && (gradeError !== null || debrief.judge.status === 'failed') && (
+            <div className="error" role="alert">
+              The AI judge couldn't grade the conversation: {gradeError ?? debrief.judge.error}.{' '}
+              {debrief.judge.runs_left > 0 ? (
+                <button type="button" className="small" onClick={() => void grade()}>
+                  Grade again
+                </button>
+              ) : (
+                'This call has no grading runs left.'
+              )}
+            </div>
+          )}
+          {debrief.critical_findings.length > 0 && (
+            <section className="critical" role="alert">
+              <h3>Critical findings</h3>
+              <ul>
+                {debrief.critical_findings.map((id) => {
+                  const c = debrief.criteria.find((x) => x.criterion_id === id)
+                  return (
+                    <li key={id}>
+                      <strong>{c?.title ?? id}.</strong> {c?.detail}
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          )}
+          <table className="dimensions">
+            <thead>
+              <tr><th>Area</th><th>Points</th><th>Weight</th></tr>
+            </thead>
+            <tbody>
+              {debrief.dimensions.map((d) => (
+                <tr key={d.dimension}>
+                  <td>{DIMENSIONS[d.dimension]}</td>
+                  <td>{d.possible ? `${d.earned} of ${d.possible}` : '—'}</td>
+                  <td className="muted">{d.weight}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {debrief.dimensions.map((d) => (
+            <section key={d.dimension} className="dimension">
+              <h3>{DIMENSIONS[d.dimension]}</h3>
+              <ul className="criteria">
+                {debrief.criteria
+                  .filter((c) => c.dimension === d.dimension)
+                  .map((c) => (
+                    <Criterion key={c.criterion_id} c={c} onShow={show} />
+                  ))}
+              </ul>
+            </section>
+          ))}
+          <section className="retry">
+            <h3>Practice this call again</h3>
+            {debrief.focus.length > 0 ? (
+              <>
+                <p>Work on these next time:</p>
+                <ol>
+                  {debrief.focus.map((id) => (
+                    <li key={id}>{titles.get(id) ?? id}</li>
+                  ))}
+                </ol>
+              </>
+            ) : (
+              <p className="muted">Nothing graded was missed. Try it again with a different customer mood.</p>
+            )}
+            {onRetry && (
+              <button
+                type="button"
+                className="primary"
+                disabled={retry.busy}
+                onClick={() =>
+                  void retry.run(async () =>
+                    onRetry(
+                      await post<Session>('/sessions', { scenario_id: session.scenario_id, retry_of: session.session_id }),
+                    ),
+                  )
+                }
+              >
+                Retry this call
+              </button>
+            )}
+            <ErrorNote error={retry.error} />
+          </section>
+        </>
       )}
       {actorFlags.length > 0 && (
         <section className="actor-qa">
@@ -86,12 +211,96 @@ export function Review() {
       <h3>Transcript</h3>
       <ol className="transcript static">
         {transcript.map((u) => (
-          <li key={u.utt_id} className={`utt ${u.speaker}`}>
+          <li key={u.utt_id} id={`line-${u.utt_id}`} className={`utt ${u.speaker}${picked === u.utt_id ? ' picked' : ''}`}>
             <div className="utt-meta"><span>{u.speaker === 'learner' ? 'You' : 'Customer'}</span><span className="muted">{u.utt_id}</span></div>
             <p>{u.heard_text}</p>
           </li>
         ))}
       </ol>
     </div>
+  )
+}
+
+function Summary({ debrief, grading }: { debrief: Debrief; grading: boolean }) {
+  const { judge, score, complete } = debrief
+  return (
+    <section className="summary">
+      <p className="score">
+        {score === null ? 'No score yet' : complete ? `${score} / 100` : `${score} / 100 so far`}
+        {!complete && <> <Badge tone="warn">incomplete</Badge></>}
+      </p>
+      <p className="muted">
+        {complete
+          ? `Every item that applies was graded: ${debrief.earned} of ${debrief.possible} points.`
+          : `Scored on the ${debrief.possible} points graded so far. Items marked ungraded or needs review don't count yet.`}
+      </p>
+      {grading && <p className="notice" role="status">The AI judge is grading the conversation…</p>}
+      {judge.status === 'pending' && !grading && judge.runs_left === 0 && (
+        <p className="notice">
+          The AI judge couldn't grade this call, and it has no grading runs left. Conversation items stay ungraded.
+        </p>
+      )}
+      {judge.status === 'off' && (
+        <p className="notice">
+          No AI judge is configured (set <code>ANTHROPIC_API_KEY</code>), so conversation items stay ungraded. Rule
+          checks still ran.
+        </p>
+      )}
+      {judge.status === 'done' && (
+        <p className="muted small-text">
+          Conversation items graded by {judge.name}. Every quote below was checked against the transcript.
+        </p>
+      )}
+    </section>
+  )
+}
+
+function Criterion({ c, onShow }: { c: CriterionResult; onShow: (uttId: string) => void }) {
+  const status = STATUS[c.status]
+  return (
+    <li className={`criterion ${c.status}`}>
+      <div className="criterion-head">
+        <strong>{c.title}</strong>
+        <span className="row">
+          <Badge tone={status.tone}>{status.label}</Badge>
+          {c.critical && <Badge tone="bad">critical</Badge>}
+          <span className="muted small-text">{c.earned === null ? `– / ${c.points}` : `${c.earned} / ${c.points}`}</span>
+        </span>
+      </div>
+      {c.detail && <p>{c.detail}</p>}
+      {c.evidence.length > 0 && (
+        <ul className="evidence">
+          {c.evidence.map((e, i) => (
+            <Evidence key={`${e.utt_id}-${i}`} e={e} onShow={onShow} />
+          ))}
+        </ul>
+      )}
+      {c.rules.length > 0 && (
+        <p className="muted small-text">
+          {c.rules.map((r, i) => (
+            <span key={r.rule_id}>
+              {i > 0 && ' · '}
+              {r.rule_id} {r.title} ({r.citation})
+              {r.status !== 'approved' && <> <Badge tone="warn">{r.status} rule</Badge></>}
+            </span>
+          ))}
+        </p>
+      )}
+    </li>
+  )
+}
+
+function Evidence({ e, onShow }: { e: EvidenceView; onShow: (uttId: string) => void }) {
+  const who = e.utt_id === 'notes' ? 'Your notes' : e.speaker === 'customer' ? 'Customer' : 'You'
+  return (
+    <li className={e.verified ? '' : 'unverified'}>
+      “{e.quote}” <span className="muted small-text">— {who}</span>{' '}
+      {e.utt_id !== 'notes' && (
+        <button type="button" className="link small-text" onClick={() => onShow(e.utt_id)}>
+          {e.utt_id}
+        </button>
+      )}
+      {!e.verified && <> <Badge tone="warn">quote not found{e.problem ? `: ${e.problem}` : ''}</Badge></>}
+    </li>
   )
 }

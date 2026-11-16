@@ -312,3 +312,17 @@ ul.plain li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
   .pane { border-right: none; border-bottom: 1px solid var(--line); overflow: visible; }
   .call-pane { max-height: 80vh; }
 }
+
+.summary .score { font-size: 1.6rem; font-weight: 700; margin: 0.25rem 0; }
+.critical { background: var(--bad-bg); color: var(--bad); border-radius: 6px; padding: 0.5rem 0.75rem; margin: 0.75rem 0; }
+.critical h3 { margin: 0 0 0.25rem; }
+.dimensions { margin: 0.75rem 0; }
+.criteria { list-style: none; padding: 0; margin: 0; }
+.criterion { border-top: 1px solid var(--line); padding: 0.5rem 0; }
+.criterion p { margin: 0.25rem 0; }
+.criterion-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.evidence { margin: 0.25rem 0; padding-left: 1.25rem; font-size: 0.92rem; }
+.evidence .unverified { opacity: 0.8; }
+.retry { margin: 1.25rem 0; padding: 0.75rem; border: 1px solid var(--line); border-radius: 8px; }
+.retry h3 { margin-top: 0; }
+.focus-note { margin: 0.5rem 1rem 0; }

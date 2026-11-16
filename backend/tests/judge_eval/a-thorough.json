@@ -1,0 +1,265 @@
+{
+  "eval_id": "a-thorough",
+  "scenario_id": "scenario-101",
+  "description": "Must-keep specialist, handled well: full discovery, verified research, trade-offs, customer's choice.",
+  "notes": {
+    "reason_for_inquiry": "Letter: Dr. Raman's group leaves Summit Classic HMO in 2027.",
+    "priorities": "Keep Dr. Raman at the Northside office.",
+    "findings": "Maple Choice PPO: Raman Northside in network for 2027, all 3 drugs on formulary, Alder Family Pharmacy in network.",
+    "options_discussed": "Maple Choice PPO; Maple Value HMO (apixaban prior auth, referrals); keep current plan (loses Raman).",
+    "rationale": "Keeps her cardiologist with no prior auth or referrals; $39 premium fits her budget.",
+    "next_steps": "Enrolled in Maple Choice PPO effective 1/1/2027."
+  },
+  "lines": [
+    {
+      "speaker": "learner",
+      "text": "Thanks for calling Larkspur Benefits Group, this is Sam. This call is recorded. How can I help?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Hi Sam, I got a letter from my plan saying my heart doctor's group won't be with them next year, and it scared me."
+    },
+    {
+      "speaker": "learner",
+      "text": "I'm sorry, that's a worrying letter. Before we go further: we do not offer every plan available in your area. Currently we represent 3 organizations which offer 6 products in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options."
+    },
+    {
+      "speaker": "learner",
+      "text": "Which kinds of coverage would you like to talk about today? Medicare Advantage plans, or something else?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Medicare Advantage, I suppose. Whatever keeps my heart doctor."
+    },
+    {
+      "speaker": "learner",
+      "text": "Got it. Which doctors do you see now, and which of them do you most need to keep? And which office do you go to for each?"
+    },
+    {
+      "speaker": "customer",
+      "text": "My heart doctor is Dr. Priya Raman. I see her at the Alder Heart Associates office on Birch Avenue in Northside. My regular doctor is Dr. Thomas Whitfield at Alder Internal Medicine."
+    },
+    {
+      "speaker": "learner",
+      "text": "Thank you. Does Dr. Raman see you anywhere else, or always at the Northside office on Birch Avenue?"
+    },
+    {
+      "speaker": "customer",
+      "text": "She has an office out in Lakeview, but I only ever go to the Northside one."
+    },
+    {
+      "speaker": "learner",
+      "text": "Now your prescriptions. For each one, can you tell me the name, the strength in milligrams, and how often you take it?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Apixaban, five milligrams, twice a day. Metoprolol extended-release, 50 milligrams once a day. And atorvastatin, twenty milligrams, I think."
+    },
+    {
+      "speaker": "learner",
+      "text": "Could you check the atorvastatin bottle for me? The strength changes what it costs."
+    },
+    {
+      "speaker": "customer",
+      "text": "Oh, hold on, the bottle says 40 milligrams. I had that mixed up."
+    },
+    {
+      "speaker": "learner",
+      "text": "Thanks, 40 it is. Which pharmacy do you use?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Alder Family Pharmacy in the Northside Plaza."
+    },
+    {
+      "speaker": "learner",
+      "text": "Besides your Summit Classic HMO, do you have any other coverage, like a retiree plan, Medicaid, VA or a Medigap policy?"
+    },
+    {
+      "speaker": "customer",
+      "text": "No other insurance. Just Medicare Part A and B and the Summit plan."
+    },
+    {
+      "speaker": "learner",
+      "text": "Any health conditions or care coming up that you use a lot, like specialist visits or tests?"
+    },
+    {
+      "speaker": "customer",
+      "text": "I see Dr. Raman every three months and get blood work for the blood thinner."
+    },
+    {
+      "speaker": "learner",
+      "text": "I checked Maple Choice PPO. Dr. Raman at the Northside office is in network for 2027. Apixaban, metoprolol and atorvastatin 40 are all on its drug list, and Alder Family Pharmacy is in its network."
+    },
+    {
+      "speaker": "learner",
+      "text": "Here's the trade-off. The premium is $39 a month compared with $0 on your current plan, and you keep paying your Part B premium. A visit with Dr. Raman would be a $40 copay. What you gain is keeping her, which your Summit plan can't do next year."
+    },
+    {
+      "speaker": "learner",
+      "text": "There's also Maple Value HMO at $0. Dr. Raman is in network there too, but apixaban needs prior authorization there, meaning the plan has to approve it before it pays. You'd also need referrals."
+    },
+    {
+      "speaker": "customer",
+      "text": "What does a referral mean?"
+    },
+    {
+      "speaker": "learner",
+      "text": "It means Dr. Whitfield would have to send a request before you see Dr. Raman. Does that make sense?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Yes. I'd rather not deal with that. The $39 one is fine if I keep Dr. Raman."
+    },
+    {
+      "speaker": "learner",
+      "text": "That's your call. You could also keep your current plan, but you'd lose Dr. Raman in January, or take some time to think it over. What would you like to do?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Let's do the Maple Choice one."
+    },
+    {
+      "speaker": "learner",
+      "text": "If you enroll now, the new plan starts January 1, 2027. The Annual Election Period ends December 7, so you can still change your mind until then."
+    },
+    {
+      "speaker": "learner",
+      "text": "Let's go through the Pre-Enrollment Checklist together, item by item. First, do you understand that you'll keep paying your Part B premium?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Yes."
+    },
+    {
+      "speaker": "learner",
+      "text": "Would you like me to submit your enrollment in Maple Choice PPO?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Yes, please go ahead and sign me up."
+    }
+  ],
+  "labels": {
+    "disc-doctors": {
+      "status": "pass",
+      "line": 6,
+      "quote": "which of them do you most need to keep"
+    },
+    "disc-drugs": {
+      "status": "pass",
+      "line": 12,
+      "quote": "Could you check the atorvastatin bottle for me"
+    },
+    "disc-pharmacy": {
+      "status": "pass",
+      "line": 14,
+      "quote": "Which pharmacy do you use"
+    },
+    "disc-coverage": {
+      "status": "pass",
+      "line": 16,
+      "quote": "like a retiree plan, Medicaid, VA or a Medigap policy"
+    },
+    "disc-health-needs": {
+      "status": "pass",
+      "line": 18,
+      "quote": "Any health conditions or care coming up"
+    },
+    "elig-scope": {
+      "status": "pass",
+      "line": 4,
+      "quote": "Which kinds of coverage would you like to talk about today"
+    },
+    "elig-disclaimer": {
+      "status": "pass",
+      "line": 3,
+      "quote": "we do not offer every plan available in your area"
+    },
+    "elig-timing": {
+      "status": "pass",
+      "line": 28,
+      "quote": "The Annual Election Period ends December 7"
+    },
+    "ver-restrictions": {
+      "status": "pass",
+      "line": 22,
+      "quote": "apixaban needs prior authorization there"
+    },
+    "rec-tradeoffs": {
+      "status": "pass",
+      "line": 21,
+      "quote": "Here's the trade-off"
+    },
+    "rec-service-costs": {
+      "status": "pass",
+      "line": 21,
+      "quote": "A visit with Dr. Raman would be a $40 copay"
+    },
+    "rec-premiums": {
+      "status": "pass",
+      "line": 21,
+      "quote": "you keep paying your Part B premium"
+    },
+    "rec-needs-based": {
+      "status": "pass",
+      "line": 21,
+      "quote": "What you gain is keeping her"
+    },
+    "doc-pecl": {
+      "status": "pass",
+      "line": 29,
+      "quote": "go through the Pre-Enrollment Checklist together, item by item"
+    },
+    "com-plain": {
+      "status": "pass",
+      "line": 24,
+      "quote": "Does that make sense?"
+    },
+    "com-choice": {
+      "status": "pass",
+      "line": 26,
+      "quote": "That's your call"
+    },
+    "com-misconceptions": {
+      "status": "pass",
+      "line": 12,
+      "quote": "Could you check the atorvastatin bottle for me"
+    },
+    "comp-notes": {
+      "status": "pass",
+      "line": "notes",
+      "quote": "Keeps her cardiologist"
+    }
+  },
+  "claims": [
+    {
+      "line": 20,
+      "plan_id": "TRN-1001-002",
+      "kind": "provider_network",
+      "subject_id": "raman-northside",
+      "covered": true
+    },
+    {
+      "line": 20,
+      "plan_id": "TRN-1001-002",
+      "kind": "formulary",
+      "subject_id": "apixaban-5mg-tab",
+      "covered": true
+    },
+    {
+      "line": 20,
+      "plan_id": "TRN-1001-002",
+      "kind": "pharmacy_network",
+      "subject_id": "alder-family-rx",
+      "covered": true
+    },
+    {
+      "line": 22,
+      "plan_id": "TRN-1001-001",
+      "kind": "provider_network",
+      "subject_id": "raman-northside",
+      "covered": true
+    }
+  ]
+}

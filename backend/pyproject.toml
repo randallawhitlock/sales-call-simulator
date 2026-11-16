@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Medicare sales training simulator: engine, research APIs, grading"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=2.8.0",
     "fastapi>=0.162.2",
     "google-genai>=3.0.0",
     "pydantic>=2.14.3",

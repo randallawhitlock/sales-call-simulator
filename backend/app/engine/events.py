@@ -106,12 +106,17 @@ class Utterance(_Frozen):
         This checks the words, not the meaning: a quote that starts after a negation, like
         "enroll you today" from "I can't enroll you today", still matches.
         """
-        needle = normalize_for_quote(quote)
-        if not needle:
-            return False
-        haystack = normalize_for_quote(self.heard_text)
-        pattern = rf"(?<!\w)(?<!\w'){re.escape(needle)}(?!\w|'t(?!\w))"
-        return re.search(pattern, haystack) is not None
+        return quote_in_text(quote, self.heard_text)
+
+
+def quote_in_text(quote: str, text: str) -> bool:
+    """The matching ``Utterance.contains_quote`` describes, for any text."""
+    needle = normalize_for_quote(quote)
+    if not needle:
+        return False
+    haystack = normalize_for_quote(text)
+    pattern = rf"(?<!\w)(?<!\w'){re.escape(needle)}(?!\w|'t(?!\w))"
+    return re.search(pattern, haystack) is not None
 
 
 # Typed and transcribed text uses many marks for an apostrophe; they all become "'".

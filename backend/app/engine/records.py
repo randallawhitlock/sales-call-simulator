@@ -94,13 +94,17 @@ class ContactSection(_In):
     source_utt_id: UttId | None = None
 
 
+NOTE_MAX = 4000
+"""Characters in one notes field. The notes go to the judge."""
+
+
 class NotesSection(_In):
-    reason_for_inquiry: str = ""
-    priorities: str = ""
-    findings: str = ""
-    options_discussed: str = ""
-    rationale: str = ""
-    next_steps: str = ""
+    reason_for_inquiry: str = Field(default="", max_length=NOTE_MAX)
+    priorities: str = Field(default="", max_length=NOTE_MAX)
+    findings: str = Field(default="", max_length=NOTE_MAX)
+    options_discussed: str = Field(default="", max_length=NOTE_MAX)
+    rationale: str = Field(default="", max_length=NOTE_MAX)
+    next_steps: str = Field(default="", max_length=NOTE_MAX)
 
 
 class DispositionSection(_In):

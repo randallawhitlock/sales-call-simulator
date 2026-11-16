@@ -1,0 +1,126 @@
+{
+  "eval_id": "a-rushed",
+  "scenario_id": "scenario-101",
+  "description": "Must-keep specialist, handled badly: pitch first, no disclaimer, unchecked coverage claims, jargon, pressure.",
+  "lines": [
+    {
+      "speaker": "learner",
+      "text": "Larkspur Benefits, this is Sam."
+    },
+    {
+      "speaker": "customer",
+      "text": "Hi, I got a letter from my plan saying my heart doctor's group won't be with them next year, and it scared me."
+    },
+    {
+      "speaker": "learner",
+      "text": "No problem, I can get you into a better plan today. Maple Choice PPO is our best plan, it has great benefits and a $2,000 dental maximum."
+    },
+    {
+      "speaker": "customer",
+      "text": "Wait, before anything else, will Dr. Raman be in it? I'm not switching heart doctors."
+    },
+    {
+      "speaker": "learner",
+      "text": "Yes, Dr. Raman is in network on Maple Choice PPO, don't worry."
+    },
+    {
+      "speaker": "customer",
+      "text": "Okay. What about my pills?"
+    },
+    {
+      "speaker": "learner",
+      "text": "Everything's covered on Maple Choice. What do you take?"
+    },
+    {
+      "speaker": "customer",
+      "text": "Apixaban, metoprolol, and atorvastatin."
+    },
+    {
+      "speaker": "learner",
+      "text": "Great. The premium is $39."
+    },
+    {
+      "speaker": "customer",
+      "text": "I'm sorry, that's a lot all at once. Can you slow down? I want to get this right."
+    },
+    {
+      "speaker": "learner",
+      "text": "Sure. Basically the MOOP is lower and the formulary tiers are better, so it's the best choice for you."
+    },
+    {
+      "speaker": "customer",
+      "text": "I don't know what those words mean."
+    },
+    {
+      "speaker": "learner",
+      "text": "It's just better coverage. Should I sign you up?"
+    },
+    {
+      "speaker": "customer",
+      "text": "I guess so, if Dr. Raman is in it."
+    },
+    {
+      "speaker": "learner",
+      "text": "Great, I'll submit it now."
+    }
+  ],
+  "labels": {
+    "disc-doctors": {
+      "status": "fail"
+    },
+    "disc-drugs": {
+      "status": "fail"
+    },
+    "disc-pharmacy": {
+      "status": "not_observed"
+    },
+    "disc-coverage": {
+      "status": "not_observed"
+    },
+    "disc-health-needs": {
+      "status": "not_observed"
+    },
+    "elig-scope": {
+      "status": "fail"
+    },
+    "elig-disclaimer": {
+      "status": "fail"
+    },
+    "elig-timing": {
+      "status": "not_observed"
+    },
+    "rec-tradeoffs": {
+      "status": "fail"
+    },
+    "rec-service-costs": {
+      "status": "not_observed"
+    },
+    "rec-premiums": {
+      "status": "fail"
+    },
+    "rec-needs-based": {
+      "status": "fail"
+    },
+    "doc-pecl": {
+      "status": "fail"
+    },
+    "com-plain": {
+      "status": "fail"
+    },
+    "com-choice": {
+      "status": "fail"
+    },
+    "comp-notes": {
+      "status": "fail"
+    }
+  },
+  "claims": [
+    {
+      "line": 5,
+      "plan_id": "TRN-1001-002",
+      "kind": "provider_network",
+      "subject_id": "raman-northside",
+      "covered": true
+    }
+  ]
+}

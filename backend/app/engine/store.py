@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from app.engine.events import Event, EventType, Utterance
+from app.judge.models import GradeRow
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -39,6 +40,14 @@ CREATE TABLE IF NOT EXISTS utterances (
     data TEXT NOT NULL,
     PRIMARY KEY (session_id, utt_id),
     UNIQUE (session_id, client_utt_id)
+);
+CREATE TABLE IF NOT EXISTS grades (
+    session_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS judge_runs (
+    session_id TEXT PRIMARY KEY,
+    n INTEGER NOT NULL
 );
 """
 
@@ -74,6 +83,10 @@ class SessionRow(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    retry_of: str | None = None
+    """The ended call this one retries, for a targeted retry."""
+    focus: tuple[str, ...] = ()
+    """Criteria the retry works on, from that call's debrief."""
 
 
 class Store:
@@ -129,6 +142,39 @@ class Store:
                 "SELECT data FROM sessions WHERE session_id = ?", (session_id,)
             ).fetchone()
         return None if found is None else SessionRow.model_validate_json(found[0])
+
+    # Grades
+
+    def put_grade(self, row: GradeRow) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO grades (session_id, data) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET data = excluded.data",
+                (row.session_id, row.model_dump_json()),
+            )
+
+    def get_grade(self, session_id: str) -> GradeRow | None:
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT data FROM grades WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return None if found is None else GradeRow.model_validate_json(found[0])
+
+    def judge_runs(self, session_id: str) -> int:
+        """How many times the judge has been asked to grade this call, failures included."""
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT n FROM judge_runs WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return 0 if found is None else int(found[0])
+
+    def count_judge_run(self, session_id: str) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO judge_runs (session_id, n) VALUES (?, 1) "
+                "ON CONFLICT(session_id) DO UPDATE SET n = n + 1",
+                (session_id,),
+            )
 
     # Events
 
