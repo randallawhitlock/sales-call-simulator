@@ -59,21 +59,41 @@ def test_quote_must_appear_in_heard_text() -> None:
     assert u.contains_quote("“Yes, go ahead”")
     assert not u.contains_quote("Yes, please enroll me")
     assert not u.contains_quote("   ")
-    # Whole words only: a short quote can't be found inside a longer word.
-    assert u.contains_quote("go ahead") and not u.contains_quote("o ahead and sig")
-    assert not u.contains_quote("head")
 
 
-def test_a_quote_cannot_drop_the_part_of_a_word_that_changes_its_meaning() -> None:
-    cannot = utterance("No, you can't keep that doctor, and it's non-preferred on that plan.")
-    for partial in ("you can", "preferred on that plan", "it", "can't keep that doc"):
-        assert not cannot.contains_quote(partial), partial
-    for whole in ("you can't keep that doctor", "it's non-preferred", "non-preferred on that plan"):
-        assert cannot.contains_quote(whole), whole
-    # Quote marks and dashes around a phrase are punctuation, not part of a word.
-    said = utterance("She said 'go ahead' and then - well - 'sign me up'.")
-    assert said.contains_quote("go ahead") and said.contains_quote("sign me up")
-    assert said.contains_quote("and then - well")
+def test_quote_matches_whole_words_only() -> None:
+    u = utterance("I cannot enroll you, and I know that.")
+    assert not u.contains_quote("i can")
+    assert not u.contains_quote("no")
+    assert u.contains_quote("i cannot enroll you")
+    assert u.contains_quote("“I KNOW that!”")
+
+
+@pytest.mark.parametrize(
+    "heard",
+    [
+        "I can't enroll you today.",
+        "I can’t enroll you today.",
+        "I can`t enroll you today.",
+        "I can´t enroll you today.",
+        "I can′t enroll you today.",
+    ],
+)
+def test_quote_cannot_drop_a_negation(heard: str) -> None:
+    u = utterance(heard)
+    assert not u.contains_quote("I can")
+    assert not u.contains_quote("can")
+    assert u.contains_quote("I can't enroll you")
+    assert u.contains_quote("I can’t")
+    assert not u.contains_quote("t enroll you")
+
+
+def test_quote_can_stop_before_a_possessive() -> None:
+    u = utterance("Dr. Raman's office is in network, isn't it?")
+    assert u.contains_quote("Dr. Raman")
+    assert u.contains_quote("Dr. Raman's office")
+    assert not u.contains_quote("isn")
+    assert not u.contains_quote("s office")
 
 
 def test_cut_off_speech_does_not_count() -> None:

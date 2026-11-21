@@ -13,6 +13,7 @@ from app.actor.actors import actor_from_env, actor_timeout_from_env
 from app.actor.prompt import PROMPT_VERSION, check_all_prompts
 from app.api import router
 from app.content.loader import ContentError, load_bundle
+from app.engine.debrief import DebriefService
 from app.engine.session import SessionError, SessionService
 from app.engine.store import Store
 from app.judge.judges import judge_from_env
@@ -31,8 +32,8 @@ class Health(BaseModel):
     actor: str
     """The model playing the customer. ``scripted`` is the offline stand-in."""
     prompt_version: str
-    judge: str | None
-    """The model that grades conversation. None: only the rule checks grade."""
+    judge: str
+    """The model grading calls, or ``off`` when none is configured."""
     judge_prompt_version: str
 
 
@@ -48,8 +49,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     judge = judge_from_env()
     store = Store(os.environ.get(DB_PATH_ENV, "simulator.db"))
     app.state.sessions = SessionService(
-        store, content, actor=actor, actor_deadline_s=actor_timeout_from_env(), judge=judge
+        store, content, actor=actor, actor_deadline_s=actor_timeout_from_env()
     )
+    app.state.debriefs = DebriefService(app.state.sessions, judge)
     yield
     store.close()
 
@@ -76,6 +78,6 @@ def health(request: Request) -> Health:
         scenarios=len(content.scenarios),
         actor=service.actor.name,
         prompt_version=PROMPT_VERSION,
-        judge=service.judge.name if service.judge else None,
+        judge=request.app.state.debriefs.judge_name,
         judge_prompt_version=JUDGE_PROMPT_VERSION,
     )

@@ -2,7 +2,7 @@
 
 Responses carry only catalog data, the CRM seed and what the learner produced. Scenario
 truth, customer knowledge, persona rolls and seeded document defects stay server-side until
-the call ends, when the answer key, the findings and the debrief unlock.
+the call ends, when the answer key and findings unlock.
 """
 
 from collections.abc import Sequence
@@ -19,7 +19,7 @@ from app.content.scenario import CrmSeed, ElectionPeriod, Scenario
 from app.engine import research
 from app.engine.checks import CheckResult, run_checks
 from app.engine.consistency import ConsistencyFlag, check_consistency
-from app.engine.debrief import Debrief
+from app.engine.debrief import Debrief, DebriefService
 from app.engine.events import Event, EventType, Utterance, UtteranceIn
 from app.engine.records import (
     Application,
@@ -46,6 +46,14 @@ def get_service(request: Request) -> SessionService:
 Service = Annotated[SessionService, Depends(get_service)]
 
 
+def get_debriefs(request: Request) -> DebriefService:
+    debriefs: DebriefService = request.app.state.debriefs
+    return debriefs
+
+
+Debriefs = Annotated[DebriefService, Depends(get_debriefs)]
+
+
 # Views
 
 
@@ -66,6 +74,11 @@ class FrameView(BaseModel):
     products_offered: int
 
 
+class FocusItem(BaseModel):
+    criterion_id: str
+    title: str
+
+
 class SessionView(BaseModel):
     session_id: str
     scenario_id: str
@@ -80,22 +93,21 @@ class SessionView(BaseModel):
     """The customer is on hold. Live state, so a reloaded call screen shows it correctly."""
     turn_pending: bool
     """A customer reply is being generated right now."""
-    retry_of: str | None
-    """The learner's own earlier call that this one is another attempt at."""
-    retry_focus: list[str]
-    """What that call's debrief said to work on: rubric criterion titles, nothing about the
-    case."""
+    retry_of: str | None = None
+    focus: list[FocusItem] = []
+    """For a targeted retry: what to work on this time, from the earlier call's debrief."""
 
 
 class CreateSession(BaseModel):
     scenario_id: str
     seed: int | None = Field(default=None, ge=0)
-    retry_of: str | None = Field(default=None, max_length=64)
+    retry_of: str | None = None
+    """An ended call of the same case to retry, working on what its debrief missed."""
 
 
-class JudgeIn(BaseModel):
+class GradeIn(BaseModel):
     regrade: bool = False
-    """Ask the judge again even though a judgment is stored. The earlier one is kept."""
+    """Run the judge again even if a stored grade exists."""
 
 
 class HoldIn(BaseModel):
@@ -179,6 +191,7 @@ class Findings(BaseModel):
 
 def session_view(service: SessionService, row: SessionRow) -> SessionView:
     scenario = service.content.scenario(row.scenario_id)
+    titles = {c.criterion_id: c.title for c in service.content.rubric.criteria}
     frame = service.content.frame
     return SessionView(
         session_id=row.session_id,
@@ -203,7 +216,7 @@ def session_view(service: SessionService, row: SessionRow) -> SessionView:
         on_hold=row.status is SessionStatus.ACTIVE and service.on_hold(row.session_id),
         turn_pending=service.turn_pending(row.session_id),
         retry_of=row.retry_of,
-        retry_focus=list(row.retry_focus),
+        focus=[FocusItem(criterion_id=c, title=titles[c]) for c in row.focus if c in titles],
     )
 
 
@@ -262,8 +275,12 @@ def list_scenarios(service: Service) -> list[ScenarioCard]:
 
 
 @router.post("/sessions", status_code=201)
-def create_session(body: CreateSession, service: Service) -> SessionView:
-    return session_view(service, service.create(body.scenario_id, body.seed, body.retry_of))
+def create_session(body: CreateSession, service: Service, debriefs: Debriefs) -> SessionView:
+    focus: tuple[str, ...] = ()
+    if body.retry_of is not None:
+        focus = debriefs.retry_focus(body.scenario_id, body.retry_of)
+    row = service.create(body.scenario_id, body.seed, retry_of=body.retry_of, focus=focus)
+    return session_view(service, row)
 
 
 @router.get("/sessions/{session_id}")
@@ -661,19 +678,18 @@ def findings(session_id: str, service: Service) -> Findings:
 
 
 @router.get("/sessions/{session_id}/debrief")
-def debrief(session_id: str, service: Service) -> Debrief:
-    """The scorecard with its evidence, from the event log and the stored judge output.
-    Reading it never calls the judge."""
-    return service.debrief(session_id)
+def debrief(session_id: str, debriefs: Debriefs) -> Debrief:
+    """The graded call from the stored log and stored judge output. Never runs the judge."""
+    return debriefs.debrief(session_id)
 
 
-@router.post("/sessions/{session_id}/debrief/judge")
-def judge_debrief(
-    session_id: str, service: Service, body: Annotated[JudgeIn | None, Body()] = None
+@router.post("/sessions/{session_id}/grade")
+def grade(
+    session_id: str, debriefs: Debriefs, body: Annotated[GradeIn | None, Body()] = None
 ) -> Debrief:
-    """Has the judge grade the call, once. The output is stored and reused, so calling this
-    again returns the same debrief unless ``regrade`` is set. Can take a few minutes."""
-    return service.judge_call(session_id, regrade=body.regrade if body else False)
+    """Runs the judge if this call has no stored grade yet (or on ``regrade``) and returns the
+    debrief. A judge failure still returns the debrief, with the error in ``judge.error``."""
+    return debriefs.grade(session_id, regrade=body.regrade if body else False)
 
 
 @router.get("/sessions/{session_id}/actor-qa")

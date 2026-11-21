@@ -96,34 +96,41 @@ class Utterance(_Frozen):
     def contains_quote(self, quote: str) -> bool:
         """Whether a judge's quote really appears in what was heard.
 
-        Matching ignores case, whitespace runs, curly versus straight quotes and surrounding
-        punctuation, and nothing else. A paraphrase does not match, and the quote has to start
-        and end on whole words: "no" is not in "I know", "you can" is not in "you can't".
+        Matching ignores case, whitespace runs, the different apostrophe and quote marks and
+        surrounding punctuation, and nothing else. The quote must match whole words, so "I can"
+        does not match "I cannot", and it can't stop just before "n't", so it doesn't match
+        "I can't" either. It can't start just after an apostrophe either, so "t enroll" is not
+        in "can't enroll". A possessive still matches: "Dr. Raman" is in "Dr. Raman's office".
+        A paraphrase does not match.
+
+        This checks the words, not the meaning: a quote that starts after a negation, like
+        "enroll you today" from "I can't enroll you today", still matches.
         """
-        return quote_in(quote, self.heard_text)
+        return quote_in_text(quote, self.heard_text)
 
 
-_QUOTE_MAP = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+def quote_in_text(quote: str, text: str) -> bool:
+    """The matching ``Utterance.contains_quote`` describes, for any text."""
+    needle = normalize_for_quote(quote)
+    if not needle:
+        return False
+    haystack = normalize_for_quote(text)
+    pattern = rf"(?<!\w)(?<!\w'){re.escape(needle)}(?!\w|'t(?!\w))"
+    return re.search(pattern, haystack) is not None
+
+
+# Typed and transcribed text uses many marks for an apostrophe; they all become "'".
+_QUOTE_MAP = str.maketrans(
+    {"‘": "'", "’": "'", "‛": "'", "`": "'", "´": "'", "′": "'", "“": '"', "”": '"'}
+)
 _SPACE = re.compile(r"\s+")
 _EDGE_PUNCT = " \t\n.,;:!?\"'()[]-–—…"
 
 
 def normalize_for_quote(text: str) -> str:
-    folded = unicodedata.normalize("NFKC", text).translate(_QUOTE_MAP).casefold()
+    # Map the marks first: NFKC turns "´" into a space and a combining accent.
+    folded = unicodedata.normalize("NFKC", text.translate(_QUOTE_MAP)).casefold()
     return _SPACE.sub(" ", folded).strip(_EDGE_PUNCT)
-
-
-def quote_in(quote: str, text: str) -> bool:
-    """Whether ``quote`` appears in ``text`` as a run of whole words, after normalizing both.
-
-    An apostrophe or hyphen inside a word is part of the word: "you can" is not in "you can't",
-    and "preferred" is not in "non-preferred". Either would let a quote verify against a line
-    that says the opposite."""
-    needle = normalize_for_quote(quote)
-    if not needle:
-        return False
-    pattern = rf"(?<!\w)(?<!\w['-]){re.escape(needle)}(?!\w|['-]\w)"
-    return re.search(pattern, normalize_for_quote(text)) is not None
 
 
 class EventType(StrEnum):

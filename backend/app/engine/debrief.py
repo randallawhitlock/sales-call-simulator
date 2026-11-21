@@ -1,216 +1,176 @@
-"""The debrief: the scorecard, the evidence it links to, the case notes and what to retry.
+"""The debrief: grading runs, stored judge output and the targeted retry.
 
-Built only for a call that has ended. Everything in it is derived from the stored event log,
-the transcript and the latest stored judgment, so opening a debrief twice shows the same thing.
+A debrief is always computed from the stored log and the stored judge output, so it can be
+rebuilt at any time and always comes out the same. Running the judge is a separate, explicit
+step (``grade``), and its output is stored and reused until someone asks to regrade.
 """
 
 from datetime import datetime
-from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel
 
-from app.content.common import OutcomeKind
-from app.content.loader import ContentBundle
-from app.content.scenario import OutcomeVerdict, Scenario
-from app.engine.checks import Facts
-from app.engine.events import Event, Utterance
-from app.engine.grading import (
-    CriterionResult,
-    DimensionScore,
-    GradeStatus,
-    GradingState,
-    Score,
-    Scorecard,
-    grade,
-    outcome_label,
-)
+from app.engine.checks import run_checks
+from app.engine.grading import Graded, grade_call
+from app.engine.records import SessionState
+from app.engine.session import Invalid, SessionError, SessionService
 from app.engine.store import SessionRow
-from app.engine.timeline import TimelineEntry, timeline
-from app.judge.contract import Judgment
+from app.judge.judges import Judge, JudgeError
+from app.judge.models import GradeRow
+from app.judge.prompt import JUDGE_PROMPT_VERSION, JudgePrompt, build_prompt
 
-RETRY_FOCUS_ITEMS = 3
+JudgeStatus = Literal["off", "pending", "done", "failed"]
 
-
-class JudgeState(StrEnum):
-    GRADED = "graded"
-    """The debrief uses a stored judgment."""
-    NOT_RUN = "not_run"
-    """A judge is configured and has not graded this call yet."""
-    OFF = "off"
-    """No judge is configured. Judged items stay ungraded."""
-    FAILED = "failed"
-    """The judge was asked and gave no usable answer. Asking again may work."""
+MAX_JUDGE_RUNS = 5
+"""Judge runs one call may use, failures and regrades included. Each run is a paid model call
+and the endpoint is open to whoever holds the session id."""
+MAX_PROMPT_CHARS = 400_000
+"""A call whose prompt is longer than this isn't sent to the judge. Far above any real call."""
 
 
-class JudgeInfo(BaseModel):
-    state: JudgeState
-    judge: str | None = None
-    """The judge behind the judgment in use, else the configured judge."""
-    served_model: str | None = None
-    prompt_version: str | None = None
-    attempt: int | None = None
-    graded_at: datetime | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    error: str | None = None
-    """Why the latest grading request failed. A stored judgment, if any, is still in use."""
+class TooManyGrades(SessionError):
+    status_code = 429
 
 
-PENDING = {
-    JudgeState.NOT_RUN: "Waiting for the judge.",
-    JudgeState.OFF: "No judge is configured, so this item was not graded.",
-    JudgeState.FAILED: "The judge did not answer, so this item was not graded.",
+_NOTES: dict[JudgeStatus, str] = {
+    "off": "No judge is configured (set ANTHROPIC_API_KEY), so this item isn't graded.",
+    "pending": "Waiting for the judge.",
+    "failed": "The judge couldn't grade this call. Try grading again.",
+    "done": "",
 }
 
 
-class Versions(BaseModel):
+class JudgeInfo(BaseModel):
+    status: JudgeStatus
+    """``off``: no judge configured. ``pending``: not graded yet. ``failed``: the last run
+    failed and nothing is stored. ``done``: judged items come from a stored run."""
+    name: str | None = None
+    prompt_version: str | None = None
+    graded_at: datetime | None = None
+    error: str | None = None
+    runs_left: int = MAX_JUDGE_RUNS
+    """Judge runs this call may still use."""
+
+
+class Debrief(Graded):
+    session_id: str
+    scenario_id: str
     scenario_version: int
     catalog_version: str
     ruleset_version: str
-    rubric: str
-
-
-class OutcomeView(BaseModel):
-    kind: OutcomeKind | None
-    """None when the call ended with no outcome recorded."""
-    plan_name: str | None
-
-
-class CaseOutcome(BaseModel):
-    kind: OutcomeKind
-    plans: list[str]
-    acceptable: bool
-    rationale: str
-
-
-class CaseTrap(BaseModel):
-    description: str
-    rationale: str
-
-
-class CaseNotes(BaseModel):
-    """What the case was built to teach. Scenario truth, shown only after the call."""
-
-    title: str
-    outcomes: list[CaseOutcome]
-    traps: list[CaseTrap]
-
-
-class RetryFocus(BaseModel):
-    criterion_id: str
-    title: str
-    why: str
-
-
-class Debrief(BaseModel):
-    session_id: str
-    scenario_id: str
-    versions: Versions
-    state: GradingState
-    score: Score
-    dimensions: list[DimensionScore]
-    criteria: list[CriterionResult]
-    critical: list[str]
+    rubric_id: str
+    rubric_version: int
     judge: JudgeInfo
-    outcome: OutcomeView
-    timeline: list[TimelineEntry]
-    case: CaseNotes
-    retry_focus: list[RetryFocus]
-    """Where to put attention on another attempt at this case, most costly first."""
 
 
-def judge_info(
-    judgment: Judgment | None, configured: str | None, error: str | None = None
-) -> JudgeInfo:
-    if judgment is not None:
-        return JudgeInfo(
-            state=JudgeState.GRADED,
-            judge=judgment.judge,
-            served_model=judgment.served_model,
-            prompt_version=judgment.prompt_version,
-            attempt=judgment.attempt,
-            graded_at=judgment.created_at,
-            input_tokens=judgment.input_tokens,
-            output_tokens=judgment.output_tokens,
-            error=error,
+class DebriefService:
+    def __init__(self, sessions: SessionService, judge: Judge | None) -> None:
+        self.sessions = sessions
+        self.judge = judge
+
+    @property
+    def judge_name(self) -> str:
+        return self.judge.name if self.judge is not None else "off"
+
+    def debrief(self, session_id: str) -> Debrief:
+        row = self.sessions.require_ended(session_id)
+        return self._debrief(row, self.sessions.store.get_grade(session_id), None)
+
+    def grade(self, session_id: str, *, regrade: bool = False) -> Debrief:
+        """Runs the judge unless a stored run exists (or ``regrade``), stores the result, and
+        returns the debrief. A failed run stores nothing and keeps any earlier run; the
+        debrief reports the error so the learner can try again. A call gets
+        ``MAX_JUDGE_RUNS`` runs, failed ones included."""
+        with self.sessions.turn_lock(f"{session_id}#grade"):
+            row = self.sessions.require_ended(session_id)
+            stored = self.sessions.store.get_grade(session_id)
+            if self.judge is None or (stored is not None and not regrade):
+                return self._debrief(row, stored, None)
+            if self.sessions.store.judge_runs(session_id) >= MAX_JUDGE_RUNS:
+                raise TooManyGrades(
+                    f"this call has used its {MAX_JUDGE_RUNS} grading runs; the debrief shows "
+                    "the last grade that was stored"
+                )
+            prompt = self._prompt(row)
+            if len(prompt.user) > MAX_PROMPT_CHARS:
+                return self._debrief(row, stored, "this call is too long for the judge to grade")
+            self.sessions.store.count_judge_run(session_id)
+            try:
+                output = self.judge.grade(prompt)
+            except JudgeError as exc:
+                return self._debrief(row, stored, str(exc))
+            fresh = GradeRow(
+                session_id=session_id,
+                judge=self.judge.name,
+                prompt_version=JUDGE_PROMPT_VERSION,
+                rubric_id=row.rubric_id,
+                rubric_version=row.rubric_version,
+                graded_at=self.sessions.clock(),
+                output=output,
+            )
+            self.sessions.store.put_grade(fresh)
+            return self._debrief(row, fresh, None)
+
+    def retry_focus(self, scenario_id: str, retry_of: str) -> tuple[str, ...]:
+        """What a targeted retry of ``retry_of`` works on. A retry is the same case again."""
+        row = self.sessions.require_ended(retry_of)
+        if row.scenario_id != scenario_id:
+            raise Invalid("a retry is the same case: scenario_id must match the call it retries")
+        return tuple(self.debrief(retry_of).focus)
+
+    def _prompt(self, row: SessionRow) -> JudgePrompt:
+        content = self.sessions.pinned_content(row)
+        scenario = content.scenario(row.scenario_id)
+        events = self.sessions.store.events(row.session_id)
+        utterances = self.sessions.store.utterances(row.session_id)
+        checks = run_checks(scenario, content.catalog, content.frame, events, utterances)
+        record = SessionState.fold(events).record
+        return build_prompt(
+            scenario=scenario,
+            catalog=content.catalog,
+            frame=content.frame,
+            rubric=content.rubric,
+            utterances=utterances,
+            notes=record.notes,
+            checks={r.check_id: r for r in checks},
         )
-    if error is not None:
-        return JudgeInfo(state=JudgeState.FAILED, judge=configured, error=error)
-    state = JudgeState.OFF if configured is None else JudgeState.NOT_RUN
-    return JudgeInfo(state=state, judge=configured)
 
-
-def scorecard(facts: Facts, content: ContentBundle, judgment: Judgment | None) -> Scorecard:
-    return grade(facts, content.rubric, content.ruleset, judgment.output if judgment else None)
-
-
-def build_debrief(
-    row: SessionRow,
-    content: ContentBundle,
-    events: list[Event],
-    utterances: list[Utterance],
-    judgment: Judgment | None,
-    info: JudgeInfo,
-) -> Debrief:
-    scenario = content.scenario(row.scenario_id)
-    facts = Facts(scenario, content.catalog, content.frame, events, utterances)
-    card = grade(
-        facts,
-        content.rubric,
-        content.ruleset,
-        judgment.output if judgment else None,
-        pending=PENDING.get(info.state, ""),
-    )
-    kind, plan_name = outcome_label(facts)
-    return Debrief(
-        session_id=row.session_id,
-        scenario_id=row.scenario_id,
-        versions=Versions(
+    def _debrief(self, row: SessionRow, stored: GradeRow | None, error: str | None) -> Debrief:
+        content = self.sessions.pinned_content(row)
+        if stored is not None:
+            status: JudgeStatus = "done"
+        elif error is not None:
+            status = "failed"
+        elif self.judge is None:
+            status = "off"
+        else:
+            status = "pending"
+        graded = grade_call(
+            scenario=content.scenario(row.scenario_id),
+            catalog=content.catalog,
+            frame=content.frame,
+            rubric=content.rubric,
+            ruleset=content.ruleset,
+            events=self.sessions.store.events(row.session_id),
+            utterances=self.sessions.store.utterances(row.session_id),
+            judge_output=stored.output if stored is not None else None,
+            judge_note=_NOTES[status],
+        )
+        return Debrief(
+            **graded.model_dump(),
+            session_id=row.session_id,
+            scenario_id=row.scenario_id,
             scenario_version=row.scenario_version,
             catalog_version=row.catalog_version,
             ruleset_version=row.ruleset_version,
-            rubric=f"{row.rubric_id} v{row.rubric_version}",
-        ),
-        state=card.state,
-        score=card.score,
-        dimensions=card.dimensions,
-        criteria=card.criteria,
-        critical=card.critical,
-        judge=info,
-        outcome=OutcomeView(kind=kind, plan_name=plan_name),
-        timeline=timeline(events, content.catalog),
-        case=case_notes(scenario, content),
-        retry_focus=retry_focus(card.criteria),
-    )
-
-
-def case_notes(scenario: Scenario, content: ContentBundle) -> CaseNotes:
-    return CaseNotes(
-        title=scenario.title,
-        outcomes=[
-            CaseOutcome(
-                kind=o.kind,
-                plans=[content.catalog.plan(i).name for i in o.plan_ids],
-                acceptable=o.verdict is OutcomeVerdict.ACCEPTABLE,
-                rationale=scenario.without_canaries(o.rationale),
-            )
-            for o in scenario.outcomes
-        ],
-        traps=[
-            CaseTrap(
-                description=scenario.without_canaries(t.description),
-                rationale=scenario.without_canaries(t.rationale),
-            )
-            for t in scenario.traps
-        ],
-    )
-
-
-def retry_focus(criteria: list[CriterionResult]) -> list[RetryFocus]:
-    """The scored items that earned nothing, critical ones first, then by points lost."""
-    missed = [c for c in criteria if c.status in (GradeStatus.FAIL, GradeStatus.NOT_OBSERVED)]
-    missed.sort(key=lambda c: (not c.critical, -c.points))
-    return [
-        RetryFocus(criterion_id=c.criterion_id, title=c.title, why=c.rationale or c.detail)
-        for c in missed[:RETRY_FOCUS_ITEMS]
-    ]
+            rubric_id=row.rubric_id,
+            rubric_version=row.rubric_version,
+            judge=JudgeInfo(
+                status=status,
+                name=stored.judge if stored else (self.judge.name if self.judge else None),
+                prompt_version=stored.prompt_version if stored else None,
+                graded_at=stored.graded_at if stored else None,
+                error=error,
+                runs_left=max(0, MAX_JUDGE_RUNS - self.sessions.store.judge_runs(row.session_id)),
+            ),
+        )

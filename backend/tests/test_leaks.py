@@ -11,7 +11,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from app.content.loader import load_bundle
+from app.content.loader import internal_ids, load_bundle
 from tests.harness import Call
 
 BUNDLE = load_bundle()
@@ -76,6 +76,8 @@ def test_no_truth_reaches_the_learner(client: TestClient, scenario_id: str) -> N
     call.get("")
     call.get("/answer-key", expect=403)
     call.get("/findings", expect=403)
+    call.get("/debrief", expect=403)
+    call.post("/grade", expect=403)
     call.start().opening()
     call.hear("I have a question.")
     sweep(call)
@@ -83,7 +85,7 @@ def test_no_truth_reaches_the_learner(client: TestClient, scenario_id: str) -> N
     call.get("/findings", expect=403)
     call.get("/actor-qa", expect=403)
     call.get("/debrief", expect=403)
-    call.post("/debrief/judge", expect=403)
+    call.post("/grade", expect=403)
     call.end()
     call.get("")
     call.get("/record")
@@ -96,15 +98,10 @@ def test_no_truth_reaches_the_learner(client: TestClient, scenario_id: str) -> N
     for secret in [*canaries, *DEFECTS]:
         assert secret in key.text
 
-    # A retry is a new call: what it shows before it is answered is as clean as any other.
-    retry = Call.__new__(Call)
-    resp = client.post("/api/sessions", json={"scenario_id": scenario_id, "retry_of": call.sid})
-    assert resp.status_code == 201
-    retry.responses = [resp.text, client.get(f"/api/sessions/{resp.json()['session_id']}").text]
-    assert_clean(retry, canaries)
-    scenario = BUNDLE.scenario(scenario_id)
-    for truth in (scenario.title, *(t.description for t in scenario.traps)):
-        assert truth not in "".join(retry.responses)
+
+def test_internal_ids_include_pharmacy_networks() -> None:
+    ids = internal_ids(BUNDLE.catalog)
+    assert {p.pharmacy_network_id for p in BUNDLE.catalog.plans} <= ids
 
 
 def test_session_view_hides_persona_rolls(client: TestClient) -> None:

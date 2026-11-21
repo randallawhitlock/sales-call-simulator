@@ -25,6 +25,8 @@ const SESSION: Session = {
   ended_at: null,
   on_hold: false,
   turn_pending: false,
+  retry_of: null,
+  focus: [],
 }
 
 const EMPTY_RECORD: CustomerRecord = {
@@ -48,7 +50,7 @@ const utt = (utt_id: string, speaker: Utterance['speaker'], text: string): Utter
 })
 
 /** A fake API. ``session`` is read on every call, so a test can change it mid-flight. */
-function serve(state: { session: Session | null; transcript: Utterance[]; down?: boolean }) {
+function serve(state: { session: Session | null; transcript: Utterance[]; down?: boolean; transcriptFails?: boolean }) {
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     const path = String(input).replace(/^\/api/, '').split('?')[0]!
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
@@ -57,12 +59,14 @@ function serve(state: { session: Session | null; transcript: Utterance[]; down?:
       const sent = JSON.parse(String(init?.body)) as { text: string }
       return json({ learner: utt('u0001', 'learner', sent.text), customer: utt('u0002', 'customer', 'Sorry, yes.') })
     }
-    if (path === '/health') return json({ status: 'ok', version: 'test', actor: 'scripted', catalog_version: 'v' })
+    if (path === '/health') return json({ status: 'ok', version: 'test', actor: 'scripted', catalog_version: 'v', judge: 'off' })
     if (path === '/scenarios') return json([{ scenario_id: 'scenario-101', learner_title: 'Inbound call' }])
     if (path === '/sessions' && state.session) return json({ ...state.session, status: 'created' })
     if (path === '/sessions/s-1/start' && state.session) return json({ ...state.session, status: 'active' })
     if (path === '/sessions/s-1') return state.session ? json(state.session) : json({ detail: 'session not found' }, 404)
-    if (path.endsWith('/transcript')) return json(state.transcript)
+    if (path.endsWith('/transcript')) {
+      return state.transcriptFails ? new Response('Internal Server Error', { status: 500 }) : json(state.transcript)
+    }
     if (path.endsWith('/found')) return json({ plans: [], providers: [], drugs: [], pharmacies: [] })
     if (path.endsWith('/record')) return json(EMPTY_RECORD)
     if (path.endsWith('/applications') || path.endsWith('/evidence') || path.endsWith('/documents')) return json([])
@@ -138,6 +142,18 @@ describe('App rejoin', () => {
     expect(window.location.search).toBe('')
   })
 
+  it('shows what a retry works on, before and during the call', async () => {
+    openAt('?session=s-1')
+    const focus = [{ criterion_id: 'ver-claims', title: 'Coverage claims were backed by a lookup' }]
+    serve({ session: { ...SESSION, status: 'created', retry_of: 's-0', focus }, transcript: [] })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByText(/This is a retry/)).toBeTruthy())
+    expect(screen.getByText('Coverage claims were backed by a lookup')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Answer the call' }))
+    await waitFor(() => expect(screen.getByText(/Retry. Work on: Coverage claims were backed/)).toBeTruthy())
+  })
+
   it('drops the reopen error once another call has started', async () => {
     openAt('?session=s-1')
     const state = { session: null as Session | null, transcript: [] }
@@ -169,6 +185,14 @@ describe('App rejoin', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     await waitFor(() => expect(screen.getByText('Hi there')).toBeTruthy())
     expect(window.location.search).toBe('?session=s-1')
+  })
+
+  it('says so when the transcript fails to load', async () => {
+    openAt('?session=s-1')
+    serve({ session: SESSION, transcript: [], transcriptFails: true })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain("Couldn't load this call: HTTP 500"))
   })
 
   it('treats an empty session in the URL as no call', async () => {
@@ -246,28 +270,5 @@ describe('App rejoin', () => {
     expect(screen.queryByText('Ada is answering…')).toBeNull()
     expect((screen.getByLabelText('Your line') as HTMLTextAreaElement).disabled).toBe(false)
     expect(polls() - before).toBe(5)
-  })
-
-  it('rings another attempt with what the last debrief said to work on', async () => {
-    openAt('?session=s-2')
-    const retry: Session = {
-      ...SESSION,
-      session_id: 's-2',
-      status: 'created',
-      retry_of: 's-1',
-      retry_focus: ['Asked which pharmacy the customer uses'],
-    }
-    const fetchMock = vi.fn(async (input: string) => {
-      const path = String(input).replace(/^\/api/, '')
-      const body = path === '/sessions/s-2' ? retry : path === '/scenarios' ? [] : { status: 'ok', actor: 'scripted' }
-      return new Response(JSON.stringify(body), { status: 200 })
-    })
-    vi.stubGlobal('fetch', fetchMock)
-    render(<App />)
-
-    await waitFor(() => expect(screen.getByText('Incoming call')).toBeTruthy())
-    expect(screen.getByText('Another attempt at this call.')).toBeTruthy()
-    expect(screen.getByText('Asked which pharmacy the customer uses')).toBeTruthy()
-    expect(new URLSearchParams(window.location.search).get('session')).toBe('s-2')
   })
 })

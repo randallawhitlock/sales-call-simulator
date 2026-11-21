@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sqlite3
 import threading
 import time
 from collections.abc import Sequence
@@ -30,7 +31,7 @@ from app.actor.prompt import (
 from app.content.loader import load_bundle
 from app.content.scenario import Reveal
 from app.engine.events import EventType, Speaker
-from app.engine.session import TurnIn
+from app.engine.session import ActorUnavailable, TurnIn
 from tests.harness import Call
 
 BUNDLE = load_bundle()
@@ -106,6 +107,13 @@ def test_leak_guard_catches_canaries_and_truth() -> None:
     problems = prompt_problems(bad, BUNDLE)
     assert any("leak canary" in p for p in problems)
     assert any("scenario truth" in p for p in problems)
+
+
+def test_leak_guard_catches_a_trap_rationale() -> None:
+    s = next(s for s in BUNDLE.scenarios.values() if s.traps)
+    prompt = prompt_for(s.scenario_id)
+    bad = replace(prompt, text=prompt.text + "\n" + s.traps[0].rationale)
+    assert any("scenario truth" in p for p in prompt_problems(bad, BUNDLE))
 
 
 def test_jargon_in_a_topic_fails_the_startup_check() -> None:
@@ -560,6 +568,61 @@ def test_end_cannot_slip_between_the_turn_checks_and_the_learner_line(
     assert service.get(call.sid).status.value == "ended"
 
 
+class FailingCommit:
+    """Stands in for the connection: the first COMMIT raises, everything else passes through."""
+
+    def __init__(self, real: sqlite3.Connection) -> None:
+        self.real = real
+        self.failed = False
+
+    def execute(self, sql: str, *args: Any) -> sqlite3.Cursor:
+        if sql == "COMMIT" and not self.failed:
+            self.failed = True
+            raise sqlite3.OperationalError("database is locked")
+        return self.real.execute(sql, *args)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.real, name)
+
+
+def test_a_failed_commit_leaves_no_turn_pending(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call = Call(client, CASE_A).start()
+    service = call.service
+    monkeypatch.setattr(service.store, "_conn", FailingCommit(service.store._conn))
+    with pytest.raises(sqlite3.OperationalError):
+        service.take_turn(call.sid, TurnIn(client_utt_id="turn-commit-001", text="Hello?"))
+    assert service.turn_pending(call.sid) is False
+    assert service._inflight == {}
+
+
+def test_a_thread_that_cannot_start_gives_its_slot_back(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    call = Call(client, CASE_A).start()
+    service = call.service
+    service._actor_slots = threading.BoundedSemaphore(1)
+
+    class NoThreads:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as m:
+        m.setattr("app.engine.session.threading.Thread", NoThreads)
+        with pytest.raises(ActorUnavailable, match="couldn't be started") as failed:
+            service.take_turn(call.sid, TurnIn(client_utt_id="turn-nothread-1", text="Hello?"))
+    assert isinstance(failed.value.__cause__, RuntimeError)
+    assert service.turn_pending(call.sid) is False
+    assert service._actor_slots.acquire(blocking=False)
+    service._actor_slots.release()
+    retry = service.take_turn(call.sid, TurnIn(client_utt_id="turn-nothread-1", text="Hello?"))
+    assert retry.customer is not None
+
+
 def test_retries_against_a_hung_model_are_bounded(client: TestClient) -> None:
     call = Call(client, CASE_A).start()
     service = call.service
@@ -614,20 +677,20 @@ def test_an_actor_bug_ends_the_turn_cleanly(client: TestClient) -> None:
     call = Call(client, CASE_A).start()
     call.service.actor = Broken()
     assert "failed" in call.turn("Hello?", expect=502)["detail"]
-    assert call.service._turn_locks.keys() == set()
+    assert call.service._turn_locks == {}
     assert call.service._inflight == {}
 
 
 def test_turn_locks_live_only_while_a_turn_is_in_flight(client: TestClient) -> None:
     call = Call(client, CASE_A).start()
     call.turn("Hello?")
-    assert call.service._turn_locks.keys() == set() and call.service._inflight == {}
+    assert call.service._turn_locks == {} and call.service._inflight == {}
     actor, (t1, _) = blocked_turn(call)
-    assert call.service._turn_locks.keys() == {call.sid}
+    assert set(call.service._turn_locks) == {call.sid}
     assert set(call.service._inflight) == {call.sid}
     actor.release.set()
     t1.join(5)
-    assert call.service._turn_locks.keys() == set() and call.service._inflight == {}
+    assert call.service._turn_locks == {} and call.service._inflight == {}
 
 
 def test_actor_timeout_from_env() -> None:

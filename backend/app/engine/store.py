@@ -1,4 +1,4 @@
-"""SQLite persistence for sessions, the event log, utterances and judge output.
+"""SQLite persistence for sessions, the event log and utterances.
 
 The event log is append-only. Every piece of session state (records, applications, evidence)
 is a fold over it, so replaying a stored log reproduces the state that was graded.
@@ -11,11 +11,12 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
 from app.engine.events import Event, EventType, Utterance
-from app.judge.contract import Judgment
+from app.judge.models import GradeRow
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -40,11 +41,13 @@ CREATE TABLE IF NOT EXISTS utterances (
     PRIMARY KEY (session_id, utt_id),
     UNIQUE (session_id, client_utt_id)
 );
-CREATE TABLE IF NOT EXISTS judgments (
-    session_id TEXT NOT NULL,
-    attempt INTEGER NOT NULL,
-    data TEXT NOT NULL,
-    PRIMARY KEY (session_id, attempt)
+CREATE TABLE IF NOT EXISTS grades (
+    session_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS judge_runs (
+    session_id TEXT PRIMARY KEY,
+    n INTEGER NOT NULL
 );
 """
 
@@ -76,14 +79,14 @@ class SessionRow(BaseModel):
     seed: int
     mood: str
     voice: str
-    retry_of: str | None = None
-    """The earlier session this one is another attempt at."""
-    retry_focus: tuple[str, ...] = ()
-    """What that attempt's debrief said to work on, fixed when this session was created."""
     status: SessionStatus
     created_at: datetime
     started_at: datetime | None = None
     ended_at: datetime | None = None
+    retry_of: str | None = None
+    """The ended call this one retries, for a targeted retry."""
+    focus: tuple[str, ...] = ()
+    """Criteria the retry works on, from that call's debrief."""
 
 
 class Store:
@@ -113,11 +116,13 @@ class Store:
             self._depth = 1
             try:
                 yield self._conn
-            except BaseException:
-                self._conn.execute("ROLLBACK")
-                raise
-            else:
                 self._conn.execute("COMMIT")
+            except BaseException:
+                # SQLite ends the transaction itself on some errors (disk full, I/O). Rolling
+                # back again would raise and hide the error that matters.
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
             finally:
                 self._depth = 0
 
@@ -137,6 +142,39 @@ class Store:
                 "SELECT data FROM sessions WHERE session_id = ?", (session_id,)
             ).fetchone()
         return None if found is None else SessionRow.model_validate_json(found[0])
+
+    # Grades
+
+    def put_grade(self, row: GradeRow) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO grades (session_id, data) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET data = excluded.data",
+                (row.session_id, row.model_dump_json()),
+            )
+
+    def get_grade(self, session_id: str) -> GradeRow | None:
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT data FROM grades WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return None if found is None else GradeRow.model_validate_json(found[0])
+
+    def judge_runs(self, session_id: str) -> int:
+        """How many times the judge has been asked to grade this call, failures included."""
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT n FROM judge_runs WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return 0 if found is None else int(found[0])
+
+    def count_judge_run(self, session_id: str) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO judge_runs (session_id, n) VALUES (?, 1) "
+                "ON CONFLICT(session_id) DO UPDATE SET n = n + 1",
+                (session_id,),
+            )
 
     # Events
 
@@ -276,26 +314,8 @@ class Store:
             ).fetchall()
         return [Utterance.model_validate_json(r[0]) for r in rows]
 
-    # Judgments. Append-only: a regrade adds an attempt and the latest one is used.
 
-    def add_judgment(self, session_id: str, build: Callable[[int], Judgment]) -> Judgment:
-        """``build`` receives the next attempt number."""
-        with self.transaction() as conn:
-            (last,) = conn.execute(
-                "SELECT COALESCE(MAX(attempt), 0) FROM judgments WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
-            judgment = build(last + 1)
-            conn.execute(
-                "INSERT INTO judgments (session_id, attempt, data) VALUES (?, ?, ?)",
-                (session_id, judgment.attempt, judgment.model_dump_json()),
-            )
-            return judgment
-
-    def latest_judgment(self, session_id: str) -> Judgment | None:
-        with self._lock:
-            found = self._conn.execute(
-                "SELECT data FROM judgments WHERE session_id = ? ORDER BY attempt DESC LIMIT 1",
-                (session_id,),
-            ).fetchone()
-        return None if found is None else Judgment.model_validate_json(found[0])
+def dump_payload(model: BaseModel) -> dict[str, Any]:
+    """A model as JSON-safe values for an event payload."""
+    data: dict[str, Any] = model.model_dump(mode="json")
+    return data

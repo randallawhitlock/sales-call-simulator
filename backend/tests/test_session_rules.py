@@ -1,6 +1,7 @@
 """Session lifecycle, learner input rules and replay."""
 
 import json
+import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -112,7 +113,7 @@ def test_sessions_pin_versions_and_seeded_rolls(client: TestClient) -> None:
     second = Call(client, CASE_A, seed=11)
     a, b = first.service.get(first.sid), second.service.get(second.sid)
     assert (a.mood, a.voice) == (b.mood, b.voice)
-    assert (a.catalog_version, a.ruleset_version, a.rubric_version) == ("2027-v1", "mvp-2027.1", 2)
+    assert (a.catalog_version, a.ruleset_version, a.rubric_version) == ("2027-v1", "mvp-2027.1", 1)
 
 
 def test_findings_refuse_content_the_session_was_not_pinned_to(client: TestClient) -> None:
@@ -344,3 +345,36 @@ def test_a_field_save_cannot_land_after_a_submit(client: TestClient) -> None:
     assert waited == [True]
     types = [e.type for e in service.events(call.sid)]
     assert types[-2:] == [EventType.APPLICATION_UPDATED, EventType.APPLICATION_SUBMITTED]
+
+
+def test_a_failed_commit_rolls_back_and_the_next_transaction_works(tmp_path: Path) -> None:
+    store = Store(str(tmp_path / "commit.db"))
+    real = store._conn
+
+    class FailingCommit:
+        failed = False
+
+        def execute(self, sql: str) -> sqlite3.Cursor:
+            if sql == "COMMIT" and not self.failed:
+                self.failed = True
+                raise sqlite3.OperationalError("database is locked")
+            return real.execute(sql)
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(real, name)
+
+    store._conn = FailingCommit()  # type: ignore[assignment]
+    with pytest.raises(sqlite3.OperationalError), store.transaction():
+        pass
+    assert not real.in_transaction
+    with store.transaction() as conn:
+        conn.execute("SELECT 1")
+
+
+def test_an_error_survives_when_sqlite_already_ended_the_transaction(tmp_path: Path) -> None:
+    store = Store(str(tmp_path / "ended.db"))
+    with pytest.raises(ValueError, match="the real error"), store.transaction() as conn:
+        conn.execute("ROLLBACK")  # what SQLite does by itself on a full disk or an I/O error
+        raise ValueError("the real error")
+    with store.transaction() as conn:
+        conn.execute("SELECT 1")

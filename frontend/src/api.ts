@@ -18,20 +18,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   const res = await fetch(`/api${path}`, init)
   const text = await res.text()
-  if (!res.ok) {
-    // An error body may not be JSON at all (a proxy's or the server's plain "Internal Server
-    // Error"); the status is still worth more than a parse failure.
-    throw new ApiError(res.status, describeError(parseJson(text)) ?? `HTTP ${res.status}`)
-  }
-  return (text ? JSON.parse(text) : null) as T
-}
-
-function parseJson(text: string): unknown {
+  let data: unknown = null
   try {
-    return text ? JSON.parse(text) : null
+    data = text ? JSON.parse(text) : null
   } catch {
-    return null
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''}`)
+    throw new ApiError(res.status, 'The server sent a response the app could not read')
   }
+  if (!res.ok) {
+    throw new ApiError(res.status, describeError(data) ?? `HTTP ${res.status}`)
+  }
+  return data as T
 }
 
 function describeError(data: unknown): string | null {
@@ -39,10 +36,10 @@ function describeError(data: unknown): string | null {
   const detail = (data as Record<string, unknown>)['detail']
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) {
-    return detail
-      .map((d) => (typeof d === 'object' && d !== null ? String((d as { msg?: unknown }).msg) : ''))
-      .filter(Boolean)
-      .join('; ')
+    const msgs = detail
+      .map((d) => (typeof d === 'object' && d !== null ? (d as { msg?: unknown }).msg : null))
+      .filter((m): m is string => typeof m === 'string' && m !== '')
+    return msgs.length ? msgs.join('; ') : null
   }
   return null
 }
@@ -64,6 +61,8 @@ export function clientId(prefix: string): string {
 
 export type Authority = 'regulatory' | 'cms_guidance' | 'plan' | 'organization' | 'training'
 
+export type RuleStatus = 'approved' | 'unverified' | 'retired' | 'disputed'
+
 export interface StandardText {
   rule_id: string
   title: string
@@ -80,7 +79,7 @@ export interface RuleReference {
   authority: Authority
   citation: string
   source_urls: string[]
-  status: 'approved' | 'unverified' | 'retired' | 'disputed'
+  status: RuleStatus
   verified_as_of: string | null
 }
 
@@ -98,8 +97,8 @@ export interface Health {
   version: string
   actor: string
   catalog_version: string
-  /** The model that grades conversation, or null when only the rule checks grade. */
-  judge?: string | null
+  /** The model grading calls, or `off`. */
+  judge: string
 }
 
 export interface ScenarioCard {
@@ -141,9 +140,14 @@ export interface Session {
   /** Live state, so a reloaded call screen shows hold and a reply in flight correctly. */
   on_hold: boolean
   turn_pending: boolean
-  /** The earlier call this one is another attempt at, and what its debrief said to work on. */
-  retry_of?: string | null
-  retry_focus?: string[]
+  /** A targeted retry: the call it retries and what to work on this time. */
+  retry_of: string | null
+  focus: FocusItem[]
+}
+
+export interface FocusItem {
+  criterion_id: string
+  title: string
 }
 
 export interface Utterance {
@@ -153,7 +157,6 @@ export interface Utterance {
   text: string
   heard_text: string
   t_ms: number
-  interrupted?: boolean
 }
 
 export interface TurnOut {
@@ -427,105 +430,68 @@ export type Dimension =
   | 'communication'
   | 'completion'
 
-/** A quote the judge cited, and whether the server found it where the judge said. */
-export interface Quote {
-  /** Null when the quote is from the saved notes. */
-  utt_id: string | null
+export interface EvidenceView {
+  /** A transcript line, or `notes`. */
+  utt_id: string
+  speaker: Utterance['speaker'] | null
   quote: string
+  /** The server found the quote in the cited line. */
   verified: boolean
+  problem: string | null
 }
 
-export interface RuleLabel {
+export interface RuleCite {
   rule_id: string
   title: string
   authority: Authority
   citation: string
-  status: 'approved' | 'unverified' | 'retired' | 'disputed'
+  status: RuleStatus
   verified_as_of: string | null
-}
-
-export interface ClaimResult {
-  utt_id: string
-  quote: string
-  label: string
-  status: 'backed' | 'unbacked' | 'unverifiable'
-  detail: string
-  event_seqs: number[]
 }
 
 export interface CriterionResult {
   criterion_id: string
   dimension: Dimension
   title: string
-  points: number
-  earned: number
   method: 'deterministic' | 'judged' | 'hybrid'
+  points: number
+  /** Null when the item leaves the denominator. */
+  earned: number | null
   status: GradeStatus
   critical: boolean
   detail: string
-  /** The judge's reasoning, in its own words. */
-  rationale: string | null
-  utt_ids: string[]
+  evidence: EvidenceView[]
   event_seqs: number[]
-  quotes: Quote[]
-  claims: ClaimResult[]
-  rules: RuleLabel[]
+  rules: RuleCite[]
 }
 
-export interface Score {
-  earned: number
-  possible: number
-  percent: number | null
-}
-
-export interface DimensionScore extends Score {
+export interface DimensionScore {
   dimension: Dimension
   weight: number
+  earned: number
+  possible: number
 }
 
 export interface JudgeInfo {
-  state: 'graded' | 'not_run' | 'off' | 'failed'
-  judge: string | null
-  served_model: string | null
+  status: 'off' | 'pending' | 'done' | 'failed'
+  name: string | null
   prompt_version: string | null
-  attempt: number | null
   graded_at: string | null
   error: string | null
-}
-
-export interface TimelineEntry {
-  seq: number
-  t_ms: number
-  type: string
-  utt_id: string | null
-  summary: string
-}
-
-export interface CaseNotes {
-  title: string
-  outcomes: { kind: string; plans: string[]; acceptable: boolean; rationale: string }[]
-  traps: { description: string; rationale: string }[]
-}
-
-export interface RetryFocus {
-  criterion_id: string
-  title: string
-  why: string
+  /** Judge runs this call may still use. */
+  runs_left: number
 }
 
 export interface Debrief {
   session_id: string
   scenario_id: string
-  versions: { scenario_version: number; catalog_version: string; ruleset_version: string; rubric: string }
-  state: 'complete' | 'needs_review' | 'incomplete'
-  score: Score
-  dimensions: DimensionScore[]
   criteria: CriterionResult[]
-  /** Criterion ids of the critical findings. */
-  critical: string[]
+  dimensions: DimensionScore[]
+  earned: number
+  possible: number
+  score: number | null
+  complete: boolean
+  critical_findings: string[]
+  focus: string[]
   judge: JudgeInfo
-  outcome: { kind: string | null; plan_name: string | null }
-  timeline: TimelineEntry[]
-  case: CaseNotes
-  retry_focus: RetryFocus[]
 }

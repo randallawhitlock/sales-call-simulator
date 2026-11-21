@@ -83,24 +83,25 @@ export function App() {
     setSessionState(s)
   }
 
+  /** A targeted retry: the new call waits on the incoming card, like any other. */
+  function openRetry(s: Session): void {
+    putSessionInUrl(s.session_id)
+    setRejoinError(null)
+    setCanRetry(false)
+    setSessionState(null)
+    setIncoming(s)
+  }
+
   if (rejoining) {
     return <main className="home muted">Rejoining the call…</main>
   }
-  /** The debrief started another attempt: leave this call and show the new one ringing. */
-  function retry(next: Session): void {
-    setSession(null)
-    putSessionInUrl(next.session_id)
-    setIncoming(next)
-  }
-
   if (session) {
     return (
       <CallScreen
-        key={session.session_id}
         initial={session}
         actor={health && health !== 'down' ? health.actor : ''}
         onExit={() => setSession(null)}
-        onRetry={retry}
+        onRetry={openRetry}
       />
     )
   }
@@ -153,6 +154,16 @@ function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s
     return (
       <section className="incoming">
         <h2>Incoming call</h2>
+        {pending.focus.length > 0 && (
+          <div className="notice">
+            <p>This is a retry of your last call with this customer. Work on:</p>
+            <ol>
+              {pending.focus.map((f) => (
+                <li key={f.criterion_id}>{f.title}</li>
+              ))}
+            </ol>
+          </div>
+        )}
         <dl>
           <dt>Caller</dt>
           <dd>{crm.customer_name}</dd>
@@ -174,22 +185,6 @@ function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s
           organizations with {pending.frame.products_offered} products in {pending.frame.county_name}. Today is{' '}
           {pending.frame.call_date}.
         </p>
-        {pending.retry_of && (
-          <div className="notice retry-focus">
-            <strong>Another attempt at this call.</strong>
-            {(pending.retry_focus ?? []).length > 0 && (
-              <>
-                {' '}
-                Your last debrief said to work on:
-                <ul>
-                  {(pending.retry_focus ?? []).map((title) => (
-                    <li key={title}>{title}</li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </div>
-        )}
         <div className="row">
           <button
             type="button"

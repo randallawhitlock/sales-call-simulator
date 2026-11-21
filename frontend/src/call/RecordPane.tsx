@@ -310,7 +310,7 @@ function NotesSection() {
     <Section title="Notes" savedSeq={record?.saved_seq['notes']}
       onSave={() => put(`${base}/record/notes`, Object.fromEntries(NOTE_FIELDS.map(([k]) => [k, n[k] ?? '']))).then(() => {})}>
       {NOTE_FIELDS.map(([k, label]) => (
-        <Field key={k} label={label}><textarea rows={2} value={n[k] ?? ''} onChange={(e) => setN({ ...n, [k]: e.target.value })} /></Field>
+        <Field key={k} label={label}><textarea rows={2} maxLength={4000} value={n[k] ?? ''} onChange={(e) => setN({ ...n, [k]: e.target.value })} /></Field>
       ))}
     </Section>
   )
