@@ -24,7 +24,7 @@ CONTENT_DIR_ENV = "SIM_CONTENT_DIR"
 MVP_RULESET = Path("rules/mvp-2027.json")
 MVP_FRAME = Path("scenarios/frames/aep-2027.json")
 MVP_CATALOG = Path("catalog/2027-v1.json")
-MVP_RUBRIC = Path("rubric/mvp-1.json")
+MVP_RUBRIC = Path("rubric/mvp-2.json")
 SCENARIO_DIR = Path("scenarios")
 
 CUSTOMER_JARGON = (

@@ -17,7 +17,7 @@ from app.engine.events import Utterance
 from app.engine.records import NotesSection
 from app.judge.models import NOTES
 
-JUDGE_PROMPT_VERSION = "judge-2"
+JUDGE_PROMPT_VERSION = "judge-3"
 
 SYSTEM = f"""You grade a practice phone call from a Medicare sales training simulator. A \
 learner played a licensed agent and an AI played a synthetic beneficiary. Every carrier, plan, \
@@ -32,8 +32,11 @@ what would have been better.
 - evidence: the lines that show it. Each item gives a utt_id and a quote copied word for word \
 from that line: a short run of whole words, at most 25. Use utt_id "{NOTES}" to quote the \
 saved notes. A pass needs at least one quote of three or more words from the learner's own \
-lines, or from the notes: what the customer said can support a pass but can't carry it. A \
-fail should quote the wrong statement when there is one.
+lines: what the customer said can support a pass but can't carry it. Two exceptions. For the \
+criterion about the saved notes, quote the notes; they show what was written down, not what \
+was said, so they carry no other pass. And where a Code check cites a customer line, as it \
+does for the customer's yes to enrolling, a quote of that line carries the pass. A fail \
+should quote the wrong statement when there is one.
 
 The server looks for every quote in the line it cites. A quote that isn't there sends the \
 criterion to human review, so never paraphrase inside a quote or join words from two lines.
@@ -50,7 +53,9 @@ Coverage claims: list every learner statement that a specific doctor or office, 
 pharmacy is covered or in network, or is not, on a specific plan. Use the ids from the \
 reference lists. kind is provider_network for a doctor or office, formulary for a drug, and \
 pharmacy_network for a pharmacy; covered is false when the learner said it is not covered or \
-not in network. Quote the words that make the claim, including "in network", "covered" or \
+not in network. year is the year the statement is about: the plan year, unless the learner \
+plainly meant another, as in "she is in your plan's network this year". Quote the words that \
+make the claim, including "in network", "covered" or \
 "not". Skip statements that name no plan, or no doctor, drug or pharmacy, and questions. \
 Return an empty list if there are none."""
 
@@ -201,7 +206,8 @@ def _criteria(criteria: list[RubricCriterion], checks: dict[CheckId, CheckResult
                 )
             elif c.check_id in checks:
                 result = checks[c.check_id]
-                lines.append(f"  Code check ({result.status.value}): {result.detail}")
+                cited = f" Lines it cited: {', '.join(result.utt_ids)}." if result.utt_ids else ""
+                lines.append(f"  Code check ({result.status.value}): {result.detail}{cited}")
     return "\n".join(lines)
 
 

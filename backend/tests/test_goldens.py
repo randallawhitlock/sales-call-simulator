@@ -679,3 +679,79 @@ def test_a_bare_benefit_before_a_same_turn_disclaimer_goes_to_the_judge(
     )
     call.end()
     assert call.detail("disclaimer_before_benefits")["status"] == UG
+
+
+def test_a_pause_is_not_an_objection(client: TestClient) -> None:
+    """ "Hold on, let me grab a pen" after the yes may be nothing at all. It is too weak to be
+    a critical finding on its own, so it goes to the judge; a real objection still fails."""
+    call, app_id = enroll_to_consent(client)
+    call.say("Would you like me to submit your enrollment in this plan?")
+    call.consent(app_id, call.hear("Yes, sign me up."))
+    call.hear("Hold on, let me grab a pen for the confirmation number.")
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert (result["status"], result["critical"]) == (UG, False)
+    assert "might be a hesitation" in result["detail"]
+
+    call, app_id = enroll_to_consent(client)
+    call.say("Would you like me to submit your enrollment in this plan?")
+    call.consent(app_id, call.hear("Yes, sign me up."))
+    call.hear("Wait, I changed my mind.")
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert (result["status"], result["critical"]) == (F, True)
+
+
+def test_a_yes_after_a_pause_is_not_clearly_a_yes_to_the_ask_before_it(
+    client: TestClient,
+) -> None:
+    call, app_id = enroll_to_consent(client)
+    call.say("Would you like me to submit your enrollment in this plan?")
+    call.hear("Wait, what does it cost again?")
+    call.say("It is $39 a month.")
+    call.consent(app_id, call.hear("Yes."))
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert result["status"] == UG and "not clearly to enrolling" in result["detail"]
+
+
+@pytest.mark.parametrize(
+    ("line", "status"),
+    [
+        ("Hi, let me pull up your record while we're on this call.", F),
+        ("I'll make a record of this call in your file.", F),
+        ("Thanks for calling. This call is recorded.", P),
+        ("Thanks for calling. Just so you know, we record every call.", P),
+        ("Thanks for calling. I'm recording this conversation for quality.", P),
+        ("Before we start, this call may be recorded.", P),
+    ],
+)
+def test_a_recording_notice_says_the_call_is_recorded(
+    client: TestClient, line: str, status: str
+) -> None:
+    call = Call(client, CASE_A).start()
+    call.say(line)
+    call.end()
+    assert call.detail("recording_notice_given")["status"] == status
+
+
+def test_a_checklist_marked_without_a_word_is_flagged_for_the_judge(client: TestClient) -> None:
+    call, app_id = enroll_to_consent(client)
+    call.say("Would you like me to submit your enrollment in this plan?")
+    call.consent(app_id, call.hear("Yes, sign me up."))
+    call.submit(app_id)
+    call.end()
+    quiet = call.detail("pecl_complete_before_submit")
+    assert (quiet["status"], quiet["critical"], quiet["silent"]) == (P, False, True)
+
+    spoken = a_call(client)
+    spoken.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    spoken.decide("enroll", MAPLE_CHOICE)
+    spoken.enroll(MAPLE_CHOICE, "Loretta Banks", "00041")  # reads the checklist aloud first
+    spoken.end()
+    aloud = spoken.detail("pecl_complete_before_submit")
+    assert (aloud["status"], aloud["silent"]) == (P, False)
+    assert "nothing was said" not in aloud["detail"]

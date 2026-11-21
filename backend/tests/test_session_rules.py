@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.content.common import CheckId
 from app.content.loader import load_bundle
 from app.engine.checks import CoverageClaim, Facts, claim_backed, run_checks
 from app.engine.events import Channel, EventType, Speaker, UtteranceIn
@@ -113,7 +114,7 @@ def test_sessions_pin_versions_and_seeded_rolls(client: TestClient) -> None:
     second = Call(client, CASE_A, seed=11)
     a, b = first.service.get(first.sid), second.service.get(second.sid)
     assert (a.mood, a.voice) == (b.mood, b.voice)
-    assert (a.catalog_version, a.ruleset_version, a.rubric_version) == ("2027-v1", "mvp-2027.1", 1)
+    assert (a.catalog_version, a.ruleset_version, a.rubric_version) == ("2027-v1", "mvp-2027.1", 2)
 
 
 def test_findings_refuse_content_the_session_was_not_pinned_to(client: TestClient) -> None:
@@ -183,6 +184,66 @@ def test_claims_are_backed_only_by_lookups_that_showed_them(client: TestClient) 
     assert not backed(said, SUMMIT_CLASSIC)
     assert backed(said, SUMMIT_CLASSIC, covered=False)
     assert not backed(early, SUMMIT_CLASSIC, covered=False)
+
+
+def test_a_provider_lookup_backs_a_claim_about_its_own_year_only(client: TestClient) -> None:
+    call = a_call(client)
+    call.network("raman-northside", SUMMIT_CLASSIC, year=2026)  # in network this year
+    call.network("raman-northside", SUMMIT_CLASSIC)  # out for 2027
+    said = call.say("Dr. Raman is in network on Summit Classic this year, but not next year.")
+    bundle = load_bundle()
+    facts = Facts(
+        bundle.scenario(CASE_A),
+        bundle.catalog,
+        bundle.frame,
+        call.service.store.events(call.sid),
+        call.service.store.utterances(call.sid),
+    )
+
+    def backed(covered: bool, year: int | None) -> bool:
+        claim = CoverageClaim(
+            utt_id=said,
+            plan_id=SUMMIT_CLASSIC,
+            kind="provider_network",
+            subject_id="raman-northside",
+            covered=covered,
+            year=year,
+        )
+        return claim_backed(facts, claim)
+
+    assert backed(True, 2026) and backed(False, 2027)
+    assert not backed(True, 2027) and not backed(False, 2026)
+    assert backed(False, None) and not backed(True, None)  # no year means the plan year
+
+
+def test_a_required_check_that_does_not_apply_does_not_block_an_outcome(
+    client: TestClient,
+) -> None:
+    """Maple Choice has no restricted drug for this customer, so "the restriction was seen"
+    has nothing to pass. An outcome that lists it must not fail on that account."""
+    call = a_call(client)
+    call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    call.decide("enroll", MAPLE_CHOICE)
+    call.enroll(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.end()
+    bundle = load_bundle()
+    scenario = bundle.scenario(CASE_A)
+    outcomes = tuple(
+        o.model_copy(update={"required_checks": (*o.required_checks, CheckId.RESTRICTION_SEEN)})
+        if o.plan_ids == (MAPLE_CHOICE,)
+        else o
+        for o in scenario.outcomes
+    )
+    results = run_checks(
+        scenario.model_copy(update={"outcomes": outcomes}),
+        bundle.catalog,
+        bundle.frame,
+        call.service.store.events(call.sid),
+        call.service.store.utterances(call.sid),
+    )
+    by_check = {r.check_id: r.status.value for r in results}
+    assert by_check[CheckId.RESTRICTION_SEEN] == "not_applicable"
+    assert by_check[CheckId.OUTCOME_ACCEPTABLE] == "pass"
 
 
 def test_a_stored_log_replays_to_the_same_findings(client: TestClient, tmp_path: Path) -> None:

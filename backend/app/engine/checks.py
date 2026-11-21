@@ -40,6 +40,13 @@ class CheckResult(BaseModel):
     detail: str
     event_seqs: list[int] = []
     utt_ids: list[str] = []
+    held: bool = False
+    """More than one application's result needs a reader, and one ruling can't settle them
+    all. Graded as review required; the judge's single ruling is not applied."""
+    silent: bool = False
+    """The check passed, and the log shows it was done without a word from the agent: nothing
+    was said from the moment the checklist was on screen to the last mark. If the judge also
+    saw no review anywhere in the call, that silence is what makes the miss critical."""
 
 
 @dataclass
@@ -229,10 +236,12 @@ def outcome_acceptable(f: Facts, prior: dict[CheckId, CheckResult]) -> CheckResu
             f.outcome_seqs,
             critical=enroll,
         )
+    # A required check that doesn't apply has nothing to pass: an outcome that needs "the
+    # restriction was seen" is not blocked on a plan with no restriction.
     failed = [
         c.value
         for c in match.required_checks
-        if c in prior and prior[c].status is not CheckStatus.PASS
+        if c in prior and prior[c].status not in (CheckStatus.PASS, CheckStatus.NOT_APPLICABLE)
     ]
     if failed:
         return _result(
@@ -506,12 +515,26 @@ def _audit_submissions(
             + results[-1][1].detail,
             [s for _, r in results for s in r.event_seqs],
             [u for _, r in results for u in r.utt_ids],
+        ).model_copy(update={"silent": all(r.silent for _, r in results)})
+
+    def label(app: Application) -> str:
+        withdrawn = " (later withdrawn)" if app.status == "withdrawn" else ""
+        return f"Application {app.application_id}{withdrawn}"
+
+    if len(bad) > 1 and all(r.status is CheckStatus.UNGRADED for _, r in bad):
+        # Nothing failed outright, and each application needs its own reading. The judge
+        # gives one ruling per criterion, which could clear one and silently cover the rest.
+        return CheckResult(
+            check_id=check,
+            status=CheckStatus.UNGRADED,
+            detail=" ".join(f"{label(app)}: {r.detail}" for app, r in bad)
+            + " One ruling can't cover more than one application, so this needs review.",
+            event_seqs=sorted({s for _, r in bad for s in r.event_seqs}),
+            utt_ids=sorted({u for _, r in bad for u in r.utt_ids}),
+            held=True,
         )
     app, worst = min(bad, key=lambda pair: _SEVERITY.get((pair[1].status, pair[1].critical), 9))
-    withdrawn = " (later withdrawn)" if app.status == "withdrawn" else ""
-    return worst.model_copy(
-        update={"detail": f"Application {app.application_id}{withdrawn}: {worst.detail}"}
-    )
+    return worst.model_copy(update={"detail": f"{label(app)}: {worst.detail}"})
 
 
 _SEVERITY = {
@@ -564,24 +587,41 @@ def _pecl_complete(f: Facts, app: Application) -> CheckResult:
             [*marked.values(), *([changed] if changed else []), submitted],
             critical=True,
         )
-    return _result(
-        check,
-        CheckStatus.PASS,
-        "Every checklist item was marked before submission. Whether it was discussed is for "
-        "the judge.",
-        marked.values(),
+    # The checklist is on screen from the first time its document is opened, or from the
+    # start of the application if it never was. Marking every item with nothing said in that
+    # whole stretch can't have been a review with the customer.
+    opened = [
+        e.seq
+        for e in f.events
+        if e.type is EventType.DOCUMENT_OPENED and e.payload.get("document_id") == pecl.document_id
+    ]
+    on_screen, last_mark = min([app.created_seq, *opened]), max(marked.values())
+    silent = not any(on_screen < f.utt_seq(u.utt_id) < last_mark for u in f.learner_utterances())
+    detail = (
+        "Every checklist item was marked before submission, and nothing was said from the "
+        "moment the checklist was on screen to the last mark. Whether it was reviewed with the "
+        "customer at any other point is for the judge."
+        if silent
+        else "Every checklist item was marked before submission. Whether it was discussed is "
+        "for the judge."
     )
+    passed = _result(check, CheckStatus.PASS, detail, marked.values())
+    return passed.model_copy(update={"silent": silent})
 
 
 _AFFIRMATIVE = re.compile(
     r"\b(yes|yeah|yep|ok|okay|sure|go ahead|sign me up|i agree|please do|let's do it|do it)\b"
 )
 _OBJECTION = re.compile(
-    r"\b(wait|hold on|stop|cancel|never ?mind|changed my mind|not yet|not ready|not sure|"
+    r"\b(stop|cancel|never ?mind|changed my mind|not yet|not ready|not sure|"
     r"(?:don't|dont|do not) (?:want|sign|submit|enroll|do it)|rather not|no thanks|no thank you|"
     r"think (?:about it|it over)|talk to|ask my)\b"
 )
 """Clear objections: these fail consent outright."""
+_PAUSE = re.compile(r"\b(wait|hold on)\b")
+"""May be second thoughts, may be "hold on, let me grab a pen". Too weak to fail consent on
+its own, so the result goes to the judge. It still breaks the link between an ask and a later
+yes, the way an objection does."""
 _BENIGN_NEGATIVE = re.compile(
     r"\b(?:no|not an?) (?:problem|worries|issue)s?\b|\bno (?:other |more )?questions\b|"
     r"\b(?:don't|dont|do not) have (?:any )?(?:other |more )?questions\b|"
@@ -635,7 +675,7 @@ def _yes_to_enrollment(f: Facts, utt: Utterance) -> bool:
         if not prior.delivered:
             continue
         if prior.speaker is Speaker.CUSTOMER:
-            if _consent_signal(prior.heard_text) == "objection":
+            if _consent_signal(prior.heard_text) in ("objection", "pause"):
                 return False
             continue
         if prior.speaker is not Speaker.LEARNER:
@@ -652,10 +692,12 @@ def _yes_to_enrollment(f: Facts, utt: Utterance) -> bool:
 
 
 def _consent_signal(text: str) -> str:
-    """``objection``, ``hedge`` or ``clear`` for one customer utterance."""
+    """``objection``, ``pause``, ``hedge`` or ``clear`` for one customer utterance."""
     folded = _fold(text)
     if _OBJECTION.search(folded):
         return "objection"
+    if _PAUSE.search(folded):
+        return "pause"
     if _HEDGE.search(_BENIGN_NEGATIVE.sub(" ", folded)):
         return "hedge"
     return "clear"
@@ -690,7 +732,7 @@ def _consent(f: Facts, app: Application) -> CheckResult:
     signal = _consent_signal(utt.heard_text)
     if not _AFFIRMATIVE.search(_fold(utt.heard_text)) or signal == "objection":
         return fail("The consent utterance is not a clear yes.")
-    hedges = [utt.utt_id] if signal == "hedge" else []
+    hedges = [utt.utt_id] if signal != "clear" else []
     utt_seq = f.utt_seq(utt.utt_id)
     last_mark = max(app.pecl_marks.values(), default=0)
     if utt_seq < last_mark:
@@ -708,7 +750,7 @@ def _consent(f: Facts, app: Application) -> CheckResult:
         if later_signal == "objection":
             utts.append(later.utt_id)
             return fail("The customer objected after saying yes, before submission.")
-        if later_signal == "hedge":
+        if later_signal != "clear":
             hedges.append(later.utt_id)
     if not _yes_to_enrollment(f, utt):
         return _result(
@@ -982,7 +1024,9 @@ def disclaimer_before_benefits(f: Facts) -> CheckResult:
     )
 
 
-_RECORDING = re.compile(r"\brecord(?:ed|ing)?\b")
+_RECORDING = re.compile(r"\brecord(?:ed|ing)\b|\b(?:we|i|to|will|may|must|do|also) record\b")
+"""The call being recorded, as a verb: "is recorded", "we record". The noun in "let me pull up
+your record" is not a notice."""
 _CALL = re.compile(r"\b(?:call|conversation)\b")
 RECORDING_NOTICE_WINDOW = 3
 
@@ -1070,6 +1114,9 @@ class CoverageClaim(BaseModel):
     """practice_id, drug_id or pharmacy_id."""
     covered: bool = True
     """What was claimed: covered or in network (True), or not (False)."""
+    year: int | None = None
+    """The year a network claim is about. None means the plan year. "She is in network this
+    year" and "she is in network for next year" are different claims with different lookups."""
 
 
 _CLAIM_SUBJECT = {
@@ -1084,23 +1131,38 @@ _CLAIM_RESULT = {
 }
 
 
+_COMPARE_ROWS = {"formulary": "lines", "pharmacy_network": "pharmacy"}
+"""Where a compare event keeps what it showed for each kind of claim. Compare shows no
+provider networks."""
+
+
 def claim_backed(f: Facts, claim: CoverageClaim) -> bool:
     """Whether a lookup made before the claim was spoken showed what the learner claimed.
-    Looking something up doesn't back a claim the lookup contradicted."""
+    A compare counts for the drugs and the pharmacy it showed, the same as it does for
+    ``drugs_checked``. Looking something up doesn't back a claim the lookup contradicted, and
+    a provider lookup backs only a claim about the year it was for."""
     spoken = f.utt_seq(claim.utt_id)
     key, result = _CLAIM_SUBJECT[claim.kind], _CLAIM_RESULT[claim.kind]
+    year = f.plan_year if claim.year is None else claim.year
+
+    def shows(row: JsonValue) -> bool:
+        return (
+            _get(row, "plan_id") == claim.plan_id
+            and _get(row, key) == claim.subject_id
+            and _get(row, result) is claim.covered
+        )
+
     for e in f.events:
         if e.seq >= spoken or e.type is not EventType.LOOKUP:
             continue
         p = e.payload
-        if (
-            p.get("kind") == claim.kind
-            and p.get("plan_id") == claim.plan_id
-            and p.get(key) == claim.subject_id
-        ):
-            if claim.kind == "provider_network" and p.get("year") != f.plan_year:
+        if p.get("kind") == "compare":
+            if any(shows(row) for row in _list(p.get(_COMPARE_ROWS.get(claim.kind, "")))):
+                return True
+        elif p.get("kind") == claim.kind:
+            if claim.kind == "provider_network" and p.get("year") != year:
                 continue
-            if p.get(result) is claim.covered:
+            if shows(p):
                 return True
     return False
 

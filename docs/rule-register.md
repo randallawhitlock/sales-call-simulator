@@ -87,8 +87,8 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | approved, verified 2026-11-07 |
 | Source | [eCFR 422.2267](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2267) |
-| Check | Deterministic `pecl_complete_before_submit`: every item on the submitted plan's checklist is marked before the `application_submitted` event, and after the last change to the application. Every submission is audited, including ones later withdrawn. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. |
-| Grading | Critical if skipped on an enrollment |
+| Check | Deterministic `pecl_complete_before_submit`: every item on the submitted plan's checklist is marked before the `application_submitted` event, and after the last change to the application. Every submission is audited, including ones later withdrawn. The judge confirms the contents were discussed, since opening the document proves nothing about the conversation. The check also records whether the items were marked in silence: nothing said by the learner from the moment the checklist was on screen (its document first opened, or the application started) to the last mark. |
+| Grading | Critical if an item was not marked before submission. Also critical if every item was marked in silence and the judge saw no review anywhere else in the call: the log shows the silence, and the judge only confirms the review didn't happen at another point. A review the judge did not see while the learner was talking earns no points and is not critical. |
 
 ### R-SB: Summary of Benefits
 
@@ -111,7 +111,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Regulatory |
 | Status | unverified |
 | Source | [CMS Managed Care Eligibility and Enrollment](https://www.cms.gov/medicare/enrollment-renewal/managed-care-eligibility-enrollment), [CY2027 Agent and Broker Training and Testing Guidelines](https://www.cms.gov/files/document/cy2027-agent-broker-training-testing-guidelines-pdf.pdf) |
-| Check | Deterministic `consent_before_submit`: the consent mark points to a customer "yes" utterance that was heard (not interrupted), comes after the last checklist item and before submission, and does not follow an unretracted refusal. The yes must be about enrolling: either the customer's line names it ("sign me up"), or it follows a learner sentence that asks leave to enroll or submit, within the last three learner lines, with no customer objection in between and no other learner question directly before the yes. A yes that fails only this test is `ungraded` for the judge, not failed. The application must not change after the yes. Clear objections ("wait", "cancel", "don't submit", "not yet") fail; everyday negatives ("no problem", "I don't have any questions") don't; any other stray "no" or "not" makes the result `ungraded` for the judge. Every submission is audited, including ones later withdrawn, so a clean resubmission doesn't hide a faulty first one. |
+| Check | Deterministic `consent_before_submit`: the consent mark points to a customer "yes" utterance that was heard (not interrupted), comes after the last checklist item and before submission, and does not follow an unretracted refusal. The yes must be about enrolling: either the customer's line names it ("sign me up"), or it follows a learner sentence that asks leave to enroll or submit, within the last three learner lines, with no customer objection in between and no other learner question directly before the yes. A yes that fails only this test is `ungraded` for the judge, not failed. The application must not change after the yes. Clear objections ("cancel", "don't submit", "not yet", "I changed my mind") fail; everyday negatives ("no problem", "I don't have any questions") don't. A bare "wait" or "hold on" may be second thoughts or may be "hold on, let me grab a pen", so like any other stray "no" or "not" it makes the result `ungraded` for the judge. Every submission is audited, including ones later withdrawn, so a clean resubmission doesn't hide a faulty first one. The judge is a backstop here: it rules only on an `ungraded` result, with a verified quote of the customer line the check cited, and its ruling is not applied when the check passed or failed. If two submissions are each `ungraded`, the item needs review, since one ruling can't cover both. |
 | Grading | Critical if consent is missing or fabricated on an enrollment |
 
 ### G-PREENR: Longer pre-enrollment checklist
@@ -147,7 +147,7 @@ An inbound call on 2026-11-12, during the Annual Election Period, about plan yea
 | Authority | Organization |
 | Status | approved as organization policy |
 | Source | [eCFR 422.2274](https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-422/subpart-V/section-422.2274) for the federal recording duty |
-| Check | Deterministic `recording_notice_given`: a learner utterance among the first three mentions that the call is recorded |
+| Check | Deterministic `recording_notice_given`: a learner utterance among the first three says the call is recorded or being recorded ("is recorded", "we record"). The noun, as in "let me pull up your record", is not a notice. |
 | Grading | Low weight, labeled organization policy in the debrief |
 
 ## Out of MVP
