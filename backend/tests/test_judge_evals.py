@@ -10,11 +10,13 @@ critical finding, every quote that didn't verify beyond a small allowance, and l
 overall. A model's rulings are compared with human labels here; they are never the evidence.
 """
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.judge.contract import JudgeOutput
-from app.judge.judges import judge_from_env
+from app.judge.judges import KEY_ENV, judge_from_env
 from app.judge.prompt import JudgePrompt, build_judge_prompt
 from tests.harness import Call, FakeJudge, claim, ruling
 from tests.judge_evals import CASES, CRITICAL_CRITERIA, Labeled
@@ -92,9 +94,11 @@ def test_the_set_covers_every_case_and_every_kind_of_ruling(client: TestClient) 
 
 @pytest.mark.live
 def test_live_judge_agrees_with_the_labels(client: TestClient) -> None:
-    judge = judge_from_env()
-    if judge is None:
-        pytest.skip("no judge configured: set ANTHROPIC_API_KEY")
+    if not os.environ.get(KEY_ENV):
+        pytest.skip(f"no judge configured: set {KEY_ENV}")
+    # The client fixture turns the judge off for every test; this one asks for it by name.
+    judge = judge_from_env({**os.environ, "SIM_JUDGE": "claude"})
+    assert judge is not None
     compared = agreed = quotes = verified = 0
     critical: list[str] = []
     report: list[str] = []
@@ -110,10 +114,13 @@ def test_live_judge_agrees_with_the_labels(client: TestClient) -> None:
             if got is not None and got.verdict.value == label.verdict:
                 agreed += 1
                 continue
+            # What the judge cited goes in the report, so a disagreement can be read without
+            # paying for another run.
+            cited = [(e.utt_id, e.quote) for e in got.evidence] if got else []
             line = (
                 f"{name} {criterion_id}: labeled {label.verdict}, judge said "
                 f"{got.verdict.value if got else 'nothing'}"
-                f"{': ' + got.rationale if got else ''}"
+                f"{': ' + got.rationale if got else ''} Cited: {cited}"
             )
             report.append(line)
         for criterion_id in CRITICAL_CRITERIA:
@@ -121,9 +128,15 @@ def test_live_judge_agrees_with_the_labels(client: TestClient) -> None:
                 criterion_id in case.final
                 and debrief.status(criterion_id) != case.final[criterion_id]
             ):
+                unbacked = [
+                    (x["utt_id"], x["quote"], x["status"])
+                    for x in debrief[criterion_id]["claims"]
+                    if x["status"] != "backed"
+                ]
                 critical.append(
                     f"{name} {criterion_id}: expected {case.final[criterion_id]}, got "
                     f"{debrief.status(criterion_id)}. {debrief[criterion_id]['detail']}"
+                    f"{' Claims: ' + str(unbacked) if unbacked else ''}"
                 )
         for c in debrief.body["criteria"]:
             quotes += len(c["quotes"]) + len(c["claims"])

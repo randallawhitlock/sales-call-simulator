@@ -62,13 +62,21 @@ to three plain sentences, and name what to do differently where something fell s
 Some criteria come with the result of an automated check. The check reads wording patterns \
 and the order of events, and it can misread a line. Rule on what the lines mean.
 
+Where that check passed, it has already confirmed what happened on screen: the boxes were \
+ticked, the scope was recorded, the restriction was looked up. Your ruling is about the spoken \
+half. If the agent said nothing about it, the verdict is not_observed, however plain the gap \
+is in the timeline. fail is for a line in which the agent does the spoken half wrongly, such \
+as telling the customer the checklist is boilerplate.
+
 Evidence
 
 Evidence is a list of {{utt_id, quote}}. Each quote is copied exactly from that one line: a \
 single unbroken run of its words, long enough to carry the point, usually 4 to 25 words. No \
 paraphrase, no ellipsis, no joining of two lines, no fixing of typos. Software searches for \
 the quote in the line you name, and if it is not there the ruling is set aside. pass and fail \
-need at least one quote; not_observed and not_applicable usually have none. Quote the agent's \
+need at least one quote; not_observed and not_applicable usually have none. A fail quotes the \
+line in which the agent does the wrong thing. If there is no such line, because the problem is \
+something that never happened, the verdict is not_observed. Quote the agent's \
 lines for what the agent did. Quote a customer line only when the criterion turns on it, such \
 as a misconception the agent should have corrected or the customer's yes.
 

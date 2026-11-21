@@ -156,6 +156,7 @@ def thorough_enrollment(client: TestClient) -> Labeled:
         pharmacy_id="alder-family-rx",
         coverage=A_COVERAGE,
     )
+    call.network("raman-northside", SUMMIT_CLASSIC)  # the letter was right: out for 2027
     call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
     s.agent(
         "I checked Maple Choice PPO for 2027. Dr. Raman at the Northside office is in network, "
@@ -214,6 +215,10 @@ def thorough_enrollment(client: TestClient) -> Labeled:
             ExpectedClaim("claims", "provider_network", MAPLE_CHOICE, "raman-northside"),
             *(ExpectedClaim(*on_plan, drug_id) for drug_id in A_DRUGS),
             ExpectedClaim("claims", "pharmacy_network", MAPLE_CHOICE, "alder-family-rx"),
+            # "which Summit can't offer next year" is a claim too, and it needs its lookup.
+            ExpectedClaim(
+                "tradeoffs", "provider_network", SUMMIT_CLASSIC, "raman-northside", False
+            ),
         ),
         final={
             "doc-pecl": (P, False),

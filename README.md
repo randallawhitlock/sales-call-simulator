@@ -45,7 +45,7 @@ the debrief are in. Next up is voice (M4).
 | M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold, CI | Done |
 | M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done |
 | M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer, objections, reference drawer, rejoin after reload, actor QA | Done; first live actor QA run pending |
-| M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, retry | Done; first live judge eval run pending |
+| M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, retry | Done; first live judge eval run in [docs/judge-eval.md](docs/judge-eval.md) |
 | M4 Voice | LiveKit agent worker on Gemini Live | Planned; spike run, see [docs/voice-spike.md](docs/voice-spike.md) |
 | M5 Hardening | Resilience tests, demo script | Planned |
 
@@ -146,6 +146,7 @@ incoming-call card.
 |---|---|
 | [Product proposal v2.1](docs/PROPOSAL.md) | MVP definition, architecture, scoring, risks, roadmap |
 | [Rule register](docs/rule-register.md) | Every graded rule with its cite, authority, status and check |
+| [Judge eval](docs/judge-eval.md) | First runs of the labeled eval set against the real judge |
 | [Proposal v2.0](docs/proposal-v2.0.md) | The original proposal, kept for the record |
 | [Contributing](.github/CONTRIBUTING.md) | Branches, commits, pull requests, checks |
 
@@ -213,7 +214,7 @@ across the three cases, each labeled with the rulings a human grader gives. It m
 calls and fails with a report if the judge disagrees on anything that makes or clears a critical
 finding, agrees with fewer than 80% of the labels, or cites quotes the server can't find.
 Every build checks the labels themselves with a stand-in judge, so no build depends on a model.
-It has not been run against the real judge yet.
+[docs/judge-eval.md](docs/judge-eval.md) has the first live runs and what they turned up.
 
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm test && npm run build
