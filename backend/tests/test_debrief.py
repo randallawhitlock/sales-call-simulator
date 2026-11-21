@@ -16,7 +16,15 @@ from app.judge.judges import JudgeError
 from app.judge.models import JudgeOutput
 from app.judge.prompt import JudgePrompt
 from tests.harness import Call
-from tests.test_goldens import A_DRUGS, CASE_A, CASE_B, MAPLE_CHOICE, a_call
+from tests.test_goldens import (
+    A_DRUGS,
+    CASE_A,
+    CASE_B,
+    MAPLE_CHOICE,
+    SUMMIT_CLASSIC,
+    a_call,
+    enroll_to_consent,
+)
 
 Make = Callable[[JudgePrompt], JudgeOutput | Exception]
 
@@ -121,7 +129,7 @@ def test_a_verified_pass_on_every_item_completes_the_call(client: TestClient) ->
     d = call.post("/grade")
     assert d["judge"]["status"] == "done"
     assert d["judge"]["name"] == "fake:judge"
-    assert d["judge"]["prompt_version"] == "judge-2"
+    assert d["judge"]["prompt_version"] == "judge-3"
     assert d["complete"] is True
     assert d["score"] == 100
     assert d["critical_findings"] == [] and d["focus"] == []
@@ -232,7 +240,7 @@ def test_what_the_customer_said_cannot_carry_a_pass(client: TestClient) -> None:
     )
     item = by_id(call.post("/grade"))["disc-pharmacy"]
     assert item["status"] == "review_required"
-    assert "from your own lines or the notes" in item["detail"]
+    assert "from your own lines." in item["detail"]
 
     judge.make = lambda p: every(
         p, "not_observed", asked, "x", disc_pharmacy={"status": "pass", "evidence": [theirs, mine]}
@@ -285,6 +293,36 @@ def test_a_quote_from_the_notes_is_checked_against_the_saved_notes(client: TestC
     assert criteria["comp-notes"]["status"] == "pass"
     assert criteria["com-plain"]["status"] == "review_required"
     assert "not in the saved notes" in criteria["com-plain"]["detail"]
+
+
+def test_the_notes_carry_a_pass_for_the_notes_criterion_only(client: TestClient) -> None:
+    """What the learner wrote down afterwards shows what the notes say, not what was said on
+    the call. The quote below really is in the notes, and still can't pass a conversation
+    item."""
+    call = clean_call(client)
+    call.save("notes", {"findings": "Asked about every doctor and office she uses"})
+    call.end()
+    in_notes = {"evidence": [{"utt_id": "notes", "quote": "Asked about every doctor and office"}]}
+    utt = learner_line(call, "This call is recorded")
+    use_judge(
+        call,
+        lambda p: every(
+            p,
+            "pass",
+            utt,
+            "this is Sam",
+            disc_doctors=in_notes,
+            doc_pecl=in_notes,
+            comp_notes=in_notes,
+        ),
+    )
+    criteria = by_id(call.post("/grade"))
+    assert criteria["comp-notes"]["status"] == "pass"
+    for criterion_id in ("disc-doctors", "doc-pecl"):
+        item = criteria[criterion_id]
+        assert item["status"] == "review_required", criterion_id
+        assert item["evidence"][-1]["verified"] is True  # the quote is real; it shows nothing
+        assert "from your own lines." in item["detail"]
 
 
 # Hybrids
@@ -669,7 +707,7 @@ def test_a_retry_is_the_same_case_after_the_call_ends(client: TestClient) -> Non
 def test_health_reports_the_judge(client: TestClient) -> None:
     body = client.get("/api/health").json()
     assert body["judge"] == "off"
-    assert body["judge_prompt_version"] == "judge-2"
+    assert body["judge_prompt_version"] == "judge-3"
 
 
 # What reaches the judge, and how often
@@ -725,3 +763,319 @@ def test_a_learner_line_has_a_length_limit(client: TestClient) -> None:
     call.post("/utterances", body | {"text": "word " * 800}, expect=201)
     call.post("/utterances", body | {"client_utt_id": "learner-long-0002", "text": "x" * 4001}, 422)
     call.put("/record/notes", {"findings": "x" * 4001}, expect=422)
+
+
+# A checklist marked in silence
+
+
+def ticked_in_silence(client: TestClient) -> Call:
+    """Every checklist item marked with nothing said while the checklist was on screen."""
+    call, app_id = enroll_to_consent(client)
+    call.say("Would you like me to submit your enrollment in this plan?")
+    call.consent(app_id, call.hear("Yes, sign me up."))
+    call.submit(app_id)
+    return call.end()
+
+
+@pytest.mark.parametrize("ruling", ["not_observed", "fail"])
+def test_a_checklist_marked_in_silence_that_the_judge_never_saw_reviewed_is_critical(
+    client: TestClient, ruling: str
+) -> None:
+    call = ticked_in_silence(client)
+    check = call.detail("pecl_complete_before_submit")
+    assert (check["status"], check["silent"]) == ("pass", True)
+    assert "nothing was said" in check["detail"]
+    utt = learner_line(call, "This call is recorded")
+    judge = use_judge(
+        call,
+        lambda p: every(p, "pass", utt, "this is Sam", doc_pecl={"status": ruling, "evidence": []}),
+    )
+    d = call.post("/grade")
+    item = by_id(d)["doc-pecl"]
+    assert (item["status"], item["critical"], item["earned"]) == ("fail", True, 0)
+    assert "submitting before the checklist review" in item["detail"]
+    assert d["critical_findings"] == ["doc-pecl"] and d["focus"][0] == "doc-pecl"
+    # The judge is told what the log showed, so it knows what it is being asked to confirm.
+    assert "nothing was said from the moment the checklist was on screen" in judge.calls[0].user
+
+
+def test_silence_alone_proves_nothing_until_the_judge_has_looked(client: TestClient) -> None:
+    call = ticked_in_silence(client)
+    # No judge: the review may have happened earlier in the call, and code can't tell.
+    item = by_id(call.get("/debrief"))["doc-pecl"]
+    assert (item["status"], item["critical"]) == ("ungraded", False)
+    # A judge that saw the review, and quotes the learner doing it, passes the item.
+    utt = learner_line(call, "This call is recorded")
+    use_judge(call, lambda p: every(p, "pass", utt, "this is Sam"))
+    item = by_id(call.post("/grade"))["doc-pecl"]
+    assert (item["status"], item["critical"]) == ("pass", False)
+
+
+def test_a_review_the_judge_missed_is_not_critical_if_anything_was_said(
+    client: TestClient,
+) -> None:
+    """The harness reads the checklist aloud before marking it. If the judge still rules that
+    no review happened, that costs the points and no more: the log doesn't back it up."""
+    call = clean_call(client).end()
+    assert call.detail("pecl_complete_before_submit")["silent"] is False
+    utt = learner_line(call, "This call is recorded")
+    miss = {"status": "not_observed", "evidence": []}
+    use_judge(call, lambda p: every(p, "pass", utt, "this is Sam", doc_pecl=miss))
+    d = call.post("/grade")
+    item = by_id(d)["doc-pecl"]
+    assert (item["status"], item["critical"]) == ("not_observed", False)
+    assert d["critical_findings"] == []
+
+
+def test_the_checklist_is_on_screen_from_when_its_document_was_first_opened(
+    client: TestClient,
+) -> None:
+    call = a_call(client)
+    call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    call.decide("enroll", MAPLE_CHOICE)
+    call.document("pecl-maple-choice-2027")
+    call.say("Before we start the application, let me read you the checklist, item by item.")
+    call.document("sob-maple-choice-2027")
+    app_id = call.apply(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.review_checklist(app_id)  # nothing said after the application started
+    call.say("Would you like me to submit your enrollment in this plan?")
+    call.consent(app_id, call.hear("Yes, sign me up."))
+    call.submit(app_id)
+    call.end()
+    assert call.detail("pecl_complete_before_submit")["silent"] is False
+
+
+# Consent the wording check could not read
+
+
+def hedged_consent(client: TestClient, yes: str, after: str | None = None) -> tuple[Call, str]:
+    call = clean_call_up_to_consent(client)
+    app_id = call.get("/applications")[0]["application"]["application_id"]
+    call.say("Would you like me to submit your enrollment in this plan?")
+    line = call.hear(yes)
+    call.consent(app_id, line)
+    if after is not None:
+        call.hear(after)
+    call.submit(app_id)
+    return call.end(), line
+
+
+def clean_call_up_to_consent(client: TestClient) -> Call:
+    """A clean enrollment with the checklist read aloud, stopped before the customer's yes."""
+    call = a_call(client)
+    call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    call.decide("enroll", MAPLE_CHOICE)
+    call.document("sob-maple-choice-2027")
+    app_id = call.apply(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.say("Let's go through the Pre-Enrollment Checklist together, item by item.")
+    call.review_checklist(app_id)
+    return call
+
+
+def test_the_judge_rules_on_a_yes_the_wording_check_could_not_read(client: TestClient) -> None:
+    call, line = hedged_consent(client, "Okay, sure, why not.")
+    assert call.detail("consent_before_submit")["status"] == "ungraded"
+    # Without a ruling the item stays ungraded.
+    assert by_id(call.get("/debrief"))["doc-consent"]["status"] == "ungraded"
+
+    utt = learner_line(call, "This call is recorded")
+    theirs = {"evidence": [{"utt_id": line, "quote": "Okay, sure, why not"}]}
+    judge = use_judge(call, lambda p: every(p, "pass", utt, "this is Sam", doc_consent=theirs))
+    d = call.post("/grade")
+    item = by_id(d)["doc-consent"]
+    # The customer's line carries this pass because the check itself cited it as the consent.
+    assert (item["status"], item["earned"], item["critical"]) == ("pass", 3, False)
+    assert d["complete"] is True
+    prompt = judge.calls[0].user
+    assert "- doc-consent: " in prompt
+    assert f"might be a hesitation. Needs the judge. Lines it cited: {line}." in prompt
+
+    judge.make = lambda p: every(
+        p, "pass", utt, "this is Sam", doc_consent={"status": "fail"} | theirs
+    )
+    item = by_id(call.post("/grade", {"regrade": True}))["doc-consent"]
+    assert (item["status"], item["critical"]) == ("fail", False)  # the judge alone, so not critical
+
+
+def test_another_customer_line_cannot_carry_the_consent(client: TestClient) -> None:
+    call, _ = hedged_consent(client, "Okay, sure, why not.")
+    other = next(u["utt_id"] for u in call.get("/transcript") if u["speaker"] == "customer")
+    utt = learner_line(call, "This call is recorded")
+    elsewhere = {"evidence": [{"utt_id": other, "quote": "I have some questions"}]}
+    use_judge(call, lambda p: every(p, "pass", utt, "this is Sam", doc_consent=elsewhere))
+    assert by_id(call.post("/grade"))["doc-consent"]["status"] == "review_required"
+
+
+def test_a_consent_the_check_could_read_is_not_the_judges_to_change(client: TestClient) -> None:
+    call = clean_call(client).end()
+    assert call.detail("consent_before_submit")["status"] == "pass"
+    utt = learner_line(call, "This call is recorded")
+    use_judge(
+        call,
+        lambda p: every(
+            p, "pass", utt, "this is Sam", doc_consent={"status": "fail", "evidence": []}
+        ),
+    )
+    item = by_id(call.post("/grade"))["doc-consent"]
+    assert (item["status"], item["earned"]) == ("pass", 3)
+    assert "looked fine" not in item["detail"]  # the judge's words are not shown as the reason
+
+    # And a consent that failed on events stays a critical fail whatever the judge says.
+    missing, app_id = enroll_to_consent(client)
+    missing.submit(app_id)
+    missing.end()
+    use_judge(missing, lambda p: every(p, "pass", learner_line(missing, "recorded"), "this is Sam"))
+    item = by_id(missing.post("/grade"))["doc-consent"]
+    assert (item["status"], item["critical"]) == ("fail", True)
+
+
+def test_a_pause_after_the_yes_goes_to_the_judge_not_to_a_critical(client: TestClient) -> None:
+    call, _ = hedged_consent(client, "Yes, sign me up.", after="Hold on, let me grab a pen.")
+    check = call.detail("consent_before_submit")
+    assert (check["status"], check["critical"]) == ("ungraded", False)
+    assert by_id(call.get("/debrief"))["doc-consent"]["critical"] is False
+    pen = next(u["utt_id"] for u in call.get("/transcript") if "grab a pen" in u["text"])
+    utt = learner_line(call, "This call is recorded")
+    theirs = {"evidence": [{"utt_id": pen, "quote": "let me grab a pen"}]}
+    use_judge(call, lambda p: every(p, "pass", utt, "this is Sam", doc_consent=theirs))
+    assert by_id(call.post("/grade"))["doc-consent"]["status"] == "pass"
+
+
+def test_two_unread_consents_need_review_not_one_ruling(client: TestClient) -> None:
+    call = clean_call_up_to_consent(client)
+    first = call.get("/applications")[0]["application"]["application_id"]
+    call.say("Would you like me to submit your enrollment in this plan?")
+    hedge = call.hear("Okay, sure, why not.")
+    call.consent(first, hedge)
+    call.submit(first, key="first-key-0001")
+    call.post(f"/applications/{first}/withdraw")
+    second = call.apply(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.say("One more time through the checklist, since this is a new application.")
+    call.review_checklist(second)
+    call.say("Do you have your Medicare card handy?")
+    call.consent(second, call.hear("Yes."))
+    call.submit(second, key="second-key-0002")
+    call.end()
+    check = call.detail("consent_before_submit")
+    assert (check["status"], check["held"]) == ("ungraded", True)
+    assert f"Application {first} (later withdrawn): " in check["detail"]
+    assert f"Application {second}: " in check["detail"]
+
+    utt = learner_line(call, "This call is recorded")
+    theirs = {"evidence": [{"utt_id": hedge, "quote": "Okay, sure, why not"}]}
+    use_judge(call, lambda p: every(p, "pass", utt, "this is Sam", doc_consent=theirs))
+    d = call.post("/grade")
+    item = by_id(d)["doc-consent"]
+    # One ruling could clear the first yes and silently cover the second.
+    assert (item["status"], item["earned"]) == ("review_required", None)
+    assert "needs review" in item["detail"] and d["complete"] is False
+
+
+# Claims: what counts as a lookup, and which year
+
+
+def test_a_compare_backs_the_drugs_and_pharmacy_it_showed(client: TestClient) -> None:
+    call = a_call(client)
+    call.post(
+        "/research/compare",
+        {
+            "plan_ids": [MAPLE_CHOICE],
+            "drugs": [{"drug_id": "apixaban-5mg-tab"}],
+            "pharmacy_id": "alder-family-rx",
+        },
+    )
+    said = call.say(
+        "Your apixaban 5 mg is covered on Maple Choice PPO, and Alder Family Pharmacy is in "
+        "network on Maple Choice PPO."
+    )
+    other = call.say("Your atorvastatin 40 mg is covered on Maple Choice PPO too.")
+    call.end()
+
+    def claim(utt: str, quote: str, kind: str, subject: str) -> dict[str, Any]:
+        return raman_claim(utt, quote) | {"kind": kind, "subject_id": subject}
+
+    shown = [
+        claim(
+            said, "apixaban 5 mg is covered on Maple Choice PPO", "formulary", "apixaban-5mg-tab"
+        ),
+        claim(said, "is in network on Maple Choice PPO", "pharmacy_network", "alder-family-rx"),
+    ]
+    judge = use_judge(call, lambda p: every(p, "pass", said, "Your apixaban", claims=shown))
+    item = by_id(call.post("/grade"))["ver-claims"]
+    assert (item["status"], item["critical"]) == ("pass", False)
+
+    # The compare showed only the drug it was given: atorvastatin has no lookup behind it.
+    not_shown = claim(
+        other,
+        "atorvastatin 40 mg is covered on Maple Choice PPO",
+        "formulary",
+        "atorvastatin-40mg-tab",
+    )
+    judge.make = lambda p: every(p, "pass", said, "Your apixaban", claims=[*shown, not_shown])
+    item = by_id(call.post("/grade", {"regrade": True}))["ver-claims"]
+    assert (item["status"], item["critical"]) == ("fail", True)
+    assert "atorvastatin 40 mg" in item["detail"] and "apixaban" not in item["detail"]
+
+
+THIS_YEAR = "Dr. Raman at the Northside office is in network on Summit Classic HMO this year."
+
+
+def this_year_call(client: TestClient, *years: int) -> tuple[Call, str]:
+    call = a_call(client)
+    for year in years:
+        call.network("raman-northside", SUMMIT_CLASSIC, year=year)
+    said = call.say(THIS_YEAR)
+    return call.end(), said
+
+
+def summit_claim(utt: str, year: int | None) -> dict[str, Any]:
+    claim = raman_claim(utt, "is in network on Summit Classic HMO this year")
+    return claim | {"plan_id": SUMMIT_CLASSIC} | ({} if year is None else {"year": year})
+
+
+def test_a_claim_about_this_year_is_checked_against_this_years_lookup(client: TestClient) -> None:
+    # In network for 2026, out for 2027: the statement is true and was looked up.
+    call, said = this_year_call(client, 2026, 2027)
+    use_judge(
+        call, lambda p: every(p, "pass", said, "Dr. Raman", claims=[summit_claim(said, 2026)])
+    )
+    item = by_id(call.post("/grade"))["ver-claims"]
+    assert (item["status"], item["critical"]) == ("pass", False)
+
+
+def missed_year(said: str, claims: list[dict[str, Any]]) -> Make:
+    return lambda p: every(p, "pass", said, "Dr. Raman", claims=claims)
+
+
+def test_a_judge_that_missed_the_year_sends_the_claim_to_review_not_to_a_critical(
+    client: TestClient,
+) -> None:
+    call, said = this_year_call(client, 2026, 2027)
+    for year in (2027, None):  # None: output stored before claims carried a year
+        claims = [summit_claim(said, year)]
+        use_judge(call, missed_year(said, claims))
+        item = by_id(call.post("/grade", {"regrade": True}))["ver-claims"]
+        assert (item["status"], item["critical"]) == ("review_required", False), year
+        assert "Summit Classic HMO for 2026, which was looked up" in item["detail"]
+
+
+def test_a_claim_about_this_year_with_no_lookup_for_any_year_is_still_critical(
+    client: TestClient,
+) -> None:
+    call, said = this_year_call(client)
+    use_judge(
+        call, lambda p: every(p, "pass", said, "Dr. Raman", claims=[summit_claim(said, 2026)])
+    )
+    item = by_id(call.post("/grade"))["ver-claims"]
+    assert (item["status"], item["critical"]) == ("fail", True)
+    assert "in network on Summit Classic HMO for 2026" in item["detail"]
+
+
+def test_a_claim_about_a_year_the_catalog_lacks_goes_to_review(client: TestClient) -> None:
+    call, said = this_year_call(client, 2026, 2027)
+    use_judge(
+        call, lambda p: every(p, "pass", said, "Dr. Raman", claims=[summit_claim(said, 2025)])
+    )
+    item = by_id(call.post("/grade"))["ver-claims"]
+    assert (item["status"], item["critical"]) == ("review_required", False)
+    assert "nothing for 2025" in item["detail"]

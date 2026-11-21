@@ -46,6 +46,9 @@ class ClaimOut(_Out):
     kind: ClaimKind
     subject_id: str
     covered: bool = True
+    year: int | None = None
+    """The year the statement is about. None, as in output stored before this field existed,
+    means the plan year."""
 
 
 class JudgeOutput(_Out):
@@ -101,8 +104,9 @@ def output_schema() -> dict[str, object]:
             },
             "subject_id": {"type": "string"},
             "covered": {"type": "boolean"},
+            "year": {"type": "integer"},
         },
-        "required": ["utt_id", "quote", "plan_id", "kind", "subject_id", "covered"],
+        "required": ["utt_id", "quote", "plan_id", "kind", "subject_id", "covered", "year"],
         "additionalProperties": False,
     }
     return {

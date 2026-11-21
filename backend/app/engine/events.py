@@ -100,7 +100,8 @@ class Utterance(_Frozen):
         surrounding punctuation, and nothing else. The quote must match whole words, so "I can"
         does not match "I cannot", and it can't stop just before "n't", so it doesn't match
         "I can't" either. It can't start just after an apostrophe either, so "t enroll" is not
-        in "can't enroll". A possessive still matches: "Dr. Raman" is in "Dr. Raman's office".
+        in "can't enroll". Nor can it start or stop inside a hyphenated word: "preferred" is not
+        in "non-preferred". A possessive still matches: "Dr. Raman" is in "Dr. Raman's office".
         A paraphrase does not match.
 
         This checks the words, not the meaning: a quote that starts after a negation, like
@@ -115,7 +116,7 @@ def quote_in_text(quote: str, text: str) -> bool:
     if not needle:
         return False
     haystack = normalize_for_quote(text)
-    pattern = rf"(?<!\w)(?<!\w'){re.escape(needle)}(?!\w|'t(?!\w))"
+    pattern = rf"(?<!\w)(?<!\w['-]){re.escape(needle)}(?!\w|-\w|'t(?!\w))"
     return re.search(pattern, haystack) is not None
 
 

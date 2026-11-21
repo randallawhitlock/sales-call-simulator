@@ -194,3 +194,20 @@ def test_bad_judge_config_is_refused(env: dict[str, str]) -> None:
 def test_the_timeout_defaults_and_parses() -> None:
     assert judge_timeout_from_env({}) == 180
     assert judge_timeout_from_env({"SIM_JUDGE_TIMEOUT_S": "45"}) == 45
+
+
+def test_a_claim_carries_the_year_it_is_about() -> None:
+    claim = output_schema()["properties"]["coverage_claims"]["items"]  # type: ignore[index]
+    assert claim["properties"]["year"] == {"type": "integer"}
+    assert "year" in claim["required"]
+    # Output stored before the field existed still loads, and means the plan year.
+    stored = {
+        "utt_id": "u0001",
+        "quote": "is covered",
+        "plan_id": "TRN-1001-002",
+        "kind": "formulary",
+        "subject_id": "apixaban-5mg-tab",
+        "covered": True,
+    }
+    out = JudgeOutput.model_validate({"criteria": [], "coverage_claims": [stored]})
+    assert out.coverage_claims[0].year is None

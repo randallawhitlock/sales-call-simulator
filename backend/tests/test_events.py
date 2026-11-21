@@ -117,3 +117,14 @@ def test_event_clock_must_be_timezone_aware() -> None:
         Event(
             session_id="s1", seq=1, type=EventType.CALL_STARTED, at=datetime(2026, 11, 12), t_ms=0
         )
+
+
+def test_a_quote_cannot_start_or_stop_inside_a_hyphenated_word() -> None:
+    u = utterance("That pharmacy is non-preferred on that plan, and the drug is extended-release.")
+    assert not u.contains_quote("preferred on that plan")
+    assert not u.contains_quote("the drug is extended")
+    assert u.contains_quote("non-preferred on that plan")
+    assert u.contains_quote("is extended-release")
+    # A dash between words is punctuation, not part of either word.
+    spaced = utterance("Yes - go ahead - sign me up.")
+    assert spaced.contains_quote("go ahead") and spaced.contains_quote("Yes - go ahead")
