@@ -23,9 +23,20 @@ SCOPE_ASK = "Which kinds of coverage would you like to talk about today? Medicar
 
 
 class Call:
-    def __init__(self, client: TestClient, scenario_id: str, seed: int = 7) -> None:
+    def __init__(
+        self, client: TestClient, scenario_id: str, seed: int = 7, *, voice: bool = False
+    ) -> None:
         self.c = client
-        resp = client.post("/api/sessions", json={"scenario_id": scenario_id, "seed": seed})
+        self.voice = voice
+        """A voice call: both sides' lines arrive the way the voice worker posts them."""
+        resp = client.post(
+            "/api/sessions",
+            json={
+                "scenario_id": scenario_id,
+                "seed": seed,
+                "channel": "voice" if voice else "text",
+            },
+        )
         assert resp.status_code == 201, resp.text
         self.session = resp.json()
         self.sid: str = self.session["session_id"]
@@ -65,7 +76,9 @@ class Call:
         self.post("/end")
         return self
 
-    def say(self, text: str) -> str:
+    def say(self, text: str, *, t_ms: int | None = None) -> str:
+        if self.voice:
+            return self.spoken(Speaker.LEARNER, text, t_ms=t_ms)
         body = {
             "client_utt_id": f"learner-{next(self._ids):04d}",
             "speaker": "learner",
@@ -79,8 +92,44 @@ class Call:
         body = {"client_utt_id": f"turn-{next(self._ids):04d}", "text": text}
         return self.post("/turns", body, expect=expect)
 
-    def hear(self, text: str, *, heard: str | None = None, interrupted: bool = False) -> str:
+    def spoken(
+        self,
+        speaker: Speaker,
+        text: str,
+        *,
+        heard: str | None = None,
+        interrupted: bool = False,
+        t_ms: int | None = None,
+    ) -> str:
+        """A line on a voice call, posted the way the voice worker posts it. ``t_ms`` is when it
+        was spoken; the worker writes some lines after later ones."""
+        utt = self.service.add_voice_utterance(
+            self.sid,
+            UtteranceIn(
+                client_utt_id=f"voice-{next(self._ids):04d}",
+                speaker=speaker,
+                channel=Channel.VOICE,
+                text=text,
+                heard_text=heard,
+                interrupted=interrupted,
+                t_ms=t_ms,
+            ),
+        )
+        return utt.utt_id
+
+    def hear(
+        self,
+        text: str,
+        *,
+        heard: str | None = None,
+        interrupted: bool = False,
+        t_ms: int | None = None,
+    ) -> str:
         """A customer turn. ``heard`` and ``interrupted`` simulate voice barge-in."""
+        if self.voice:
+            return self.spoken(
+                Speaker.CUSTOMER, text, heard=heard, interrupted=interrupted, t_ms=t_ms
+            )
         voice = heard is not None or interrupted
         utt = self.service.add_utterance(
             self.sid,

@@ -129,12 +129,21 @@ export function App() {
       ) : (
         <ErrorNote error={rejoinError} />
       )}
-      <CasePicker initial={incoming} onReady={setSession} />
+      <CasePicker initial={incoming} onReady={setSession} voice={health !== null && health !== 'down' && health.voice !== 'off'} />
     </main>
   )
 }
 
-function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s: Session) => void }) {
+function CasePicker({
+  initial,
+  onReady,
+  voice,
+}: {
+  initial: Session | null
+  onReady: (s: Session) => void
+  /** Voice calls are available, so each case offers a typed or a voice call. */
+  voice: boolean
+}) {
   const [cases, setCases] = useState<ScenarioCard[]>([])
   const [pending, setPendingState] = useState<Session | null>(initial)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -147,6 +156,12 @@ function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s
   function setPending(s: Session | null): void {
     putSessionInUrl(s?.session_id ?? null)
     setPendingState(s)
+  }
+
+  function startCall(c: ScenarioCard, channel: Session['channel']): void {
+    void run(async () =>
+      setPending(await post<Session>('/sessions', voice ? { scenario_id: c.scenario_id, channel } : { scenario_id: c.scenario_id })),
+    )
   }
 
   if (pending) {
@@ -211,15 +226,19 @@ function CasePicker({ initial, onReady }: { initial: Session | null; onReady: (s
       <ul className="cases">
         {cases.map((c) => (
           <li key={c.scenario_id}>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => setPending(await post<Session>('/sessions', { scenario_id: c.scenario_id })))
-              }
-            >
-              {c.learner_title}
-            </button>
+            {voice ? (
+              <>
+                {(['text', 'voice'] as const).map((channel) => (
+                  <button key={channel} type="button" disabled={busy} onClick={() => startCall(c, channel)}>
+                    {c.learner_title} ({channel === 'voice' ? 'voice call' : 'typed call'})
+                  </button>
+                ))}
+              </>
+            ) : (
+              <button type="button" disabled={busy} onClick={() => startCall(c, 'text')}>
+                {c.learner_title}
+              </button>
+            )}
           </li>
         ))}
       </ul>

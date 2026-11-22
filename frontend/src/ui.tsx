@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { Utterance } from './api.ts'
 import { useCall } from './call/context.tsx'
 import { useAction } from './util.ts'
 
@@ -41,5 +42,16 @@ export function Field({ label, children }: { label: string; children: ReactNode 
       <span>{label}</span>
       {children}
     </label>
+  )
+}
+
+/** What was heard. A customer line the learner talked over is marked as cut off. */
+export function UttText({ u, customer }: { u: Utterance; customer: string }) {
+  if (!u.interrupted) return <p>{u.heard_text}</p>
+  return (
+    <p>
+      {u.heard_text ? `${u.heard_text} ` : ''}
+      <em className="muted">({u.heard_text ? 'cut off' : `cut off before ${customer} said anything`})</em>
+    </p>
   )
 }

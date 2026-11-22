@@ -99,6 +99,8 @@ export interface Health {
   catalog_version: string
   /** The model grading calls, or `off`. */
   judge: string
+  /** The live voice model, or `off`. */
+  voice: string
 }
 
 export interface ScenarioCard {
@@ -143,6 +145,7 @@ export interface Session {
   /** A targeted retry: the call it retries and what to work on this time. */
   retry_of: string | null
   focus: FocusItem[]
+  channel: 'text' | 'voice'
 }
 
 export interface FocusItem {
@@ -156,7 +159,28 @@ export interface Utterance {
   channel: 'text' | 'voice'
   text: string
   heard_text: string
+  /** A voice line the learner talked over. `heard_text` is what was said before the cut. */
+  interrupted?: boolean
   t_ms: number
+}
+
+export interface VoiceStats {
+  latency_median_s: number | null
+  latency_p95_s: number | null
+  latency_max_s: number | null
+  turns_timed: number
+  barge_ins: number
+  nudges: number
+  holds: number
+  reconnects: number
+  session_restarts: number
+  audio_minutes: { input: number; output: number }
+  cost_usd_estimate: number
+  cost_basis: string
+  call_seconds: number
+  model: string
+  recording: string | null
+  errors: string[]
 }
 
 export interface TurnOut {

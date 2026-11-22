@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,11 +19,36 @@ class StepClock:
         return self.now
 
 
-@pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+VOICE_ENV = {
+    "SIM_LIVE_MODEL": "test-live-model",
+    "GEMINI_API_KEY": "test-gemini-key",
+    "LIVEKIT_URL": "ws://127.0.0.1:7880",
+    "LIVEKIT_API_KEY": "test-livekit-key",
+    "LIVEKIT_API_SECRET": "test-livekit-secret-for-the-suite-only",
+}
+"""Fake values: voice tests mint tokens but never reach LiveKit or Gemini."""
+
+
+def _client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("SIM_DB_PATH", ":memory:")
     monkeypatch.setenv("SIM_ACTOR", "scripted")  # never call a real model from the test suite
     monkeypatch.setenv("SIM_JUDGE", "off")
     with TestClient(app) as c:
         app.state.sessions.clock = StepClock()
         yield c
+
+
+@pytest.fixture
+def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    for name in VOICE_ENV:
+        monkeypatch.delenv(name, raising=False)
+    yield from _client(monkeypatch)
+
+
+@pytest.fixture
+def voice_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[TestClient]:
+    """A server with voice calls on."""
+    for name, value in VOICE_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("SIM_RECORDINGS_DIR", str(tmp_path / "recordings"))
+    yield from _client(monkeypatch)

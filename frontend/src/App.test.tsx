@@ -27,6 +27,7 @@ const SESSION: Session = {
   turn_pending: false,
   retry_of: null,
   focus: [],
+  channel: 'text',
 }
 
 const EMPTY_RECORD: CustomerRecord = {
@@ -59,7 +60,7 @@ function serve(state: { session: Session | null; transcript: Utterance[]; down?:
       const sent = JSON.parse(String(init?.body)) as { text: string }
       return json({ learner: utt('u0001', 'learner', sent.text), customer: utt('u0002', 'customer', 'Sorry, yes.') })
     }
-    if (path === '/health') return json({ status: 'ok', version: 'test', actor: 'scripted', catalog_version: 'v', judge: 'off' })
+    if (path === '/health') return json({ status: 'ok', version: 'test', actor: 'scripted', catalog_version: 'v', judge: 'off', voice: 'off' })
     if (path === '/scenarios') return json([{ scenario_id: 'scenario-101', learner_title: 'Inbound call' }])
     if (path === '/sessions' && state.session) return json({ ...state.session, status: 'created' })
     if (path === '/sessions/s-1/start' && state.session) return json({ ...state.session, status: 'active' })

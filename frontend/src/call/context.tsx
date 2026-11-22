@@ -86,3 +86,12 @@ export function mergeById<T>(prev: T[], next: T[], id: (item: T) => string): T[]
 export function mergeTranscript(prev: Utterance[], next: Utterance[]): Utterance[] {
   return mergeById(prev, next, (u) => u.utt_id).sort((a, b) => a.utt_id.localeCompare(b.utt_id))
 }
+
+/** Voice lines land seconds after they're spoken and can be saved out of order, so spoken time
+ * leads and the id only breaks ties. */
+export function mergeVoiceTranscript(prev: Utterance[], next: Utterance[]): Utterance[] {
+  return mergeById(prev, next, (u) => u.utt_id).sort((a, b) => a.t_ms - b.t_ms || a.utt_id.localeCompare(b.utt_id))
+}
+
+export const mergeTranscriptFor = (session: Session): typeof mergeTranscript =>
+  session.channel === 'voice' ? mergeVoiceTranscript : mergeTranscript

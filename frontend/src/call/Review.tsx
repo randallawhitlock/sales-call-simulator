@@ -11,10 +11,11 @@ import {
   type GradeStatus,
   type Session,
   type Utterance,
+  type VoiceStats,
 } from '../api.ts'
-import { Badge, ErrorNote } from '../ui.tsx'
-import { errorText, useAction } from '../util.ts'
-import { mergeTranscript, useCall } from './context.tsx'
+import { Badge, ErrorNote, UttText } from '../ui.tsx'
+import { errorText, money, useAction } from '../util.ts'
+import { mergeTranscriptFor, useCall } from './context.tsx'
 
 const STATUS: Record<GradeStatus, { label: string; tone: 'good' | 'bad' | 'warn' | 'info' }> = {
   pass: { label: 'pass', tone: 'good' },
@@ -44,8 +45,11 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
   const [actorFlags, setActorFlags] = useState<ConsistencyFlag[]>([])
   const [error, setError] = useState<string | null>(null)
   const [gradeError, setGradeError] = useState<string | null>(null)
+  const [voiceStats, setVoiceStats] = useState<VoiceStats | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
   const retry = useAction()
+  const voice = session.channel === 'voice'
+  const merge = mergeTranscriptFor(session)
 
   /** Asks the server to run the judge. A request that fails outright (a timeout, a dropped
    * connection) is kept apart from a judge failure the server reports, and either one leaves
@@ -83,13 +87,20 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
     // The call may have ended while a turn was in flight; show the transcript that was
     // graded, not whatever the call screen last had.
     get<Utterance[]>(`${base}/transcript`).then(
-      (t) => current && setTranscript((prev) => mergeTranscript(prev, t)),
+      (t) => current && setTranscript((prev) => merge(prev, t)),
       () => {},
     )
+    if (voice) {
+      // An extra: a call with no stats just doesn't show them, or its recording.
+      get<VoiceStats>(`${base}/voice-stats`).then(
+        (s) => current && setVoiceStats(s),
+        () => {},
+      )
+    }
     return () => {
       current = false
     }
-  }, [base, grade, setTranscript])
+  }, [base, grade, setTranscript, merge, voice])
 
   function show(uttId: string): void {
     setPicked(uttId)
@@ -208,16 +219,49 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
           </ul>
         </section>
       )}
+      {voiceStats && <VoiceStatsBlock stats={voiceStats} base={base} />}
       <h3>Transcript</h3>
-      <ol className="transcript static">
+      <ol id="review-transcript" className="transcript static">
         {transcript.map((u) => (
           <li key={u.utt_id} id={`line-${u.utt_id}`} className={`utt ${u.speaker}${picked === u.utt_id ? ' picked' : ''}`}>
             <div className="utt-meta"><span>{u.speaker === 'learner' ? 'You' : 'Customer'}</span><span className="muted">{u.utt_id}</span></div>
-            <p>{u.heard_text}</p>
+            <UttText u={u} customer="Customer" />
           </li>
         ))}
       </ol>
     </div>
+  )
+}
+
+const seconds = (n: number | null): string => (n === null ? 'n/a' : `${n.toFixed(1)} s`)
+
+function VoiceStatsBlock({ stats, base }: { stats: VoiceStats; base: string }) {
+  return (
+    <section className="voice-stats">
+      <h3>Voice call</h3>
+      <dl>
+        <dt>Reply delay, median</dt>
+        <dd>{seconds(stats.latency_median_s)}</dd>
+        <dt>Reply delay, 95th percentile</dt>
+        <dd>{seconds(stats.latency_p95_s)}</dd>
+        <dt>Times you talked over the customer</dt>
+        <dd>{stats.barge_ins}</dd>
+        <dt>Nudges</dt>
+        <dd>{stats.nudges}</dd>
+        <dt>Reconnects</dt>
+        <dd>{stats.reconnects}</dd>
+        <dt>Audio in / out</dt>
+        <dd>
+          {stats.audio_minutes.input.toFixed(1)} / {stats.audio_minutes.output.toFixed(1)} min
+        </dd>
+        <dt>Estimated cost</dt>
+        <dd>{money(String(stats.cost_usd_estimate))}</dd>
+      </dl>
+      <p className="muted small-text">{stats.cost_basis}</p>
+      {stats.recording !== null && (
+        <audio controls preload="none" src={`/api${base}/recording`} aria-details="review-transcript" />
+      )}
+    </section>
   )
 }
 
