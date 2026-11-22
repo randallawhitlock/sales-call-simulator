@@ -49,6 +49,9 @@ class RubricCriterion(ContentModel):
     check_id: CheckId | None = None
     judged_spec: str | None = None
     """What the judge looks for, in plain language. Required for judged and hybrid items."""
+    judge_backstop: bool = False
+    """Hybrid items only. The judge rules only where the code check couldn't tell (ungraded).
+    When the check passes or fails, its result stands alone."""
 
     @model_validator(mode="after")
     def _method_inputs(self) -> Self:
@@ -64,6 +67,8 @@ class RubricCriterion(ContentModel):
                 f"{self.criterion_id}: judged_spec must be set exactly when "
                 f"method is judged or hybrid"
             )
+        if self.judge_backstop and self.method is not Evaluation.HYBRID:
+            raise ValueError(f"{self.criterion_id}: judge_backstop is for hybrid items")
         return self
 
 

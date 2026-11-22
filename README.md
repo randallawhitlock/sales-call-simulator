@@ -44,7 +44,7 @@ the debrief are in. Next up is voice (M4).
 | M0 Foundations | Proposal v2.1, rule register, content schemas, scaffold, CI | Done |
 | M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done |
 | M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer, objections, reference drawer, rejoin after reload, actor QA | Done; first live actor QA run pending |
-| M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, targeted retry, judge eval set | Done; first live judge eval run pending |
+| M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, targeted retry, judge eval set | Done; first live judge eval run in [docs/judge-eval.md](docs/judge-eval.md) |
 | M4 Voice | LiveKit agent worker on Gemini Live | Planned; spike run, see [docs/voice-spike.md](docs/voice-spike.md) |
 | M5 Hardening | Resilience tests, demo script | Planned |
 
@@ -115,16 +115,32 @@ The debrief grades all 33 rubric items. Deterministic items come from those chec
 hybrid items come from the AI judge (Claude), which returns a status, a rationale and
 `{utt_id, quote}` evidence for each. The server looks for every quote in the line it cites; a
 missing quote marks the item "needs review" instead of counting. So does a pass that isn't
-carried by a quote of at least three words from the learner's own lines or the notes: what the
-customer said can support a pass, not earn it. A hybrid item needs both halves: code can fail
-it outright, and when code can't tell, the judge decides.
+carried by a quote of at least three words from the learner's own lines: what the customer said
+can support a pass, not earn it. There are two exceptions. The saved notes carry the pass for
+the notes item and for no other, because they show what was written down, not what was said.
+And the customer's yes carries the consent item when the code check itself cited that line.
 
-Coverage claims the judge finds are checked by code against the learner's earlier lookups. An
-unbacked claim is a critical finding only when code can confirm it from the cited line itself:
-the quote says covered or not, the line names the plan and the doctor, drug or pharmacy, and no
-lookup backs any reading of the line ("Dr. Raman" means every Dr. Raman at every office until
-the line says which). Whatever the judge had to infer goes to "needs review". Only code makes a
-finding critical.
+A hybrid item needs both halves: code can fail it outright, and when code can't tell, the judge
+decides. Consent is the one item where the judge is only a backstop: it rules when the wording
+check couldn't read the customer's yes ("Okay, sure, why not", or a "hold on" after it), and
+its ruling isn't applied when the check passed or failed. If two submitted applications each
+need a reading, the item goes to "needs review", since one ruling can't cover both.
+
+Coverage claims the judge finds are checked by code against the learner's earlier lookups. A
+compare counts for the drugs and the pharmacy it showed. Each claim carries the year it is
+about, so "she's in your network this year" is checked against this year's directory, not next
+year's. An unbacked claim is a critical finding only when code can confirm it from the cited
+line itself: the quote says covered or not, the line names the plan and the doctor, drug or
+pharmacy, and no lookup backs any reading of the line ("Dr. Raman" means every Dr. Raman at
+every office, for either year on file, until the line says which). Whatever the judge had to
+infer goes to "needs review".
+
+Only code makes a finding critical. One critical finding needs the judge as well, and still
+rests on the log: every Pre-Enrollment Checklist item marked with nothing said from the moment
+the checklist was on screen to the last mark, on a call where the judge saw no review anywhere
+else. The silence is the evidence; the judge only confirms the review didn't happen at some
+other point. A review the judge missed while the learner was talking costs the points and is
+not critical.
 
 `POST .../grade` runs the judge once and stores its output; `GET .../debrief` never calls a
 model and rebuilds the same debrief from the stored log and stored grade (`{"regrade": true}`
@@ -143,6 +159,7 @@ again and carries the three costliest misses, critical ones first, as the call's
 |---|---|
 | [Product proposal v2.1](docs/PROPOSAL.md) | MVP definition, architecture, scoring, risks, roadmap |
 | [Rule register](docs/rule-register.md) | Every graded rule with its cite, authority, status and check |
+| [Judge eval](docs/judge-eval.md) | First run of the labeled transcripts against the real judge |
 | [Proposal v2.0](docs/proposal-v2.0.md) | The original proposal, kept for the record |
 | [Contributing](.github/CONTRIBUTING.md) | Branches, commits, pull requests, checks |
 
@@ -212,6 +229,7 @@ the labeled transcripts in `backend/tests/judge_eval/` and fails below 85% agree
 missed coverage claim, printing every disagreement and every quote that didn't verify. Run it
 on every change to the judge prompt, model or rubric. The offline half of the eval (labels name
 judged items, labeled quotes verify, claims point at real ids) runs in every build.
+[docs/judge-eval.md](docs/judge-eval.md) has the first live run and the disagreements it found.
 
 ```bash
 cd frontend && npm run lint && npm run typecheck && npm run build

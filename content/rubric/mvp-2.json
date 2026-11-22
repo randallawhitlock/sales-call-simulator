@@ -1,6 +1,6 @@
 {
   "rubric_id": "mvp",
-  "version": 1,
+  "version": 2,
   "criteria": [
     {
       "criterion_id": "disc-doctors",
@@ -288,13 +288,15 @@
       "dimension": "documentation",
       "title": "Enrollment consent documented from a heard customer yes",
       "points": 3,
-      "method": "deterministic",
+      "method": "hybrid",
       "evidence_policy": "both",
       "critical": true,
       "rule_ids": [
         "R-CONSENT"
       ],
-      "check_id": "consent_before_submit"
+      "check_id": "consent_before_submit",
+      "judged_spec": "The customer line the agent marked as consent is a clear, willing yes to enrolling in this plan, not a yes to some other question, a hesitation, or a yes the customer took back before the application was submitted.",
+      "judge_backstop": true
     },
     {
       "criterion_id": "doc-application",

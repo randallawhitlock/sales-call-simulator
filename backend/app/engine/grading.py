@@ -5,10 +5,17 @@ Pure: the same log and the same stored judge output always give the same debrief
 - Every judge quote is looked up in the line it cites. A quote that isn't there, or a pass
   with no quote, sends the criterion to ``review_required`` instead of counting.
 - A hybrid criterion needs both halves: a code fail or a judge fail fails it, and an
-  ungraded half leaves it ungraded. Only code can make a finding critical; a model's judgment
-  alone never does.
-- A pass also needs a quote of at least three words from the learner's own lines or the
-  notes. A customer line or a stray word can support a grade but can't carry one.
+  ungraded half leaves it ungraded. Where the rubric marks the judge as a backstop, the code
+  check stands alone whenever it could tell, and the judge rules only when it couldn't.
+- Only code can make a finding critical; a model's judgment alone never does. The one
+  finding that needs both rests on the log all the same: every checklist item marked with
+  nothing said while the checklist was on screen, and no review seen by the judge anywhere
+  else in the call.
+- A pass also needs a quote of at least three words from the learner's own lines. A customer
+  line or a stray word can support a grade but can't carry one, with two exceptions: the
+  notes carry the pass for the criterion about the notes and for no other, and a customer
+  line the code check itself cited (the yes marked as consent) carries the pass it was cited
+  for.
 - ``coverage_claims_backed`` is decided by code from the claims the judge found: each claim
   needs an earlier lookup that showed what the learner said. An unbacked claim only fails,
   critically, when code can confirm the claim from the cited line itself: the quote says
@@ -25,7 +32,7 @@ from enum import StrEnum
 from pydantic import BaseModel
 
 from app.content.catalog import Catalog, Drug, Practice
-from app.content.common import Authority, CheckId, Evaluation
+from app.content.common import Authority, CheckId, Evaluation, EvidencePolicy
 from app.content.rubric import DIMENSION_WEIGHTS, Dimension, Rubric, RubricCriterion
 from app.content.rules import RuleSet, RuleStatus
 from app.content.scenario import CallFrame, Scenario
@@ -50,7 +57,8 @@ from app.judge.prompt import notes_text
 FOCUS_SIZE = 3
 """How many missed criteria a targeted retry asks the learner to work on."""
 MIN_PASS_QUOTE_WORDS = 3
-"""A pass needs one verified quote this long from the learner's lines or the notes."""
+"""A pass needs one verified quote this long from the learner's lines (or, for the criterion
+about the notes, from the notes)."""
 
 
 class GradeStatus(StrEnum):
@@ -219,6 +227,12 @@ def _criterion(
         status, critical, detail, evidence = _claims(c, ctx)
         return _finish(base, status, critical, detail, evidence, [])
     check = checks[c.check_id] if c.check_id is not None else None
+    if check is not None and check.held:
+        # More than one application needs a reading and one ruling can't cover them all.
+        cited = _cited_lines(check, ctx)
+        return _finish(
+            base, GradeStatus.REVIEW_REQUIRED, False, check.detail, cited, check.event_seqs
+        )
     if c.method is Evaluation.DETERMINISTIC:
         assert check is not None
         return _finish(
@@ -229,14 +243,21 @@ def _criterion(
             _cited_lines(check, ctx),
             check.event_seqs,
         )
-    j_status, j_detail, j_evidence = _judged(c, ctx)
+    j_status, j_detail, j_evidence = _judged(c, check, ctx)
     if check is None:  # judged
         return _finish(base, j_status, False, j_detail, j_evidence, [])
-    return _hybrid(base, check, j_status, j_detail, j_evidence, ctx)
+    return _hybrid(base, c, check, j_status, j_detail, j_evidence, ctx)
+
+
+SILENT_CHECKLIST = (
+    "Marking the items without a word is not a review with the customer, so this counts as "
+    "submitting before the checklist review."
+)
 
 
 def _hybrid(
     base: dict[str, object],
+    c: RubricCriterion,
     check: CheckResult,
     j_status: GradeStatus,
     j_detail: str,
@@ -244,7 +265,8 @@ def _hybrid(
     ctx: _Context,
 ) -> CriterionResult:
     c_status = _FROM_CHECK[check.status]
-    evidence = _cited_lines(check, ctx) + j_evidence
+    cited = _cited_lines(check, ctx)
+    evidence = cited + j_evidence
     seqs = check.event_seqs
     if c_status is GradeStatus.NOT_APPLICABLE:
         return _finish(base, c_status, False, check.detail, evidence, seqs)
@@ -253,8 +275,16 @@ def _hybrid(
     detail = f"{check.detail} {j_detail}".strip()
     if c_status is GradeStatus.UNGRADED:  # code couldn't tell; the judge decides alone
         return _finish(base, j_status, False, detail, evidence, seqs)
+    if c.judge_backstop:  # code could tell, so the judge's ruling is not applied
+        return _finish(base, c_status, False, check.detail, cited, seqs)
     if j_status is GradeStatus.NOT_APPLICABLE:
         return _finish(base, c_status, False, check.detail, evidence, seqs)
+    if check.silent and j_status in (GradeStatus.FAIL, GradeStatus.NOT_OBSERVED):
+        # Code saw the silence and the judge saw no review anywhere else. Together that is the
+        # step skipped, not merely unseen, and the log is what makes it critical.
+        return _finish(
+            base, GradeStatus.FAIL, c.critical, f"{detail} {SILENT_CHECKLIST}", evidence, seqs
+        )
     status = min(c_status, j_status, key=_SEVERITY.index)
     return _finish(base, status, False, detail, evidence, seqs)
 
@@ -297,7 +327,9 @@ def _cited_lines(check: CheckResult, ctx: _Context) -> list[EvidenceView]:
 # The judge's half
 
 
-def _judged(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, str, list[EvidenceView]]:
+def _judged(
+    c: RubricCriterion, check: CheckResult | None, ctx: _Context
+) -> tuple[GradeStatus, str, list[EvidenceView]]:
     if ctx.judged is None:
         return GradeStatus.UNGRADED, ctx.judge_note, []
     j = ctx.judged.get(c.criterion_id)
@@ -309,10 +341,11 @@ def _judged(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, str, list[E
     if problems:
         why = "; ".join(problems)
         return GradeStatus.REVIEW_REQUIRED, f"{rationale} Needs review: {why}.".strip(), evidence
-    if j.status is JudgedStatus.PASS and not any(_carries_a_pass(e) for e in evidence):
+    if j.status is JudgedStatus.PASS and not any(_carries_a_pass(e, c, check) for e in evidence):
+        about_notes = c.evidence_policy is EvidencePolicy.EVENT
         why = (
-            f"a pass needs a quote of at least {MIN_PASS_QUOTE_WORDS} words from your own "
-            "lines or the notes"
+            f"a pass needs a quote of at least {MIN_PASS_QUOTE_WORDS} words from "
+            + ("your own lines or the notes" if about_notes else "your own lines")
             if evidence
             else "the judge passed this without quoting a line"
         )
@@ -320,11 +353,19 @@ def _judged(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, str, list[E
     return _FROM_JUDGE[j.status], rationale, evidence
 
 
-def _carries_a_pass(e: EvidenceView) -> bool:
-    """A quote that can carry a pass: verified, in the learner's own words (a line of theirs
-    or the notes), and long enough to say something."""
-    own = e.utt_id == NOTES or e.speaker is Speaker.LEARNER
-    return e.verified and own and len(normalize_for_quote(e.quote).split()) >= MIN_PASS_QUOTE_WORDS
+def _carries_a_pass(e: EvidenceView, c: RubricCriterion, check: CheckResult | None) -> bool:
+    """A quote that can carry a pass: verified, long enough to say something, and in the
+    learner's own words on the call. The notes are the learner's words too, but written
+    afterwards: they carry the pass for the criterion about the records and for no other. A
+    customer line carries one only when the code check itself cited that line for this
+    criterion, as it does with the yes marked as consent."""
+    if not e.verified:
+        return False
+    if e.speaker is Speaker.CUSTOMER:
+        return check is not None and e.utt_id in check.utt_ids
+    if e.utt_id == NOTES and c.evidence_policy is not EvidencePolicy.EVENT:
+        return False
+    return len(normalize_for_quote(e.quote).split()) >= MIN_PASS_QUOTE_WORDS
 
 
 def verify_quote(q: Quote, utterances: dict[str, Utterance], notes: str) -> EvidenceView:
@@ -370,7 +411,14 @@ def _claims(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, bool, str, 
     unbacked: list[str] = []
     seen: set[tuple[object, ...]] = set()
     for claim in ctx.claims:
-        key = (claim.utt_id, claim.plan_id, claim.kind, claim.subject_id, claim.covered)
+        key = (
+            claim.utt_id,
+            claim.plan_id,
+            claim.kind,
+            claim.subject_id,
+            claim.covered,
+            _year(claim, ctx.catalog),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -403,7 +451,20 @@ def _claims(c: RubricCriterion, ctx: _Context) -> tuple[GradeStatus, bool, str, 
     return GradeStatus.PASS, False, detail, evidence
 
 
-def _backed(ctx: _Context, claim: ClaimOut, plan_id: str, subject_id: str) -> bool:
+def _year(claim: ClaimOut, catalog: Catalog) -> int:
+    return catalog.plan_year if claim.year is None else claim.year
+
+
+def _years_on_file(kind: str, catalog: Catalog) -> tuple[int, ...]:
+    """Years a claim of this kind can be checked for. Directories exist for the plan year and
+    the one before; drug lists and pharmacy networks only for the plan year."""
+    year = catalog.plan_year
+    return (year - 1, year) if kind == "provider_network" else (year,)
+
+
+def _backed(
+    ctx: _Context, claim: ClaimOut, plan_id: str, subject_id: str, year: int | None = None
+) -> bool:
     return claim_backed(
         ctx.facts,
         CoverageClaim(
@@ -412,6 +473,7 @@ def _backed(ctx: _Context, claim: ClaimOut, plan_id: str, subject_id: str) -> bo
             kind=claim.kind,
             subject_id=subject_id,
             covered=claim.covered,
+            year=_year(claim, ctx.catalog) if year is None else year,
         ),
     )
 
@@ -431,6 +493,10 @@ def _claim_problem(claim: ClaimOut, ctx: _Context) -> str | None:
         lookup(claim.subject_id)
     except KeyError:
         return f"unknown {claim.kind.replace('_', ' ')} subject {claim.subject_id}"
+    year = _year(claim, catalog)
+    if year not in _years_on_file(claim.kind, catalog):
+        # Nothing to check it against, which is not the same as no lookup behind it.
+        return f"the catalog has nothing for {year} to check this against"
     return None
 
 
@@ -553,12 +619,16 @@ def _unconfirmed(claim: ClaimOut, line: str, ctx: _Context) -> str | None:
                 "pharmacy_network": "pharmacy",
             }[claim.kind]
         )
+    # The year is the judge's reading too: "she's in network" may be about this year.
     for plan_id in plans:
         for subject_id in subjects:
-            if _backed(ctx, claim, plan_id, subject_id):
-                other = claim.model_copy(update={"plan_id": plan_id, "subject_id": subject_id})
-                meant = _describe_claim(other, ctx.catalog)
-                return f"the line could mean {meant}, which was looked up"
+            for year in _years_on_file(claim.kind, ctx.catalog):
+                if _backed(ctx, claim, plan_id, subject_id, year):
+                    other = claim.model_copy(
+                        update={"plan_id": plan_id, "subject_id": subject_id, "year": year}
+                    )
+                    meant = _describe_claim(other, ctx.catalog)
+                    return f"the line could mean {meant}, which was looked up"
     return None
 
 
@@ -577,7 +647,8 @@ def _describe_claim(claim: ClaimOut, catalog: Catalog) -> str:
     else:
         subject = catalog.pharmacy(claim.subject_id).name
         what = "in network" if claim.covered else "out of network"
-    return f"{subject} is {what} on {plan}"
+    year = _year(claim, catalog)
+    return f"{subject} is {what} on {plan}" + (f" for {year}" if year != catalog.plan_year else "")
 
 
 # Rules and score

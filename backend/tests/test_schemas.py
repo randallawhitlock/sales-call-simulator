@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.content.catalog import Catalog, NetworkParticipation, Plan, Supplemental
-from app.content.rubric import Rubric
+from app.content.rubric import Rubric, RubricCriterion
 from app.content.rules import Rule
 from app.content.scenario import CallFrame, Scenario
 
@@ -296,3 +296,23 @@ def test_rubric_method_inputs() -> None:
                 ],
             }
         )
+
+
+def test_only_a_hybrid_item_can_make_the_judge_a_backstop() -> None:
+    criterion = {
+        "criterion_id": "c1",
+        "dimension": "discovery",
+        "title": "x",
+        "points": 15,
+        "method": "deterministic",
+        "evidence_policy": "event",
+        "check_id": "needs_match_truth",
+        "judge_backstop": True,
+    }
+    with pytest.raises(ValidationError, match="judge_backstop is for hybrid items"):
+        RubricCriterion.model_validate(criterion)
+    hybrid = criterion | {"method": "hybrid", "judged_spec": "Look for it."}
+    assert RubricCriterion.model_validate(hybrid).judge_backstop is True
+    assert (
+        RubricCriterion.model_validate(hybrid | {"judge_backstop": False}).judge_backstop is False
+    )
