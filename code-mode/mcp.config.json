@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "sheets": { "command": "node", "args": ["examples/demo-server.ts", "sheets"] },
+    "crm": { "command": "node", "args": ["examples/demo-server.ts", "crm"] },
+    "chat": { "command": "node", "args": ["examples/demo-server.ts", "chat"] }
+  },
+  "pii": { "enabled": true }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "code-mode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Code execution with MCP: agents write code that calls MCP tools instead of calling tools directly.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "codegen": "node src/codegen.ts",
+    "agent": "node src/agent.ts",
+    "bench": "node src/bench.ts",
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  },
+  "imports": {
+    "#servers/*": "./servers/*",
+    "#skills/*": "./skills/*",
+    "#runtime/*": "./src/runtime/*"
+  }
+}
