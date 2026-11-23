@@ -71,7 +71,7 @@ An organization may later create a private, authorized policy pack. Removing tha
 | Setting | Default |
 |---|---|
 | Workspaces | Original Plan Research, Customer Records, Application Review, Reference Center, and Coaching |
-| Separate TPV-style handoff | Optional module, not mandatory for every case |
+| Separate third-party verification handoff | Optional module, not mandatory for every case |
 | Internal handoff deadline | None; measure time without an invented federal limit |
 | PCP assignment | Follows applicable plan requirements |
 | Mandatory fax screenshot | No universal requirement; enabled by an applicable reviewed rule |

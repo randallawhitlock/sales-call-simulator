@@ -11,10 +11,15 @@ import {
   type GradeStatus,
   type Session,
   type Utterance,
+  type VoiceStats,
 } from '../api.ts'
-import { Badge, ErrorNote } from '../ui.tsx'
+import { Badge, ErrorNote, UttText } from '../ui.tsx'
 import { errorText, useAction } from '../util.ts'
-import { mergeTranscript, useCall } from './context.tsx'
+import { mergeTranscriptFor, useCall } from './context.tsx'
+
+const VOICE_STATS_POLL_MS = 1000
+/** The worker's last write lands within about ten seconds of the end of the call. */
+const VOICE_STATS_WAIT_MS = 20_000
 
 const STATUS: Record<GradeStatus, { label: string; tone: 'good' | 'bad' | 'warn' | 'info' }> = {
   pass: { label: 'pass', tone: 'good' },
@@ -44,8 +49,12 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
   const [actorFlags, setActorFlags] = useState<ConsistencyFlag[]>([])
   const [error, setError] = useState<string | null>(null)
   const [gradeError, setGradeError] = useState<string | null>(null)
+  const [voiceStats, setVoiceStats] = useState<VoiceStats | null>(null)
+  const [statsSettled, setStatsSettled] = useState(false)
   const [picked, setPicked] = useState<string | null>(null)
   const retry = useAction()
+  const voice = session.channel === 'voice'
+  const merge = mergeTranscriptFor(session)
 
   /** Asks the server to run the judge. A request that fails outright (a timeout, a dropped
    * connection) is kept apart from a judge failure the server reports, and either one leaves
@@ -83,13 +92,45 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
     // The call may have ended while a turn was in flight; show the transcript that was
     // graded, not whatever the call screen last had.
     get<Utterance[]>(`${base}/transcript`).then(
-      (t) => current && setTranscript((prev) => mergeTranscript(prev, t)),
+      (t) => current && setTranscript((prev) => merge(prev, t)),
       () => {},
     )
     return () => {
       current = false
     }
-  }, [base, grade, setTranscript])
+  }, [base, grade, setTranscript, merge])
+
+  // An extra: a call with no stats just doesn't show them, or its recording. The worker saves
+  // its last figures a few seconds after the call ends, so keep asking until they're final.
+  // Stats that never get there (a worker that crashed) still show once the wait runs out.
+  useEffect(() => {
+    if (!voice) return
+    let current = true
+    let timer: number | undefined
+    const deadline = Date.now() + VOICE_STATS_WAIT_MS
+    function again(): void {
+      if (Date.now() < deadline) timer = window.setTimeout(poll, VOICE_STATS_POLL_MS)
+      else setStatsSettled(true)
+    }
+    function poll(): void {
+      get<VoiceStats>(`${base}/voice-stats`).then(
+        (s) => {
+          if (!current) return
+          setVoiceStats(s)
+          if (s.final) setStatsSettled(true)
+          else again()
+        },
+        () => {
+          if (current) again()
+        },
+      )
+    }
+    poll()
+    return () => {
+      current = false
+      window.clearTimeout(timer)
+    }
+  }, [base, voice])
 
   function show(uttId: string): void {
     setPicked(uttId)
@@ -180,7 +221,11 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
                 onClick={() =>
                   void retry.run(async () =>
                     onRetry(
-                      await post<Session>('/sessions', { scenario_id: session.scenario_id, retry_of: session.session_id }),
+                      await post<Session>('/sessions', {
+                        scenario_id: session.scenario_id,
+                        retry_of: session.session_id,
+                        channel: session.channel,
+                      }),
                     ),
                   )
                 }
@@ -208,16 +253,63 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
           </ul>
         </section>
       )}
+      {voiceStats && <VoiceStatsBlock stats={voiceStats} base={base} settled={statsSettled} />}
       <h3>Transcript</h3>
-      <ol className="transcript static">
+      <ol id="review-transcript" className="transcript static">
         {transcript.map((u) => (
           <li key={u.utt_id} id={`line-${u.utt_id}`} className={`utt ${u.speaker}${picked === u.utt_id ? ' picked' : ''}`}>
             <div className="utt-meta"><span>{u.speaker === 'learner' ? 'You' : 'Customer'}</span><span className="muted">{u.utt_id}</span></div>
-            <p>{u.heard_text}</p>
+            <UttText u={u} customer="Customer" />
           </li>
         ))}
       </ol>
     </div>
+  )
+}
+
+const seconds = (n: number | null): string => (n === null ? 'n/a' : `${n.toFixed(1)} s`)
+
+/** A voice call often costs a fraction of a cent, so amounts under a dollar keep four decimals. */
+const usd = (n: number): string =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: n < 1 ? 4 : 2 })
+
+/** `settled`: the stats are final, so the recording is complete. */
+function VoiceStatsBlock({ stats, base, settled }: { stats: VoiceStats; base: string; settled: boolean }) {
+  const parts = stats.recording_parts ?? (stats.recording !== null ? 1 : 0)
+  return (
+    <section className="voice-stats">
+      <h3>Voice call</h3>
+      <dl>
+        <dt>Reply delay, median</dt>
+        <dd>{seconds(stats.latency_median_s)}</dd>
+        <dt>Reply delay, 95th percentile</dt>
+        <dd>{seconds(stats.latency_p95_s)}</dd>
+        <dt>Times you talked over the customer</dt>
+        <dd>{stats.barge_ins}</dd>
+        <dt>Nudges</dt>
+        <dd>{stats.nudges}</dd>
+        <dt>Reconnects</dt>
+        <dd>{stats.reconnects}</dd>
+        <dt>Audio in / out</dt>
+        <dd>
+          {stats.audio_minutes.input.toFixed(1)} / {stats.audio_minutes.output.toFixed(1)} min
+        </dd>
+        <dt>Estimated cost</dt>
+        <dd>{usd(stats.cost_usd_estimate)}</dd>
+      </dl>
+      <p className="muted small-text">{stats.cost_basis}</p>
+      {settled &&
+        Array.from({ length: parts }, (_, i) => (
+          <audio
+            key={i}
+            controls
+            preload="none"
+            src={`/api${base}/recording${i === 0 ? '' : `?part=${i + 1}`}`}
+            aria-label={parts > 1 ? `Call recording, part ${i + 1} of ${parts}` : 'Call recording'}
+            aria-details="review-transcript"
+          />
+        ))}
+    </section>
   )
 }
 

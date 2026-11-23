@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, JsonValue
 
-from app.engine.events import Event, EventType, Utterance
+from app.engine.events import Channel, Event, EventType, Utterance
 from app.judge.models import GradeRow
 
 SCHEMA = """
@@ -49,7 +49,18 @@ CREATE TABLE IF NOT EXISTS judge_runs (
     session_id TEXT PRIMARY KEY,
     n INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS voice_stats (
+    session_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
 """
+
+DB_PATH_ENV = "SIM_DB_PATH"
+"""The SQLite file the API and the voice worker share."""
+DEFAULT_DB_PATH = "simulator.db"
+BUSY_TIMEOUT_MS = 5000
+"""The voice worker writes from its own process. A writer waits this long for the other's
+transaction instead of failing at once."""
 
 
 class SessionStatus(StrEnum):
@@ -79,6 +90,8 @@ class SessionRow(BaseModel):
     seed: int
     mood: str
     voice: str
+    channel: Channel = Channel.TEXT
+    """How the learner talks to the customer: typed turns, or a voice call through the worker."""
     status: SessionStatus
     created_at: datetime
     started_at: datetime | None = None
@@ -93,7 +106,12 @@ class Store:
     def __init__(self, path: str) -> None:
         self._lock = threading.RLock()
         self._depth = 0
-        self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._conn = sqlite3.connect(
+            path, check_same_thread=False, isolation_level=None, timeout=BUSY_TIMEOUT_MS / 1000
+        )
+        # WAL lets the API read while the voice worker writes, and the other way round.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         self._conn.executescript(SCHEMA)
 
     def close(self) -> None:
@@ -175,6 +193,26 @@ class Store:
                 "ON CONFLICT(session_id) DO UPDATE SET n = n + 1",
                 (session_id,),
             )
+
+    # Voice stats
+
+    def put_voice_stats(self, session_id: str, data: dict[str, JsonValue]) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO voice_stats (session_id, data) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET data = excluded.data",
+                (session_id, json.dumps(data, sort_keys=True)),
+            )
+
+    def get_voice_stats(self, session_id: str) -> dict[str, JsonValue] | None:
+        with self._lock:
+            found = self._conn.execute(
+                "SELECT data FROM voice_stats WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        if found is None:
+            return None
+        data: dict[str, JsonValue] = json.loads(found[0])
+        return data
 
     # Events
 

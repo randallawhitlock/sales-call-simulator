@@ -133,11 +133,15 @@ class SessionService:
         actor: Actor | None = None,
         actor_deadline_s: float = DEFAULT_TIMEOUT_S,
         max_actor_calls: int = MAX_ACTOR_CALLS,
+        voice_actor: str | None = None,
     ) -> None:
         self.store = store
         self.content = content
         self.clock = clock
         self.actor: Actor = actor or ScriptedActor()
+        self.voice_actor = voice_actor
+        """The live model voice calls run on, e.g. ``gemini-live:<model>``; None when voice is
+        off. Voice sessions pin it the way text sessions pin ``actor.name``."""
         self.actor_deadline_s = actor_deadline_s
         self._turn_locks: dict[str, _TurnLock] = {}
         self._turn_locks_guard = threading.Lock()
@@ -176,10 +180,13 @@ class SessionService:
         *,
         retry_of: str | None = None,
         focus: tuple[str, ...] = (),
+        channel: Channel = Channel.TEXT,
     ) -> SessionRow:
         scenario = self.content.scenarios.get(scenario_id)
         if scenario is None:
             raise NotFound(f"unknown scenario {scenario_id}")
+        if channel is Channel.VOICE and self.voice_actor is None:
+            raise Conflict("voice calls are off on this server (set SIM_LIVE_MODEL)")
         seed = secrets.randbelow(2**31) if seed is None else seed
         rolls = random.Random(seed)
         row = SessionRow(
@@ -192,10 +199,11 @@ class SessionService:
             rubric_version=self.content.rubric.version,
             frame_id=self.content.frame.frame_id,
             prompt_version=PROMPT_VERSION,
-            actor=self.actor.name,
+            actor=self.voice_actor if channel is Channel.VOICE else self.actor.name,
             seed=seed,
             mood=rolls.choice(scenario.persona.moods),
             voice=rolls.choice(scenario.persona.voices),
+            channel=channel,
             status=SessionStatus.CREATED,
             created_at=self.clock(),
             retry_of=retry_of,
@@ -358,7 +366,21 @@ class SessionService:
             raise Invalid("learners post their own text turns only")
         if len(body.text) > MAX_LEARNER_TEXT:
             raise Invalid(f"a line can be at most {MAX_LEARNER_TEXT} characters")
+        self._require_text(session_id)
         return self.add_utterance(session_id, body)
+
+    def add_voice_utterance(self, session_id: str, body: UtteranceIn) -> Utterance:
+        """A line the voice worker heard or played. Only voice sessions take them, and only
+        while the call is live; ``client_utt_id`` keeps a resent line from landing twice."""
+        if body.channel is not Channel.VOICE:
+            raise Invalid("the voice worker posts voice turns only")
+        if self.get(session_id).channel is not Channel.VOICE:
+            raise Conflict("this is a typed call; it has no voice line")
+        return self.add_utterance(session_id, body)
+
+    def _require_text(self, session_id: str) -> None:
+        if self.get(session_id).channel is Channel.VOICE:
+            raise Conflict("this is a voice call; talk to the customer instead of typing")
 
     def take_turn(self, session_id: str, body: TurnIn) -> TurnOut:
         """The learner says a line and the customer answers. Retrying with the same
@@ -370,6 +392,7 @@ class SessionService:
         model works, a hold or end cuts the turn off at once. Before a reply is saved it is
         checked again, and dropped if a newer learner line arrived or a hold or end happened
         at any point after generation started, even one already resumed."""
+        self._require_text(session_id)
         with self.turn_lock(session_id):
             flight: _InFlight | None = None
             try:
@@ -507,11 +530,12 @@ class SessionService:
         must not change the customer's facts mid-call. The call frame carries no version, so an
         edit to it under the same ``frame_id`` is not caught."""
         pinned = (row.prompt_version, row.actor)
-        running = (PROMPT_VERSION, self.actor.name)
+        model = self.voice_actor if row.channel is Channel.VOICE else self.actor.name
+        running = (PROMPT_VERSION, model)
         if pinned != running:
             raise Conflict(
                 f"this session's customer is {row.actor} on {row.prompt_version}; the server "
-                f"runs {self.actor.name} on {PROMPT_VERSION}"
+                f"runs {model or 'no voice model'} on {PROMPT_VERSION}"
             )
         content = self.pinned_content(row)
         return build_customer_prompt(content.scenario(row.scenario_id), content.frame, row.mood)

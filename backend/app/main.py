@@ -15,11 +15,10 @@ from app.api import router
 from app.content.loader import ContentError, load_bundle
 from app.engine.debrief import DebriefService
 from app.engine.session import SessionError, SessionService
-from app.engine.store import Store
+from app.engine.store import DB_PATH_ENV, DEFAULT_DB_PATH, Store
 from app.judge.judges import judge_from_env
 from app.judge.prompt import JUDGE_PROMPT_VERSION
-
-DB_PATH_ENV = "SIM_DB_PATH"
+from app.voice.config import voice_from_env
 
 
 class Health(BaseModel):
@@ -35,6 +34,8 @@ class Health(BaseModel):
     judge: str
     """The model grading calls, or ``off`` when none is configured."""
     judge_prompt_version: str
+    voice: str
+    """The live model voice calls run on, or ``off``."""
 
 
 @asynccontextmanager
@@ -47,9 +48,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         raise ContentError(problems)
     actor = actor_from_env()
     judge = judge_from_env()
-    store = Store(os.environ.get(DB_PATH_ENV, "simulator.db"))
+    voice = voice_from_env()
+    store = Store(os.environ.get(DB_PATH_ENV, DEFAULT_DB_PATH))
+    app.state.voice = voice
     app.state.sessions = SessionService(
-        store, content, actor=actor, actor_deadline_s=actor_timeout_from_env()
+        store,
+        content,
+        actor=actor,
+        actor_deadline_s=actor_timeout_from_env(),
+        voice_actor=voice.actor if voice else None,
     )
     app.state.debriefs = DebriefService(app.state.sessions, judge)
     yield
@@ -80,4 +87,5 @@ def health(request: Request) -> Health:
         prompt_version=PROMPT_VERSION,
         judge=request.app.state.debriefs.judge_name,
         judge_prompt_version=JUDGE_PROMPT_VERSION,
+        voice=service.voice_actor or "off",
     )

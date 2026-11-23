@@ -21,7 +21,7 @@ from app.content.catalog import Catalog, DocumentKind
 from app.content.common import CheckId, OutcomeKind
 from app.content.loader import aep_end
 from app.content.scenario import CallFrame, OutcomeVerdict, Scenario
-from app.engine.events import Event, EventType, Speaker, Utterance
+from app.engine.events import Channel, Event, EventType, Speaker, Utterance
 from app.engine.records import Application, CustomerRecord, SessionState
 
 
@@ -65,8 +65,12 @@ class Facts:
     """Every submission, withdrawn or not; compliance checks audit each."""
     outcome_plan_id: str | None = field(init=False)
     cutoff: int = field(init=False)
+    _voice_at: dict[str, float] = field(init=False)
 
     def __post_init__(self) -> None:
+        self._voice_at = voice_positions(self.events, self.utterances)
+        if self._voice_at:
+            self.utterances = sorted(self.utterances, key=lambda u: self.utt_seq(u.utt_id))
         self.state = SessionState.fold(self.events)
         self.enrolled = self.state.submitted_application()
         self.submissions = self.state.submissions()
@@ -144,8 +148,39 @@ class Facts:
     def utterance(self, utt_id: str) -> Utterance | None:
         return next((u for u in self.utterances if u.utt_id == utt_id), None)
 
-    def utt_seq(self, utt_id: str) -> int:
+    def utt_seq(self, utt_id: str) -> float:
+        """Where a line falls among the call's events, comparable with event seqs.
+
+        A typed line is its own event's seq. A voice line is saved only once it has been
+        transcribed, which for the agent's speech can be seconds after it was said, so its seq
+        can land after research done while the customer answered. A voice line is placed by
+        when it was said instead: just after the last event logged at or before that moment
+        (the fraction keeps lines between the same two events in spoken order)."""
+        if (at := self._voice_at.get(utt_id)) is not None:
+            return at
         return next((e.seq for e in self.events if e.utt_id == utt_id), 0)
+
+
+def voice_positions(events: list[Event], utterances: list[Utterance]) -> dict[str, float]:
+    """``Facts.utt_seq`` for each voice line. Utterance events carry the line's own ``t_ms``
+    (when it started, on the call clock); every other event carries the server's clock at the
+    moment it was logged, on the same timeline."""
+    voice = {u.utt_id: u for u in utterances if u.channel is Channel.VOICE}
+    if not voice:
+        return {}
+    others = [e for e in events if e.utt_id not in voice]
+    groups: dict[int, list[tuple[int, int, str]]] = {}
+    for e in events:
+        if e.utt_id is None or (u := voice.get(e.utt_id)) is None:
+            continue
+        anchor = max((o.seq for o in others if o.t_ms <= u.t_ms), default=0)
+        groups.setdefault(anchor, []).append((u.t_ms, e.seq, u.utt_id))
+    out: dict[str, float] = {}
+    for anchor, lines in groups.items():
+        lines.sort()
+        for i, (_, _, utt_id) in enumerate(lines):
+            out[utt_id] = anchor + (i + 1) / (len(lines) + 1)
+    return out
 
 
 def _get(obj: JsonValue, key: str) -> JsonValue:

@@ -36,8 +36,9 @@ the conversation and the research on one screen and grades both.
 
 ## Status
 
-Pre-alpha. The content, the deterministic core, the call screen, the text actor, the judge and
-the debrief are in. Next up is voice (M4).
+Pre-alpha. The content, the deterministic core, the call screen, the text actor, the judge,
+the debrief and voice calls are in. Voice still needs its acceptance runs with a person on a
+real microphone (M4 part 2).
 
 | Milestone | What lands | State |
 |---|---|---|
@@ -45,7 +46,7 @@ the debrief are in. Next up is voice (M4).
 | M1 Content and deterministic core | Fictional catalog, 3 cases, research and records APIs, rule checks, golden tests | Done |
 | M2 Call screen and text actor | Three-pane UI, typed conversation with the AI customer, objections, reference drawer, rejoin after reload, actor QA | Done; first live actor QA run pending |
 | M3 Judge and debrief | Quote-verified grading, evidence-linked debrief, targeted retry, judge eval set | Done; first live judge eval run in [docs/judge-eval.md](docs/judge-eval.md) |
-| M4 Voice | LiveKit agent worker on Gemini Live | Planned; spike run, see [docs/voice-spike.md](docs/voice-spike.md) |
+| M4 Voice | Voice calls on Gemini Live through a LiveKit worker: hold, rejoin after reload, fresh-session reconnects, nudges in long silences, recording, latency and cost per call | Built; [acceptance runs](docs/voice-spike.md#m4-acceptance-gate) pending |
 | M5 Hardening | Resilience tests, demo script | Planned |
 
 ### Launch cases
@@ -232,8 +233,35 @@ judged items, labeled quotes verify, claims point at real ids) runs in every bui
 [docs/judge-eval.md](docs/judge-eval.md) has the first live run and the disagreements it found.
 
 ```bash
-cd frontend && npm run lint && npm run typecheck && npm run build
+cd frontend && npm run lint && npm run typecheck && npm test && npm run build
 ```
+
+### Voice calls
+
+Voice runs two more processes beside the API: a LiveKit server and the voice worker, which
+plays the customer on Gemini Live. Use the paid Gemini tier for anything a person talks into
+([docs/voice-spike.md](docs/voice-spike.md) says why).
+
+```bash
+livekit-server --dev
+```
+
+```bash
+cd backend && uv run python -m app.voice.worker dev
+```
+
+The API and the worker read the same settings and share `simulator.db`: set `SIM_LIVE_MODEL`,
+`GEMINI_API_KEY`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` for both (`livekit-server --dev`
+uses `devkey` and `secret`). With voice on, `/api/health` names the live model and each case
+offers a voice call.
+
+The browser joins the call's room with a token from the API, and the token sends the worker to
+that room only. The customer plays from the same prompt a typed call uses, and every line goes
+into the session log as it's spoken, with what you actually heard of it when you talk over her.
+Hold silences both sides. Reloading the tab rejoins the same call if you're back within two
+minutes. Ending the call saves lines still being transcribed first. The debrief adds latency,
+barge-ins, reconnects, audio minutes and an estimated model cost, and plays the recording
+(saved under `recordings/`).
 
 ### Environment variables
 
@@ -255,8 +283,12 @@ are git-ignored. Never commit real values.
 | `SIM_JUDGE_MODEL` | Judge model id (default `claude-opus-5-5`); every stored grade records it | M3 |
 | `SIM_JUDGE_TIMEOUT_S` | Seconds one grading run may take in all, its one retry included (1 to 900, default 180) | M3 |
 | `SIM_LIVE_MODEL` | Gemini Live model id, always pinned | M4 |
-| `LIVEKIT_URL` | LiveKit server (default `ws://localhost:7880`) | M4 |
-| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | LiveKit credentials; `livekit-server --dev` prints its own | M4 |
+| `LIVEKIT_URL` | LiveKit server the browser and the worker join (default `ws://127.0.0.1:7880`) | M4 |
+| `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | LiveKit credentials, required with `SIM_LIVE_MODEL`; `livekit-server --dev` uses `devkey` and `secret` | M4 |
+| `SIM_VOICE_SILENCE_MS` | How long Gemini waits after you stop talking before it answers (100 to 5000, default 700) | M4 |
+| `SIM_VOICE_NUDGE_S` | Seconds of silence before the customer checks you're still there, doubling each time (0 turns it off, default 25) | M4 |
+| `SIM_RECORDINGS_DIR` | Where call recordings go (default `recordings`) | M4 |
+| `SIM_LIVE_PRICE_IN_PER_MIN`, `SIM_LIVE_PRICE_OUT_PER_MIN` | Dollars per minute of audio in and out, for the per-call cost estimate (defaults 0.005 and 0.018) | M4 |
 
 ## Disclaimer
 

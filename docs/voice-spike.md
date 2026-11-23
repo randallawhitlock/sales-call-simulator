@@ -285,6 +285,23 @@ she picked the thought back up.
 4. **Pin the API version and the key variable** as above, and use the paid tier for anything a
    person talks into.
 
+### Where M4 stands
+
+Built on 2026-11-22 (`backend/app/voice/`); the acceptance gate below hasn't been run.
+
+1. **Reconnects.** The worker never resumes. On any recoverable error or GoAway it starts a
+   fresh Gemini session and replays `AgentSession.history`, which holds only what was played.
+   It hooks private methods of livekit-plugins-google 1.8.11 (pinned with livekit-agents), and
+   a test fails if an upgrade moves them. If the customer's whole session dies, the worker
+   rebuilds it from the same history, up to three times a call.
+2. **What wasn't heard.** After a barge-in the worker sends Gemini a note with what was heard.
+   The log keeps both: `text` is what she generated, `heard_text` what played.
+3. **End-of-speech.** 700 ms by default (`SIM_VOICE_SILENCE_MS`), not yet tuned with a person.
+4. **API version and key.** `api_version="v1beta"`, key from `GEMINI_API_KEY`.
+
+Lines are written once their transcript is final, which can be after a later line, so the log
+places voice lines by when they were said (audio time), not by when they were written.
+
 ## M4 acceptance gate
 
 The spike picks a direction. It doesn't accept one, and a short run with a bot caller isn't a
