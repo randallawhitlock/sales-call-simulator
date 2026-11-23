@@ -17,7 +17,7 @@ import math
 import re
 import statistics
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from pydantic import JsonValue
@@ -48,11 +48,20 @@ def heard_note(heard: str) -> str:
     )
 
 
-def hold_note(seconds: float) -> str:
-    return instructions(
+def hold_note(seconds: float, cut: str | None = None) -> str:
+    """``cut``: what the agent heard of a line the hold cut off, if one did."""
+    note = (
         f"The agent put you on hold for about {round(seconds)} seconds and is back now. You "
         "heard nothing while you were on hold."
     )
+    if cut is not None:
+        cut = cut.strip()
+        note += (
+            f' The hold cut you off: all they heard you say was "{cut}".'
+            if cut
+            else " The hold cut you off before they heard any of what you were saying."
+        )
+    return instructions(note)
 
 
 NUDGE = (
@@ -113,6 +122,12 @@ class SpeechTracker:
         """The latest run that began by ``t``."""
         return next((r for r in reversed(self.runs) if r.start <= t), None)
 
+    def speech_start(self, first_seen: float, max_s: float) -> float:
+        """When the agent started a line Gemini first transcribed at ``first_seen``: the start
+        of the run they were in by then, unless it began more than ``max_s`` before."""
+        run = self.run_started_before(first_seen)
+        return run.start if run is not None and first_seen - run.start <= max_s else first_seen
+
     def run_ended_before(self, t: float) -> Run | None:
         """The latest run that was over by ``t``."""
         return next((r for r in reversed(self.runs) if r.end <= t), None)
@@ -134,11 +149,20 @@ class _Pending:
 
 
 class Ledger:
-    """Turns LiveKit's conversation items into utterances, in spoken order."""
+    """Turns LiveKit's conversation items into utterances, in spoken order.
 
-    def __init__(self, call_started_at: float, hold_s: float = HOLD_FOR_TRANSCRIPT_S) -> None:
+    ``start_of`` maps when an agent line was first transcribed to when the agent started saying
+    it (the worker reads that off their audio); by default the two are taken as the same."""
+
+    def __init__(
+        self,
+        call_started_at: float,
+        hold_s: float = HOLD_FOR_TRANSCRIPT_S,
+        start_of: Callable[[float], float] | None = None,
+    ) -> None:
         self.call_started_at = call_started_at
         self.hold_s = hold_s
+        self.start_of: Callable[[float], float] = start_of or (lambda t: t)
         self._open: dict[str, _Open] = {}
         """Agent lines Gemini has started transcribing but not finished."""
         self._held: list[_Pending] = []
@@ -237,17 +261,17 @@ class Ledger:
     def flush(self, now: float) -> list[UtteranceIn]:
         """Everything still pending, for the end of the call: an agent line still being
         transcribed is saved as transcribed so far."""
-        out = []
+        out: list[UtteranceIn] = []
         for item_id, entry in sorted(self._open.items(), key=lambda kv: kv[1].first_seen):
             if item_id not in self._done:
                 self._done.add(item_id)
-                out.append((entry.first_seen, self._learner(item_id, entry.text, entry.first_seen)))
+                out.append(self._learner(item_id, entry.text, self.start_of(entry.first_seen)))
         self._open.clear()
         for p in self._held:
             p.blocked_by.clear()
         released = self._release([], None, now)
         merged = sorted(
-            [(b.t_ms or 0, i, b) for i, (_, b) in enumerate(out)]
+            [(b.t_ms or 0, i, b) for i, b in enumerate(out)]
             + [(b.t_ms or 0, len(out) + i, b) for i, b in enumerate(released)],
             key=lambda x: (x[0], x[1]),
         )
@@ -277,6 +301,11 @@ class Ledger:
         return len(self._open) + len(self._held)
 
 
+def _list(data: dict[str, JsonValue], key: str) -> list[JsonValue]:
+    value = data.get(key)
+    return value if isinstance(value, list) else []
+
+
 @dataclass
 class VoiceStats:
     """What one voice call cost and how it behaved, written to the voice_stats table."""
@@ -303,6 +332,32 @@ class VoiceStats:
         }
     )
     recording: str | None = None
+    carried_reconnects: int = 0
+    carried_restarts: int = 0
+
+    def carry(self, prior: dict[str, JsonValue]) -> None:
+        """Picks up the figures an earlier worker saved for the same call, so a worker sent
+        back to a call adds to them instead of writing over them. Its arrival counts as a
+        session restart."""
+
+        def count(key: str) -> int:
+            value = prior.get(key)
+            return value if isinstance(value, int) else 0
+
+        self.latencies += [x for x in _list(prior, "latencies_s") if isinstance(x, (int, float))]
+        self.barge_ins += count("barge_ins")
+        self.nudges += count("nudges")
+        self.holds += count("holds")
+        self.go_aways += count("go_aways")
+        self.carried_reconnects += count("reconnects")
+        self.carried_restarts += count("session_restarts") + 1
+        self.errors += [e for e in _list(prior, "errors") if isinstance(e, str)][:20]
+        tokens = prior.get("tokens")
+        if isinstance(tokens, dict):
+            for key in self.tokens:
+                value = tokens.get(key)
+                if isinstance(value, int):
+                    self.tokens[key] += value
 
     def answered(self, tracker: SpeechTracker, started_at: float, after: float | None) -> None:
         """Time a customer line as an answer to the agent's last run of speech, if it is one:
@@ -333,10 +388,12 @@ class VoiceStats:
         audio_out = self.tokens["output_audio"] / AUDIO_TOKENS_PER_MIN
         return round(audio_in * self.price_in_per_min + audio_out * self.price_out_per_min, 4)
 
-    def to_json(self, call_seconds: float) -> dict[str, JsonValue]:
+    def to_json(self, call_seconds: float, *, final: bool = False) -> dict[str, JsonValue]:
+        """``final``: the worker's last write for the call. The debrief waits for it."""
         lat = sorted(self.latencies)
         p95 = lat[min(len(lat) - 1, math.ceil(0.95 * len(lat)) - 1)] if lat else None
         return {
+            "final": final,
             "model": self.model,
             "silence_ms": self.silence_ms,
             "call_seconds": round(call_seconds, 1),
@@ -344,14 +401,15 @@ class VoiceStats:
             "latency_median_s": round(statistics.median(lat), 3) if lat else None,
             "latency_p95_s": round(p95, 3) if p95 is not None else None,
             "latency_max_s": round(lat[-1], 3) if lat else None,
+            "latencies_s": [round(x, 3) for x in self.latencies],
             "latency_basis": "end of the agent's speech on the worker to the first frame of the "
             "customer's reply leaving the worker; excludes the network and the browser",
             "barge_ins": self.barge_ins,
             "nudges": self.nudges,
             "holds": self.holds,
-            "reconnects": max(0, self.connects - 1 - self.restarts),
+            "reconnects": max(0, self.connects - 1 - self.restarts) + self.carried_reconnects,
             "go_aways": self.go_aways,
-            "session_restarts": self.restarts,
+            "session_restarts": self.restarts + self.carried_restarts,
             "errors": list(self.errors),
             "tokens": dict(self.tokens),
             "audio_minutes": {

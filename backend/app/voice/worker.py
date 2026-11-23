@@ -61,6 +61,7 @@ from app.voice.config import (
     WRAP_UP_RPC,
     VoiceConfig,
     VoiceConfigError,
+    recording_file,
     voice_from_env,
 )
 from app.voice.ledger import (
@@ -87,10 +88,17 @@ MAX_RESTARTS = 3
 WRITE_ATTEMPTS = 3
 DRAIN_S = 5.0
 """Longest the worker waits for pending lines to be written when the call wraps up."""
+WRAP_UP_GRACE_S = 15.0
+"""A call still going this long after the call screen wrapped it up didn't end (the end request
+failed), so the customer carries on as before."""
 MAX_TURN_S = 60.0
 """A learner line's start is taken from their audio only if it's this close to the
 transcript; past that the speech run belongs to something else."""
 LEARNER_SAMPLE_RATE = 16000
+HOLD_SILENCE_S = 0.8
+"""Quiet played to Gemini past its end-of-speech window when a hold starts (see
+``_end_turn_for_hold``)."""
+SILENCE_FRAME = LEARNER_SAMPLE_RATE // 10
 
 
 class SimRealtimeSession(RealtimeSession):
@@ -271,7 +279,7 @@ class VoiceCall:
             price_out_per_min=config.price_out_per_min,
         )
         self.tracker = SpeechTracker(merge_gap_s=config.silence_ms / 1000)
-        self.ledger = Ledger(time.time())
+        self.ledger = Ledger(time.time(), start_of=self._speech_start)
         self.queue: asyncio.Queue[UtteranceIn] = asyncio.Queue()
         self.session: AgentSession[None] | None = None
         self.model: SimRealtimeModel | None = None
@@ -282,7 +290,11 @@ class VoiceCall:
         self.call_started_at = time.time()
         self.on_hold = False
         self.hold_started_at = 0.0
+        self.hold_ended_at = 0.0
+        self.cut_by_hold: str | None = None
+        """What the agent heard of a customer line the hold cut off."""
         self.wrapping_up = False
+        self.wrap_up_at = 0.0
         self.finishing = False
         self.nudge_level = 0
         self.last_activity = time.time()
@@ -305,15 +317,26 @@ class VoiceCall:
         if row.started_at is None:
             raise Conflict(f"session {self.session_id} hasn't started")
         self.call_started_at = row.started_at.timestamp()
-        self.ledger = Ledger(self.call_started_at)
+        self.ledger = Ledger(self.call_started_at, start_of=self._speech_start)
         self.voice = VOICES[row.voice]
         self.instructions = prompt.text
         seed, self.seeded = seed_history(await self.db(self.service.transcript, self.session_id))
         self.ledger.skip(self.seeded)
         self.on_hold = await self.db(self.service.on_hold, self.session_id)
+        if self.on_hold:
+            self.hold_started_at = time.time()
+        # A worker sent back to the call adds to what the one before it measured.
+        prior = await self.db(self.store.get_voice_stats, self.session_id)
+        if prior:
+            self.stats.carry(prior)
 
         await self.ctx.connect()
         room = self.ctx.room
+        if any(
+            p.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+            for p in room.remote_participants.values()
+        ):
+            raise Conflict(f"session {self.session_id} already has a customer on the call")
         room.on("participant_connected", self._on_joined)
         room.on("participant_disconnected", self._on_left)
         room.local_participant.register_rpc_method(WRAP_UP_RPC, self._wrap_up)
@@ -371,10 +394,8 @@ class VoiceCall:
 
     def _recording_path(self) -> Path:
         """The call's file, or a numbered part if the customer's session was rebuilt."""
-        path = self.config.recording_path(self.session_id)
-        n = 2
-        while path.exists():
-            path = path.with_name(f"{self.session_id}-{n}.ogg")
+        n = 1
+        while (path := recording_file(self.config.recordings_dir, self.session_id, n)).exists():
             n += 1
         return path
 
@@ -386,6 +407,9 @@ class VoiceCall:
 
     def _heard_history(self) -> llm.ChatContext:
         return self.session.history if self.session else llm.ChatContext.empty()
+
+    def _speech_start(self, first_seen: float) -> float:
+        return self.tracker.speech_start(first_seen, MAX_TURN_S)
 
     # Learner presence and speech timing
 
@@ -438,9 +462,7 @@ class VoiceCall:
         now = time.time()
         text = item.text_content or ""
         if item.role == "user":
-            first = self.ledger.first_seen(item.id) or item.created_at
-            run = self.tracker.run_started_before(first)
-            started = run.start if run is not None and first - run.start <= MAX_TURN_S else first
+            started = self._speech_start(self.ledger.first_seen(item.id) or item.created_at)
             self.nudge_level = 0
             self.last_activity = now
             self._queue(self.ledger.learner_final(item.id, text, started, now))
@@ -449,25 +471,38 @@ class VoiceCall:
             ended = item.metrics.get("stopped_speaking_at")
             rt = self.model.current if self.model else None
             generated = rt.generated_text(item.id) if rt else None
-            self.stats.answered(self.tracker, started, self.last_customer_start)
-            self.last_customer_start = started
-            self.last_activity = ended or now
-            if item.interrupted and not (self.wrapping_up or self.finishing):
-                if not self.on_hold:
-                    self.stats.barge_ins += 1
-                if rt:
-                    rt.send_note(heard_note(text))
+            heard, interrupted = text, item.interrupted
+            if self._began_on_hold(item.created_at):
+                # Her answer to what the agent said just before the hold: none of it played.
+                heard, interrupted, generated = "", True, generated or text
+                if self.cut_by_hold is None:
+                    self.cut_by_hold = ""
+            else:
+                self.stats.answered(self.tracker, started, self.last_customer_start)
+                self.last_customer_start = started
+                self.last_activity = ended or now
+                if item.interrupted and not (self.wrapping_up or self.finishing):
+                    if self.on_hold:
+                        # Not a barge-in: the note at the end of the hold says what she got out.
+                        self.cut_by_hold = text
+                    else:
+                        self.stats.barge_ins += 1
+                        if rt:
+                            rt.send_note(heard_note(text))
             self._queue(
                 self.ledger.customer_line(
                     item.id,
-                    heard=text,
+                    heard=heard,
                     generated=generated,
                     started_at=started,
                     ended_at=ended,
-                    interrupted=item.interrupted,
+                    interrupted=interrupted,
                     now=now,
                 )
             )
+
+    def _began_on_hold(self, t: float) -> bool:
+        return self.hold_started_at <= t and (self.on_hold or t < self.hold_ended_at)
 
     def _on_error(self, ev: ErrorEvent) -> None:
         recoverable = getattr(ev.error, "recoverable", False)
@@ -536,6 +571,7 @@ class VoiceCall:
     async def _wrap_up(self, data: rtc.RpcInvocationData) -> str:
         """Called by the call screen just before it ends the call: saves what's pending."""
         self.wrapping_up = True
+        self.wrap_up_at = time.time()
         if self.session:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self.session.interrupt(force=True), 2)
@@ -571,6 +607,9 @@ class VoiceCall:
             if row.status is not SessionStatus.ACTIVE:
                 await self.finish("the call ended", delete_room=True)
                 return
+            if self.wrapping_up and now - self.wrap_up_at > WRAP_UP_GRACE_S:
+                log.warning("voice call %s: didn't end after a wrap-up", self.session_id)
+                self.wrapping_up = False
             if on_hold != self.on_hold:
                 self._hold(on_hold, now)
             self._queue(self.ledger.due(now))
@@ -591,14 +630,33 @@ class VoiceCall:
         if on:
             self.stats.holds += 1
             self.hold_started_at = now
+            self.cut_by_hold = None
             if self.session:
                 self.session.interrupt(force=True)
             self._mute(True)
+            self._spawn(self._end_turn_for_hold())
         else:
             self._mute(False)
+            self.hold_ended_at = now
             self.last_activity = now
             if self.model and self.model.current:
-                self.model.current.send_note(hold_note(now - self.hold_started_at))
+                self.model.current.send_note(
+                    hold_note(now - self.hold_started_at, self.cut_by_hold)
+                )
+            self.cut_by_hold = None
+
+    async def _end_turn_for_hold(self) -> None:
+        """Gemini ends the agent's turn, and only then transcribes it, after ``silence_ms`` of
+        quiet. The hold stops the agent's audio at once, so a line said just before the hold
+        would stay open and run together with the first line after it. The worker plays Gemini
+        that quiet itself. Whatever the customer answers during the hold is never heard."""
+        frame = rtc.AudioFrame(bytes(2 * SILENCE_FRAME), LEARNER_SAMPLE_RATE, 1, SILENCE_FRAME)
+        until = time.time() + self.config.silence_ms / 1000 + HOLD_SILENCE_S
+        while self.on_hold and time.time() < until:
+            rt = self.model.current if self.model else None
+            if rt:
+                rt.push_audio(frame)
+            await asyncio.sleep(SILENCE_FRAME / LEARNER_SAMPLE_RATE)
 
     async def _nudges(self) -> None:
         """After a long silence the customer checks the agent is still there. Each nudge
@@ -626,9 +684,9 @@ class VoiceCall:
             self.nudge_level += 1
             self.last_activity = now
 
-    async def _write_stats(self) -> None:
+    async def _write_stats(self, *, final: bool = False) -> None:
         self.stats_written_at = time.time()
-        data = self.stats.to_json(time.time() - self.call_started_at)
+        data = self.stats.to_json(time.time() - self.call_started_at, final=final)
         try:
             await self.db(self.store.put_voice_stats, self.session_id, data)
         except Exception:
@@ -647,6 +705,16 @@ class VoiceCall:
                 await asyncio.wait_for(self.session.interrupt(force=True), 2)
         self._queue(self.ledger.flush(time.time()))
         await self._drain()
+        await self._close(reason, delete_room=delete_room, save_stats=True)
+
+    async def abandon(self, reason: str) -> None:
+        """Cleans up after a call that failed to start."""
+        self.finishing = True
+        await self._close(reason)
+
+    async def _close(
+        self, reason: str, *, delete_room: bool = False, save_stats: bool = False
+    ) -> None:
         current = asyncio.current_task()
         for task in list(self._tasks):
             if task is not current:
@@ -657,10 +725,12 @@ class VoiceCall:
         if self.recorder:
             with contextlib.suppress(Exception):
                 await self.recorder.aclose()
-        await self._write_stats()
+        if save_stats:
+            await self._write_stats(final=True)
         if delete_room:
             with contextlib.suppress(Exception):
                 await self.ctx.delete_room()
+        # Job processes are reused, so nothing of this call may outlive it.
         self._db.shutdown(wait=True)
         self.store.close()
         self.ctx.shutdown(reason)
@@ -683,9 +753,7 @@ async def customer(ctx: JobContext) -> None:
         await call.run()
     except Exception:
         log.exception("voice call %s: couldn't start", call.session_id)
-        call.finishing = True
-        call.store.close()
-        ctx.shutdown("couldn't start the call")
+        await call.abandon("couldn't start the call")
         raise
 
 

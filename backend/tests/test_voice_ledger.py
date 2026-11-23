@@ -148,6 +148,13 @@ def test_flush_saves_interim_agent_lines_in_order() -> None:
     assert ledger.flush(T0 + 5.0) == []
 
 
+def test_flush_dates_lines_from_the_agent_audio() -> None:
+    ledger = Ledger(T0, start_of=lambda t: t - 0.8)
+    ledger.learner_heard("agent-1", "Great, I'll submit that now", at=T0 + 2.0)
+    (line,) = ledger.flush(T0 + 3)
+    assert (line.text, line.t_ms) == ("Great, I'll submit that now", 1200)
+
+
 def test_each_line_saves_once() -> None:
     ledger = Ledger(T0)
     ledger.skip({"seed-u0001"})
@@ -177,6 +184,9 @@ def test_notes_are_framed_as_instructions() -> None:
     assert 'heard you say was: "Well, yes,"' in heard_note(" Well, yes, ")
     assert "didn't hear any of it" in heard_note("")
     assert "about 42 seconds" in hold_note(41.7)
+    assert "cut you off" not in hold_note(5)
+    assert 'all they heard you say was "My doctor is"' in hold_note(5, " My doctor is ")
+    assert "before they heard any" in hold_note(5, "")
 
 
 def test_speech_runs_merge_short_pauses() -> None:
@@ -194,6 +204,9 @@ def test_speech_runs_merge_short_pauses() -> None:
     assert tracker.run_started_before(3.0) is tracker.runs[0]
     assert tracker.run_ended_before(3.95) is tracker.runs[0]
     assert tracker.run_started_before(0.5) is None
+    assert tracker.speech_start(3.0, max_s=60) == pytest.approx(1.0)
+    assert tracker.speech_start(3.0, max_s=1) == 3.0  # that run began too long before
+    assert tracker.speech_start(0.5, max_s=60) == 0.5
 
 
 def test_level_db() -> None:
@@ -244,3 +257,29 @@ def test_stats_json() -> None:
     }
     assert len(data["errors"]) == 20  # type: ignore[arg-type]
     assert stats().to_json(0)["latency_median_s"] is None
+    assert data["final"] is False
+    assert s.to_json(1, final=True)["final"] is True
+
+
+def test_a_worker_sent_back_adds_to_the_figures_before_it() -> None:
+    first = stats()
+    first.latencies = [1.0, 2.0]
+    first.connects, first.barge_ins, first.nudges = 2, 1, 1  # one reconnect
+    first.usage(input_audio=1500, input_text=10, cached=0, output_audio=1500, output_text=0)
+    first.error("e1")
+    saved = first.to_json(60, final=True)
+
+    second = stats()
+    second.carry(saved)
+    second.latencies.append(3.0)
+    second.connects = 1
+    second.usage(input_audio=1500, input_text=0, cached=0, output_audio=0, output_text=0)
+    data = second.to_json(120)
+    assert data["latencies_s"] == [1.0, 2.0, 3.0]
+    assert data["latency_median_s"] == 2.0
+    # Its own arrival counts as a session restart, not a reconnect.
+    assert (data["reconnects"], data["session_restarts"]) == (1, 1)
+    assert (data["barge_ins"], data["nudges"]) == (1, 1)
+    assert data["errors"] == ["e1"]
+    assert data["cost_usd_estimate"] == pytest.approx(2 * 0.005 + 1 * 0.018)
+    assert data["final"] is False

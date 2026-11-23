@@ -165,6 +165,10 @@ export interface Utterance {
 }
 
 export interface VoiceStats {
+  /** The worker's last write for the call, a few seconds after it ends. */
+  final?: boolean
+  /** Audio files on the server; more than one when the customer's session was rebuilt. */
+  recording_parts?: number
   latency_median_s: number | null
   latency_p95_s: number | null
   latency_max_s: number | null

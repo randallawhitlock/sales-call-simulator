@@ -9,6 +9,7 @@ from livekit import api
 from app.content.loader import load_bundle
 from app.engine.events import Channel, Speaker, UtteranceIn
 from app.engine.session import Conflict, Invalid
+from app.voice import rooms
 from app.voice.config import (
     AGENT_NAME,
     LEARNER_IDENTITY,
@@ -166,6 +167,21 @@ def test_join_token_admits_the_learner_to_their_call_only(voice_client: TestClie
     call.post("/voice", expect=409)
 
 
+def test_joining_sends_the_customer_back_and_survives_livekit_being_down(
+    voice_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checked: list[str] = []
+
+    async def down(config: VoiceConfig, session_id: str) -> bool:
+        checked.append(session_id)
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(rooms, "ensure_customer", down)
+    call = Call(voice_client, CASE_A, voice=True).start()
+    assert call.post("/voice")["room"] == f"call-{call.sid}"
+    assert checked == [call.sid]
+
+
 def test_typed_calls_get_no_join_token(voice_client: TestClient) -> None:
     call = Call(voice_client, CASE_A).start()
     assert "typed call" in call.post("/voice", expect=409)["detail"]
@@ -184,11 +200,34 @@ def test_voice_stats_and_recording_after_the_call(voice_client: TestClient) -> N
     path.parent.mkdir(parents=True)
     path.write_bytes(b"OggS-test")
     call.end()
-    assert call.get("/voice-stats") == {"latency_median_s": 0.8, "barge_ins": 1}
+    assert call.get("/voice-stats") == {
+        "latency_median_s": 0.8,
+        "barge_ins": 1,
+        "recording_parts": 1,
+    }
     resp = voice_client.get(f"/api/sessions/{call.sid}/recording")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "audio/ogg"
     assert resp.content == b"OggS-test"
+
+
+def test_every_recording_part_is_served_even_with_voice_off(voice_client: TestClient) -> None:
+    call = Call(voice_client, CASE_A, voice=True).start()
+    call.service.store.put_voice_stats(call.sid, {"final": True})
+    voice = voice_client.app.state.voice  # type: ignore[attr-defined]
+    first = voice.recording_path(call.sid)
+    first.parent.mkdir(parents=True)
+    first.write_bytes(b"OggS-1")
+    first.with_name(f"{call.sid}-2.ogg").write_bytes(b"OggS-2")
+    first.with_name(f"{call.sid}-4.ogg").write_bytes(b"OggS-stray")  # not after a gap
+    call.end()
+    voice_client.app.state.voice = None  # type: ignore[attr-defined]
+    assert call.get("/voice-stats")["recording_parts"] == 2
+    base = f"/api/sessions/{call.sid}/recording"
+    assert voice_client.get(base).content == b"OggS-1"
+    assert voice_client.get(f"{base}?part=2").content == b"OggS-2"
+    assert voice_client.get(f"{base}?part=3").status_code == 404
+    assert voice_client.get(f"{base}?part=0").status_code == 422
 
 
 def test_no_stats_or_recording_is_a_404(voice_client: TestClient) -> None:

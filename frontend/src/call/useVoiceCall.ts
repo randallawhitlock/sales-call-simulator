@@ -14,7 +14,8 @@ interface VoiceJoin {
   token: string
 }
 
-export type VoicePhase = 'idle' | 'joining' | 'in' | 'dropped'
+/** `alone`: still in the room, but the customer left it (the worker crashed or gave up). */
+export type VoicePhase = 'idle' | 'joining' | 'in' | 'dropped' | 'alone'
 
 export interface VoiceCall {
   phase: VoicePhase
@@ -24,7 +25,7 @@ export interface VoiceCall {
   /** The browser blocked playback (no user gesture left by the time audio arrived). */
   audioBlocked: boolean
   joinError: string | null
-  /** Joined before in this tab, or the call dropped: the button says Rejoin. */
+  /** Joined before in this tab, the call dropped or the customer left: the button says Rejoin. */
   rejoin: boolean
   /** Ref callback for the hidden element that holds the customer's audio. */
   audioHost: (el: HTMLDivElement | null) => void
@@ -120,10 +121,15 @@ export function useVoiceCall({
           for (const el of track.detach()) el.remove()
         })
         .on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
-          if (mine() && p.kind === ParticipantKind.AGENT) setStatus(`${customer} left the call`)
+          if (!mine() || p.kind !== ParticipantKind.AGENT) return
+          setStatus(`${customer} left the call`)
+          // Rejoining asks the server to send the customer back.
+          if (liveRef.current) setPhase((ph) => (ph === 'in' ? 'alone' : ph))
         })
         .on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => {
-          if (mine() && p.kind === ParticipantKind.AGENT) setStatus('Connected')
+          if (!mine() || p.kind !== ParticipantKind.AGENT) return
+          setStatus('Connected')
+          setPhase((ph) => (ph === 'alone' ? 'in' : ph))
         })
         .on(RoomEvent.Reconnecting, () => {
           if (mine()) setStatus('Reconnecting')
@@ -197,7 +203,7 @@ export function useVoiceCall({
     micBlocked,
     audioBlocked,
     joinError,
-    rejoin: phase === 'dropped' || joinedBefore,
+    rejoin: phase === 'dropped' || phase === 'alone' || joinedBefore,
     audioHost,
     join,
     startAudio,

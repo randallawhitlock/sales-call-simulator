@@ -98,7 +98,7 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 button.danger { color: var(--bad); border-color: var(--bad); }
-button.small { padding: 0.15rem 0.55rem; font-size: 0.85rem; }
+button.small { padding: 0.15rem 0.55rem; font-size: 0.85rem; min-block-size: 24px; }
 button.link { border: none; background: none; color: var(--accent); padding: 0.1rem 0.2rem; }
 
 fieldset {
@@ -330,3 +330,4 @@ ul.plain li { padding: 0.25rem 0; border-bottom: 1px solid var(--line); }
 .voice-panel { display: grid; gap: 0.5rem; justify-items: start; }
 .voice-stats dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; margin: 0.4rem 0; }
 .voice-stats dd { margin: 0; }
+.voice-stats audio { display: block; margin-block: 0.4rem; }

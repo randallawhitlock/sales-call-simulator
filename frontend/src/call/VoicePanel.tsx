@@ -40,7 +40,9 @@ export function VoicePanel({
             ? 'Your microphone is blocked. Allow the microphone for this site in your browser, then rejoin the call.'
             : voice.phase === 'dropped'
               ? `The call dropped. Rejoin to keep talking to ${customer}.`
-              : voice.joinError
+              : voice.phase === 'alone'
+                ? `${customer} isn't on the line anymore. Rejoin the call to get them back.`
+                : voice.joinError
         }
       />
     </div>

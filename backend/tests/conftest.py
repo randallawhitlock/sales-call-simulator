@@ -6,6 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.voice import rooms
+from app.voice.config import VoiceConfig
 
 
 class StepClock:
@@ -51,4 +53,10 @@ def voice_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Te
     for name, value in VOICE_ENV.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("SIM_RECORDINGS_DIR", str(tmp_path / "recordings"))
+    # Joining checks the room for the customer, which would reach LiveKit.
+    monkeypatch.setattr(rooms, "ensure_customer", _no_room)
     yield from _client(monkeypatch)
+
+
+async def _no_room(config: VoiceConfig, session_id: str) -> bool:
+    return False

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Session, Utterance, VoiceStats } from '../api.ts'
 import { App } from '../App.tsx'
@@ -65,6 +65,7 @@ vi.mock('livekit-client', () => {
 })
 
 interface FakeRoomShape {
+  handlers: Map<string, Handler>
   connect: ReturnType<typeof vi.fn>
   startAudio: ReturnType<typeof vi.fn>
   disconnect: ReturnType<typeof vi.fn>
@@ -109,6 +110,8 @@ const line = (utt_id: string, speaker: Utterance['speaker'], t_ms: number, heard
 })
 
 const STATS: VoiceStats = {
+  final: true,
+  recording_parts: 1,
   latency_median_s: 1.2,
   latency_p95_s: 2.5,
   latency_max_s: 3,
@@ -127,7 +130,9 @@ const STATS: VoiceStats = {
   errors: [],
 }
 
-function serve(opts: { voice?: string; transcript?: Utterance[]; session?: Session; stats?: VoiceStats | null } = {}) {
+type StatsReply = VoiceStats | null | (() => VoiceStats | null)
+
+function serve(opts: { voice?: string; transcript?: Utterance[]; session?: Session; stats?: StatsReply } = {}) {
   const session = opts.session ?? SESSION
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     const path = String(input).replace(/^\/api/, '').split('?')[0]!
@@ -145,8 +150,10 @@ function serve(opts: { voice?: string; transcript?: Utterance[]; session?: Sessi
       lk.order.push('end')
       return json({ ...session, status: 'ended' })
     }
-    if (path === '/sessions/s-1/voice-stats')
-      return opts.stats ? json(opts.stats) : json({ detail: 'no stats' }, 404)
+    if (path === '/sessions/s-1/voice-stats') {
+      const stats = typeof opts.stats === 'function' ? opts.stats() : opts.stats
+      return stats ? json(stats) : json({ detail: 'no stats' }, 404)
+    }
     if (path === '/sessions/s-1/transcript') return json(opts.transcript ?? [])
     if (path.endsWith('/found')) return json({ plans: [], providers: [], drugs: [], pharmacies: [] })
     if (path.endsWith('/record')) return json({ saved_seq: {} })
@@ -306,6 +313,22 @@ describe('a voice call', () => {
     expect(room().startAudio).toHaveBeenCalledTimes(2)
   })
 
+  it('offers Rejoin when the customer leaves mid-call, and rejoining brings them back', async () => {
+    const mock = await openCall()
+    fireEvent.click(screen.getByRole('button', { name: 'Join call' }))
+    await screen.findByText('Connected')
+    act(() => room().handlers.get('participantDisconnected')!({ identity: 'agent-1', kind: 'agent' }))
+    expect(screen.getByText('Ada left the call')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain("Ada isn't on the line anymore")
+    const first = room()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rejoin call' }))
+    await waitFor(() => expect(posted(mock, '/sessions/s-1/voice')).toHaveLength(2))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Rejoin call' })).toBeNull())
+    expect(first.disconnect).toHaveBeenCalled()
+    expect(room()).not.toBe(first)
+  })
+
   it('orders voice lines by time, not id, and marks cut-off lines', async () => {
     await openCall({
       transcript: [
@@ -342,6 +365,47 @@ describe('voice review', () => {
     expect(audio.getAttribute('src')).toBe('/api/sessions/s-1/recording')
     expect(audio.getAttribute('aria-details')).toBe('review-transcript')
     expect(document.getElementById('review-transcript')).toBeTruthy()
+  })
+
+  it('waits for the worker to finish its stats, and plays every recording part', async () => {
+    window.history.replaceState(null, '', '?session=s-1')
+    let asked = 0
+    const late = { ...STATS, cost_usd_estimate: 0.0293, recording_parts: 2 }
+    // The worker hasn't written anything yet, then writes its last figures.
+    serve({ voice: 'gemini-live:test', session: ended, stats: () => (++asked === 1 ? null : late) })
+    render(<App />)
+    await screen.findByText('Voice call', undefined, { timeout: 4000 })
+    expect(screen.getByText('$0.0293')).toBeTruthy()
+    const audios = [...document.querySelectorAll('audio')]
+    expect(audios.map((a) => a.getAttribute('src'))).toEqual([
+      '/api/sessions/s-1/recording',
+      '/api/sessions/s-1/recording?part=2',
+    ])
+    expect(audios.map((a) => a.getAttribute('aria-label'))).toEqual([
+      'Call recording, part 1 of 2',
+      'Call recording, part 2 of 2',
+    ])
+  })
+
+  it('holds the recording back until the stats are final', async () => {
+    window.history.replaceState(null, '', '?session=s-1')
+    serve({ voice: 'gemini-live:test', session: ended, stats: { ...STATS, final: false } })
+    render(<App />)
+    await screen.findByText('Voice call')
+    expect(document.querySelector('audio')).toBeNull()
+  })
+
+  it('retries a voice call as a voice call', async () => {
+    window.history.replaceState(null, '', '?session=s-1')
+    const mock = serve({ voice: 'gemini-live:test', session: ended, stats: STATS })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry this call' }))
+    await waitFor(() => expect(posted(mock, '/sessions')).toHaveLength(1))
+    expect(JSON.parse(String(posted(mock, '/sessions')[0]![1]?.body))).toEqual({
+      scenario_id: 'scenario-101',
+      retry_of: 's-1',
+      channel: 'voice',
+    })
   })
 
   it('hides the stats when there are none', async () => {

@@ -1,17 +1,34 @@
 """The voice worker's pieces that run without LiveKit or Gemini, and the plugin internals it
 depends on."""
 
+import asyncio
+import dataclasses
 import inspect
+import json
+import time
+from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from livekit import api, rtc
 from livekit.agents import llm
 from livekit.plugins.google.realtime import realtime_api
 
-from app.engine.events import Channel, Speaker, Utterance
-from app.voice.config import VoiceConfigError, voice_from_env
+from app.engine.events import Channel, Speaker, Utterance, UtteranceIn
+from app.engine.store import SessionStatus
+from app.voice import rooms, worker
+from app.voice.config import VoiceConfig, VoiceConfigError, voice_from_env
 from app.voice.ledger import VoiceStats
-from app.voice.worker import SimRealtimeSession, live_model, seed_history, session_for_job
+from app.voice.worker import (
+    WRAP_UP_GRACE_S,
+    SimRealtimeSession,
+    VoiceCall,
+    live_model,
+    seed_history,
+    session_for_job,
+)
 from tests.conftest import VOICE_ENV
 
 HOOKS = (
@@ -118,3 +135,216 @@ def test_a_worker_joining_mid_call_starts_from_the_call_as_heard() -> None:
         ("user", "Sure, go ahead."),
     ]
     assert ids == {"seed-u0001", "seed-u0002", "seed-u0004"}
+
+
+# The call's own handling, without LiveKit or Gemini
+
+
+def config() -> VoiceConfig:
+    c = voice_from_env(VOICE_ENV)
+    assert c is not None
+    return c
+
+
+@pytest.fixture
+def call(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[VoiceCall]:
+    monkeypatch.setenv("SIM_DB_PATH", str(tmp_path / "voice.db"))
+    shutdowns: list[str] = []
+    ctx = SimpleNamespace(shutdown=shutdowns.append, shutdowns=shutdowns)
+    c = VoiceCall(ctx, config(), "s-test")  # type: ignore[arg-type]
+    yield c
+    c._db.shutdown()
+    c.store.close()
+
+
+class Notes:
+    """Stands in for the Gemini session: keeps the notes and audio the worker sends."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.audio: list[rtc.AudioFrame] = []
+
+    def send_note(self, text: str) -> None:
+        self.sent.append(text)
+
+    def push_audio(self, frame: rtc.AudioFrame) -> None:
+        self.audio.append(frame)
+
+    def generated_text(self, item_id: str) -> str | None:
+        return None
+
+
+def said(call: VoiceCall, role: str, text: str, item_id: str, at: float, **kw: Any) -> None:
+    item = llm.ChatMessage(role=role, content=[text], id=item_id, created_at=at, **kw)  # type: ignore[arg-type]
+    call._on_item(SimpleNamespace(item=item))  # type: ignore[arg-type]
+
+
+def saved(call: VoiceCall) -> list[UtteranceIn]:
+    out = []
+    while not call.queue.empty():
+        out.append(call.queue.get_nowait())
+    return out
+
+
+def test_a_hold_closes_the_agent_turn_and_nothing_said_on_hold_is_heard(
+    call: VoiceCall, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Gemini only ends the agent's turn after hearing quiet, so the hold plays it some. Then
+    whatever the customer answers during the hold is saved as never heard."""
+    monkeypatch.setattr(worker, "HOLD_SILENCE_S", 0.1)
+    call.config = dataclasses.replace(call.config, silence_ms=200)
+    rt = Notes()
+    call.model = SimpleNamespace(current=rt)  # type: ignore[assignment]
+    t0 = call.ledger.call_started_at
+
+    async def run() -> None:
+        call._hold(True, t0 + 2)
+        # The hold cut her off mid-line: not a barge-in, and no "talked over you" note.
+        said(call, "assistant", "My doctor is", "cust-1", t0 + 1.5, interrupted=True)
+        # She answers what the agent said just before the hold, into the hold.
+        said(call, "assistant", "Oh, that's all right.", "cust-2", t0 + 3)
+        await asyncio.sleep(0.5)
+        call._hold(False, t0 + 32)
+        played = len(rt.audio)
+        await asyncio.sleep(0.2)
+        assert len(rt.audio) == played  # the quiet stops with the hold
+
+    asyncio.run(run())
+    quiet = sum(f.duration for f in rt.audio)
+    assert 0.2 <= quiet <= 0.4
+    assert all(not any(f.data) for f in rt.audio)
+    assert call.stats.barge_ins == 0
+    (note,) = rt.sent
+    assert "about 30 seconds" in note
+    assert 'all they heard you say was "My doctor is"' in note
+    # A reply that began on hold but ended after it still never played.
+    said(call, "assistant", "And another thing.", "cust-3", t0 + 20)
+    lines = [(u.text, u.heard_text, u.interrupted) for u in saved(call)]
+    assert lines == [
+        ("My doctor is", "My doctor is", True),
+        ("Oh, that's all right.", "", True),
+        ("And another thing.", "", True),
+    ]
+
+
+def test_a_hold_note_says_when_nothing_she_said_got_through(call: VoiceCall) -> None:
+    rt = Notes()
+    call.model = SimpleNamespace(current=rt)  # type: ignore[assignment]
+    t0 = call.ledger.call_started_at
+    call.on_hold, call.hold_started_at = True, t0 + 2
+    said(call, "assistant", "Oh, that's all right.", "cust-1", t0 + 3)
+    call._hold(False, t0 + 12)
+    (note,) = rt.sent
+    assert "before they heard any of what you were saying" in note
+
+
+def test_a_barge_in_outside_a_hold_still_counts_and_sends_what_was_heard(
+    call: VoiceCall,
+) -> None:
+    rt = Notes()
+    call.model = SimpleNamespace(current=rt)  # type: ignore[assignment]
+    said(call, "assistant", "Well,", "cust-1", call.ledger.call_started_at + 1, interrupted=True)
+    assert call.stats.barge_ins == 1
+    (note,) = rt.sent
+    assert "talked over you" in note
+
+
+def poll_once(call: VoiceCall) -> None:
+    active = (SimpleNamespace(status=SessionStatus.ACTIVE), False)
+    call._status = lambda: active  # type: ignore[method-assign,assignment,return-value]
+
+    async def run() -> None:
+        call.finishing = False
+        task = asyncio.create_task(call._poll())
+        await asyncio.sleep(0.05)
+        call.finishing = True
+        await task
+
+    asyncio.run(run())
+
+
+def test_a_wrap_up_that_never_ended_the_call_wears_off(call: VoiceCall) -> None:
+    call.wrapping_up, call.wrap_up_at = True, time.time() - 1
+    poll_once(call)
+    assert call.wrapping_up  # the end request may still be on its way
+    call.wrap_up_at = time.time() - WRAP_UP_GRACE_S - 1
+    poll_once(call)
+    assert not call.wrapping_up  # nudges and barge-in notes are back on
+
+
+def test_a_call_that_fails_to_start_leaves_nothing_running(call: VoiceCall) -> None:
+    async def run() -> bool:
+        task = call._spawn(asyncio.sleep(60))
+        await call.abandon("couldn't start the call")
+        await asyncio.sleep(0)
+        return task.cancelled()
+
+    assert asyncio.run(run())
+    assert call.ctx.shutdowns == ["couldn't start the call"]  # type: ignore[attr-defined]
+    with pytest.raises(RuntimeError):
+        call._db.submit(time.time)
+
+
+# Sending the customer back
+
+
+class FakeLiveKit:
+    def __init__(self, participants: list[int] | None, jobs: list[int]) -> None:
+        self.created: list[api.CreateAgentDispatchRequest] = []
+        self.closed = False
+        fake = self
+
+        class Room:
+            async def list_participants(
+                self, req: api.ListParticipantsRequest
+            ) -> api.ListParticipantsResponse:
+                if participants is None:
+                    raise api.TwirpError(api.TwirpErrorCode.NOT_FOUND, "no room", status=404)
+                return api.ListParticipantsResponse(
+                    participants=[api.ParticipantInfo(kind=k) for k in participants]  # type: ignore[arg-type]
+                )
+
+        class Dispatch:
+            async def list_dispatch(self, room: str) -> list[api.AgentDispatch]:
+                state = api.AgentDispatchState(
+                    jobs=[api.Job(state=api.JobState(status=s)) for s in jobs]  # type: ignore[arg-type]
+                )
+                return [api.AgentDispatch(agent_name="sim-customer", room=room, state=state)]
+
+            async def create_dispatch(self, req: api.CreateAgentDispatchRequest) -> None:
+                fake.created.append(req)
+
+        self.room = Room()
+        self.agent_dispatch = Dispatch()
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+AGENT = api.ParticipantInfo.Kind.AGENT
+STANDARD = api.ParticipantInfo.Kind.STANDARD
+
+
+@pytest.mark.parametrize(
+    ("participants", "jobs", "sends"),
+    [
+        (None, [], False),  # no room yet: the join token dispatches the worker
+        ([STANDARD, AGENT], [api.JobStatus.JS_RUNNING], False),  # the customer is there
+        ([STANDARD], [api.JobStatus.JS_PENDING], False),  # one is on the way
+        ([STANDARD], [api.JobStatus.JS_FAILED], True),  # the worker crashed
+        ([], [api.JobStatus.JS_SUCCESS], True),  # it gave up after the learner left
+    ],
+)
+def test_the_customer_is_sent_back_only_to_an_open_room_without_one(
+    monkeypatch: pytest.MonkeyPatch, participants: list[int] | None, jobs: list[int], sends: bool
+) -> None:
+    fake = FakeLiveKit(participants, jobs)
+    monkeypatch.setattr(api, "LiveKitAPI", lambda *a, **kw: fake)
+    assert asyncio.run(rooms.ensure_customer(config(), "abc123")) is sends
+    assert fake.closed
+    if sends:
+        (req,) = fake.created
+        assert (req.agent_name, req.room) == ("sim-customer", "call-abc123")
+        assert json.loads(req.metadata) == {"session_id": "abc123"}
+    else:
+        assert fake.created == []

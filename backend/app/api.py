@@ -5,10 +5,12 @@ truth, customer knowledge, persona rolls and seeded document defects stay server
 the call ends, when the answer key and findings unlock.
 """
 
+import logging
 from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Annotated, Any
 
+import anyio.from_thread
 from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, JsonValue
@@ -35,9 +37,10 @@ from app.engine.records import (
 )
 from app.engine.session import Conflict, Invalid, NotFound, SessionService, TurnIn, TurnOut
 from app.engine.store import SessionRow, SessionStatus
-from app.voice.config import LEARNER_IDENTITY, VoiceConfig
+from app.voice.config import LEARNER_IDENTITY, VoiceConfig, recording_files, recordings_dir
 
 router = APIRouter(prefix="/api")
+log = logging.getLogger("sim.api")
 
 
 def get_service(request: Request) -> SessionService:
@@ -327,8 +330,15 @@ def join_voice(session_id: str, service: Service, voice: Voice) -> VoiceJoin:
         raise Conflict("this is a typed call")
     if voice is None:
         raise Conflict("voice calls are off on this server (set SIM_LIVE_MODEL)")
+    from app.voice import rooms
     from app.voice.tokens import learner_token
 
+    try:
+        if anyio.from_thread.run(rooms.ensure_customer, voice, session_id):
+            log.info("voice call %s: sent the customer back to the call", session_id)
+    except Exception:
+        # Joining still works; only a customer who already left stays gone.
+        log.exception("voice call %s: couldn't check the room for the customer", session_id)
     return VoiceJoin(
         url=voice.livekit_url,
         room=voice.room_for(session_id),
@@ -739,22 +749,27 @@ def grade(
 @router.get("/sessions/{session_id}/voice-stats")
 def voice_stats(session_id: str, service: Service) -> dict[str, JsonValue]:
     """Latency, reconnects, audio minutes and estimated model cost for an ended voice call,
-    as the worker measured them."""
+    as the worker measured them. ``final`` is false until the worker's last write, a few
+    seconds after the call ends. ``recording_parts`` counts the audio files on the server."""
     service.require_ended(session_id)
     stats = service.store.get_voice_stats(session_id)
     if stats is None:
         raise NotFound("no voice stats for this call")
-    return stats
+    return {**stats, "recording_parts": len(recording_files(recordings_dir(), session_id))}
 
 
 @router.get("/sessions/{session_id}/recording", response_class=FileResponse)
-def recording(session_id: str, service: Service, voice: Voice) -> FileResponse:
-    """The call audio, both sides, once the call has ended."""
+def recording(
+    session_id: str, service: Service, part: Annotated[int, Query(ge=1)] = 1
+) -> FileResponse:
+    """The call audio, both sides, once the call has ended. A call whose customer session was
+    rebuilt has more than one part."""
     service.require_ended(session_id)
-    path = voice.recording_path(session_id) if voice else None
-    if path is None or not path.is_file():
+    files = recording_files(recordings_dir(), session_id)
+    if part > len(files):
         raise NotFound("no recording for this call")
-    return FileResponse(path, media_type="audio/ogg", filename=f"{session_id}.ogg")
+    path = files[part - 1]
+    return FileResponse(path, media_type="audio/ogg", filename=path.name)
 
 
 @router.get("/sessions/{session_id}/actor-qa")

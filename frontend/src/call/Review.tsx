@@ -14,8 +14,12 @@ import {
   type VoiceStats,
 } from '../api.ts'
 import { Badge, ErrorNote, UttText } from '../ui.tsx'
-import { errorText, money, useAction } from '../util.ts'
+import { errorText, useAction } from '../util.ts'
 import { mergeTranscriptFor, useCall } from './context.tsx'
+
+const VOICE_STATS_POLL_MS = 1000
+/** The worker's last write lands within about ten seconds of the end of the call. */
+const VOICE_STATS_WAIT_MS = 20_000
 
 const STATUS: Record<GradeStatus, { label: string; tone: 'good' | 'bad' | 'warn' | 'info' }> = {
   pass: { label: 'pass', tone: 'good' },
@@ -46,6 +50,7 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
   const [error, setError] = useState<string | null>(null)
   const [gradeError, setGradeError] = useState<string | null>(null)
   const [voiceStats, setVoiceStats] = useState<VoiceStats | null>(null)
+  const [statsSettled, setStatsSettled] = useState(false)
   const [picked, setPicked] = useState<string | null>(null)
   const retry = useAction()
   const voice = session.channel === 'voice'
@@ -90,17 +95,42 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
       (t) => current && setTranscript((prev) => merge(prev, t)),
       () => {},
     )
-    if (voice) {
-      // An extra: a call with no stats just doesn't show them, or its recording.
-      get<VoiceStats>(`${base}/voice-stats`).then(
-        (s) => current && setVoiceStats(s),
-        () => {},
-      )
-    }
     return () => {
       current = false
     }
-  }, [base, grade, setTranscript, merge, voice])
+  }, [base, grade, setTranscript, merge])
+
+  // An extra: a call with no stats just doesn't show them, or its recording. The worker saves
+  // its last figures a few seconds after the call ends, so keep asking until they're final.
+  // Stats that never get there (a worker that crashed) still show once the wait runs out.
+  useEffect(() => {
+    if (!voice) return
+    let current = true
+    let timer: number | undefined
+    const deadline = Date.now() + VOICE_STATS_WAIT_MS
+    function again(): void {
+      if (Date.now() < deadline) timer = window.setTimeout(poll, VOICE_STATS_POLL_MS)
+      else setStatsSettled(true)
+    }
+    function poll(): void {
+      get<VoiceStats>(`${base}/voice-stats`).then(
+        (s) => {
+          if (!current) return
+          setVoiceStats(s)
+          if (s.final) setStatsSettled(true)
+          else again()
+        },
+        () => {
+          if (current) again()
+        },
+      )
+    }
+    poll()
+    return () => {
+      current = false
+      window.clearTimeout(timer)
+    }
+  }, [base, voice])
 
   function show(uttId: string): void {
     setPicked(uttId)
@@ -191,7 +221,11 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
                 onClick={() =>
                   void retry.run(async () =>
                     onRetry(
-                      await post<Session>('/sessions', { scenario_id: session.scenario_id, retry_of: session.session_id }),
+                      await post<Session>('/sessions', {
+                        scenario_id: session.scenario_id,
+                        retry_of: session.session_id,
+                        channel: session.channel,
+                      }),
                     ),
                   )
                 }
@@ -219,7 +253,7 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
           </ul>
         </section>
       )}
-      {voiceStats && <VoiceStatsBlock stats={voiceStats} base={base} />}
+      {voiceStats && <VoiceStatsBlock stats={voiceStats} base={base} settled={statsSettled} />}
       <h3>Transcript</h3>
       <ol id="review-transcript" className="transcript static">
         {transcript.map((u) => (
@@ -235,7 +269,13 @@ export function Review({ onRetry }: { onRetry?: (s: Session) => void }) {
 
 const seconds = (n: number | null): string => (n === null ? 'n/a' : `${n.toFixed(1)} s`)
 
-function VoiceStatsBlock({ stats, base }: { stats: VoiceStats; base: string }) {
+/** A voice call often costs a fraction of a cent, so amounts under a dollar keep four decimals. */
+const usd = (n: number): string =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: n < 1 ? 4 : 2 })
+
+/** `settled`: the stats are final, so the recording is complete. */
+function VoiceStatsBlock({ stats, base, settled }: { stats: VoiceStats; base: string; settled: boolean }) {
+  const parts = stats.recording_parts ?? (stats.recording !== null ? 1 : 0)
   return (
     <section className="voice-stats">
       <h3>Voice call</h3>
@@ -255,12 +295,20 @@ function VoiceStatsBlock({ stats, base }: { stats: VoiceStats; base: string }) {
           {stats.audio_minutes.input.toFixed(1)} / {stats.audio_minutes.output.toFixed(1)} min
         </dd>
         <dt>Estimated cost</dt>
-        <dd>{money(String(stats.cost_usd_estimate))}</dd>
+        <dd>{usd(stats.cost_usd_estimate)}</dd>
       </dl>
       <p className="muted small-text">{stats.cost_basis}</p>
-      {stats.recording !== null && (
-        <audio controls preload="none" src={`/api${base}/recording`} aria-details="review-transcript" />
-      )}
+      {settled &&
+        Array.from({ length: parts }, (_, i) => (
+          <audio
+            key={i}
+            controls
+            preload="none"
+            src={`/api${base}/recording${i === 0 ? '' : `?part=${i + 1}`}`}
+            aria-label={parts > 1 ? `Call recording, part ${i + 1} of ${parts}` : 'Call recording'}
+            aria-details="review-transcript"
+          />
+        ))}
     </section>
   )
 }

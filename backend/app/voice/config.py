@@ -98,7 +98,27 @@ class VoiceConfig:
         return room.removeprefix("call-") if room.startswith("call-") else None
 
     def recording_path(self, session_id: str) -> Path:
-        return self.recordings_dir / f"{session_id}.ogg"
+        return recording_file(self.recordings_dir, session_id)
+
+
+def recordings_dir(env: dict[str, str] | None = None) -> Path:
+    """Read on its own, so past calls' audio stays reachable with voice off."""
+    env = dict(os.environ) if env is None else env
+    return Path(env.get(RECORDINGS_ENV) or "recordings")
+
+
+def recording_file(directory: Path, session_id: str, part: int = 1) -> Path:
+    """A call's audio. The worker starts a new part whenever the customer's session is rebuilt
+    or a worker is sent back to the call."""
+    return directory / (f"{session_id}.ogg" if part == 1 else f"{session_id}-{part}.ogg")
+
+
+def recording_files(directory: Path, session_id: str) -> list[Path]:
+    """A call's recording parts, in order."""
+    files: list[Path] = []
+    while (path := recording_file(directory, session_id, len(files) + 1)).is_file():
+        files.append(path)
+    return files
 
 
 def voice_from_env(env: dict[str, str] | None = None) -> VoiceConfig | None:
@@ -118,7 +138,7 @@ def voice_from_env(env: dict[str, str] | None = None) -> VoiceConfig | None:
         livekit_secret=env[LK_SECRET_ENV],
         silence_ms=int(_number(env, SILENCE_ENV, DEFAULT_SILENCE_MS, 100, 5000)),
         nudge_s=_number(env, NUDGE_ENV, DEFAULT_NUDGE_S, 0, 600),
-        recordings_dir=Path(env.get(RECORDINGS_ENV) or "recordings"),
+        recordings_dir=recordings_dir(env),
         price_in_per_min=_number(env, PRICE_IN_ENV, DEFAULT_PRICE_IN_PER_MIN, 0, 10),
         price_out_per_min=_number(env, PRICE_OUT_ENV, DEFAULT_PRICE_OUT_PER_MIN, 0, 10),
     )
