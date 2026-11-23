@@ -333,12 +333,14 @@ def join_voice(session_id: str, service: Service, voice: Voice) -> VoiceJoin:
     from app.voice import rooms
     from app.voice.tokens import learner_token
 
+    # The stored id, not the path parameter, goes to the logs.
+    sid = row.session_id
     try:
-        if anyio.from_thread.run(rooms.ensure_customer, voice, session_id):
-            log.info("voice call %s: sent the customer back to the call", session_id)
+        if anyio.from_thread.run(rooms.ensure_customer, voice, sid):
+            log.info("voice call %s: sent the customer back to the call", sid)
     except Exception:
         # Joining still works; only a customer who already left stays gone.
-        log.exception("voice call %s: couldn't check the room for the customer", session_id)
+        log.exception("voice call %s: couldn't check the room for the customer", sid)
     return VoiceJoin(
         url=voice.livekit_url,
         room=voice.room_for(session_id),
@@ -751,11 +753,11 @@ def voice_stats(session_id: str, service: Service) -> dict[str, JsonValue]:
     """Latency, reconnects, audio minutes and estimated model cost for an ended voice call,
     as the worker measured them. ``final`` is false until the worker's last write, a few
     seconds after the call ends. ``recording_parts`` counts the audio files on the server."""
-    service.require_ended(session_id)
-    stats = service.store.get_voice_stats(session_id)
+    sid = service.require_ended(session_id).session_id
+    stats = service.store.get_voice_stats(sid)
     if stats is None:
         raise NotFound("no voice stats for this call")
-    return {**stats, "recording_parts": len(recording_files(recordings_dir(), session_id))}
+    return {**stats, "recording_parts": len(recording_files(recordings_dir(), sid))}
 
 
 @router.get("/sessions/{session_id}/recording", response_class=FileResponse)
@@ -764,8 +766,8 @@ def recording(
 ) -> FileResponse:
     """The call audio, both sides, once the call has ended. A call whose customer session was
     rebuilt has more than one part."""
-    service.require_ended(session_id)
-    files = recording_files(recordings_dir(), session_id)
+    # File names come from the stored session id, never straight from the URL.
+    files = recording_files(recordings_dir(), service.require_ended(session_id).session_id)
     if part > len(files):
         raise NotFound("no recording for this call")
     path = files[part - 1]
