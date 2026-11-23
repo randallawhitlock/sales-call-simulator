@@ -90,7 +90,9 @@ DRAIN_S = 5.0
 """Longest the worker waits for pending lines to be written when the call wraps up."""
 WRAP_UP_GRACE_S = 15.0
 """A call still going this long after the call screen wrapped it up didn't end (the end request
-failed), so the customer carries on as before."""
+failed), so the customer carries on as before. One thing doesn't come back: an agent line still
+being transcribed at the wrap-up was saved as it stood, and a saved line is never rewritten, so
+the rest of that line is lost."""
 MAX_TURN_S = 60.0
 """A learner line's start is taken from their audio only if it's this close to the
 transcript; past that the speech run belongs to something else."""
@@ -345,6 +347,9 @@ class VoiceCall:
         self.ctx.add_shutdown_callback(self._on_shutdown)
 
         await self._start_session(seed)
+        # The row may still hold a final write from the worker before this one, and the debrief
+        # stops waiting at the first final row it reads.
+        await self._write_stats()
         for loop in (self._writer, self._poll, self._nudges):
             self._spawn(loop())
         if any(p.identity == LEARNER_IDENTITY for p in room.remote_participants.values()):

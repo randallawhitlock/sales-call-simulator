@@ -66,6 +66,7 @@ vi.mock('livekit-client', () => {
 
 interface FakeRoomShape {
   handlers: Map<string, Handler>
+  remoteParticipants: Map<string, { identity: string; kind: string }>
   connect: ReturnType<typeof vi.fn>
   startAudio: ReturnType<typeof vi.fn>
   disconnect: ReturnType<typeof vi.fn>
@@ -317,6 +318,8 @@ describe('a voice call', () => {
     const mock = await openCall()
     fireEvent.click(screen.getByRole('button', { name: 'Join call' }))
     await screen.findByText('Connected')
+    // Like the real room, the participant is gone from the room before the event fires.
+    room().remoteParticipants.delete('agent-1')
     act(() => room().handlers.get('participantDisconnected')!({ identity: 'agent-1', kind: 'agent' }))
     expect(screen.getByText('Ada left the call')).toBeTruthy()
     expect(screen.getByRole('alert').textContent).toContain("Ada isn't on the line anymore")
@@ -327,6 +330,18 @@ describe('a voice call', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Rejoin call' })).toBeNull())
     expect(first.disconnect).toHaveBeenCalled()
     expect(room()).not.toBe(first)
+  })
+
+  it('stays on the call when a second customer joins and backs out', async () => {
+    await openCall()
+    fireEvent.click(screen.getByRole('button', { name: 'Join call' }))
+    await screen.findByText('Connected')
+    const extra = { identity: 'agent-2', kind: 'agent' }
+    act(() => room().handlers.get('participantConnected')!(extra))
+    act(() => room().handlers.get('participantDisconnected')!(extra))
+    expect(screen.queryByText('Ada left the call')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Rejoin call' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('orders voice lines by time, not id, and marks cut-off lines', async () => {

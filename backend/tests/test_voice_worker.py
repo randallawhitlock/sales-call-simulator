@@ -17,6 +17,7 @@ from livekit.agents import llm
 from livekit.plugins.google.realtime import realtime_api
 
 from app.engine.events import Channel, Speaker, Utterance, UtteranceIn
+from app.engine.session import Conflict
 from app.engine.store import SessionStatus
 from app.voice import rooms, worker
 from app.voice.config import VoiceConfig, VoiceConfigError, voice_from_env
@@ -285,11 +286,76 @@ def test_a_call_that_fails_to_start_leaves_nothing_running(call: VoiceCall) -> N
         call._db.submit(time.time)
 
 
+def joined(call: VoiceCall, others: list[SimpleNamespace]) -> str:
+    """Sets the call up for run() on a real voice session, in a fake room holding ``others``.
+    Returns the session id."""
+    row = call.service.create("scenario-101", channel=Channel.VOICE)
+    call.service.start(row.session_id)
+    call.session_id = row.session_id
+
+    async def connect() -> None:
+        return None
+
+    local = SimpleNamespace(register_rpc_method=lambda name, fn: None)
+    room = SimpleNamespace(
+        remote_participants={p.identity: p for p in others},
+        local_participant=local,
+        on=lambda event, fn: None,
+    )
+    call.ctx = SimpleNamespace(  # type: ignore[assignment]
+        connect=connect,
+        room=room,
+        add_shutdown_callback=lambda fn: None,
+        shutdown=lambda reason: None,
+    )
+    call.store.put_voice_stats(
+        row.session_id,
+        {"final": True, "barge_ins": 2, "latencies_s": [1.2], "session_restarts": 0},
+    )
+    return row.session_id
+
+
+def test_a_worker_sent_back_replaces_the_last_final_stats_at_once(
+    call: VoiceCall, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The debrief stops waiting at the first final row, so the old worker's can't linger."""
+    sid = joined(call, [])
+
+    async def no_session(seed: llm.ChatContext) -> None:
+        return None
+
+    monkeypatch.setattr(call, "_start_session", no_session)
+
+    async def run() -> None:
+        await call.run()
+        call.finishing = True
+        tasks = list(call._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(run())
+    stats = call.store.get_voice_stats(sid)
+    assert stats is not None
+    assert stats["final"] is False
+    assert (stats["barge_ins"], stats["latencies_s"], stats["session_restarts"]) == (2, [1.2], 1)
+
+
+def test_a_worker_refused_by_the_room_leaves_the_stats_alone(call: VoiceCall) -> None:
+    agent = SimpleNamespace(identity="agent-1", kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT)
+    sid = joined(call, [agent])
+    with pytest.raises(Conflict):
+        asyncio.run(call.run())
+    stats = call.store.get_voice_stats(sid)
+    assert stats is not None
+    assert stats["final"] is True
+
+
 # Sending the customer back
 
 
 class FakeLiveKit:
-    def __init__(self, participants: list[int] | None, jobs: list[int]) -> None:
+    def __init__(self, participants: list[int] | None, jobs: list[int], age_s: float) -> None:
         self.created: list[api.CreateAgentDispatchRequest] = []
         self.closed = False
         fake = self
@@ -307,7 +373,8 @@ class FakeLiveKit:
         class Dispatch:
             async def list_dispatch(self, room: str) -> list[api.AgentDispatch]:
                 state = api.AgentDispatchState(
-                    jobs=[api.Job(state=api.JobState(status=s)) for s in jobs]  # type: ignore[arg-type]
+                    jobs=[api.Job(state=api.JobState(status=s)) for s in jobs],  # type: ignore[arg-type]
+                    created_at=time.time_ns() - int(age_s * 1e9),
                 )
                 return [api.AgentDispatch(agent_name="sim-customer", room=room, state=state)]
 
@@ -326,19 +393,25 @@ STANDARD = api.ParticipantInfo.Kind.STANDARD
 
 
 @pytest.mark.parametrize(
-    ("participants", "jobs", "sends"),
+    ("participants", "jobs", "age_s", "sends"),
     [
-        (None, [], False),  # no room yet: the join token dispatches the worker
-        ([STANDARD, AGENT], [api.JobStatus.JS_RUNNING], False),  # the customer is there
-        ([STANDARD], [api.JobStatus.JS_PENDING], False),  # one is on the way
-        ([STANDARD], [api.JobStatus.JS_FAILED], True),  # the worker crashed
-        ([], [api.JobStatus.JS_SUCCESS], True),  # it gave up after the learner left
+        (None, [], 60, False),  # no room yet: the join token dispatches the worker
+        ([STANDARD, AGENT], [api.JobStatus.JS_RUNNING], 60, False),  # the customer is there
+        ([STANDARD], [api.JobStatus.JS_PENDING], 60, False),  # one is on the way
+        ([STANDARD], [], 2, False),  # just dispatched, no worker has taken it yet
+        ([STANDARD], [], 60, True),  # no worker ever took it (none was running)
+        ([STANDARD], [api.JobStatus.JS_FAILED], 2, True),  # the worker crashed
+        ([], [api.JobStatus.JS_SUCCESS], 60, True),  # it gave up after the learner left
     ],
 )
 def test_the_customer_is_sent_back_only_to_an_open_room_without_one(
-    monkeypatch: pytest.MonkeyPatch, participants: list[int] | None, jobs: list[int], sends: bool
+    monkeypatch: pytest.MonkeyPatch,
+    participants: list[int] | None,
+    jobs: list[int],
+    age_s: float,
+    sends: bool,
 ) -> None:
-    fake = FakeLiveKit(participants, jobs)
+    fake = FakeLiveKit(participants, jobs, age_s)
     monkeypatch.setattr(api, "LiveKitAPI", lambda *a, **kw: fake)
     assert asyncio.run(rooms.ensure_customer(config(), "abc123")) is sends
     assert fake.closed

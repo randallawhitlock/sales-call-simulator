@@ -122,6 +122,8 @@ export function useVoiceCall({
         })
         .on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
           if (!mine() || p.kind !== ParticipantKind.AGENT) return
+          // A second customer worker backs out when one is already on the line; nothing changed.
+          if ([...next.remoteParticipants.values()].some((o) => o.kind === ParticipantKind.AGENT)) return
           setStatus(`${customer} left the call`)
           // Rejoining asks the server to send the customer back.
           if (liveRef.current) setPhase((ph) => (ph === 'in' ? 'alone' : ph))

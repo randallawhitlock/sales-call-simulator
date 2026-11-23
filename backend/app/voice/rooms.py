@@ -9,6 +9,7 @@ customer and no dispatch is on its way. The worker picks the call up from the tr
 
 import asyncio
 import json
+import time
 
 from livekit import api
 
@@ -17,6 +18,17 @@ from app.voice.config import AGENT_NAME, VoiceConfig
 TIMEOUT_S = 3.0
 """Joining doesn't wait longer than this on LiveKit; the learner can still join without it."""
 _LIVE = {api.JobStatus.JS_PENDING, api.JobStatus.JS_RUNNING}
+WAITING_S = 10.0
+"""A dispatch this young that lists no job may still be on its way: the worker can take a few
+seconds to join, and ``livekit-server`` doesn't always list a dispatch's jobs. Past this it
+counts as lost, since LiveKit never hands a dispatch to a worker that registers after it."""
+
+
+def _on_its_way(dispatch: api.AgentDispatch, now_ns: int) -> bool:
+    state = dispatch.state
+    if any(job.state.status in _LIVE for job in state.jobs):
+        return True
+    return not state.jobs and now_ns - state.created_at < WAITING_S * 1e9
 
 
 async def ensure_customer(config: VoiceConfig, session_id: str) -> bool:
@@ -35,12 +47,8 @@ async def ensure_customer(config: VoiceConfig, session_id: str) -> bool:
             if any(p.kind == api.ParticipantInfo.Kind.AGENT for p in listed.participants):
                 return False
             dispatches = await lk.agent_dispatch.list_dispatch(room)
-            if any(
-                job.state.status in _LIVE
-                for d in dispatches
-                if d.agent_name == AGENT_NAME
-                for job in d.state.jobs
-            ):
+            now_ns = time.time_ns()
+            if any(_on_its_way(d, now_ns) for d in dispatches if d.agent_name == AGENT_NAME):
                 return False
             await lk.agent_dispatch.create_dispatch(
                 api.CreateAgentDispatchRequest(
