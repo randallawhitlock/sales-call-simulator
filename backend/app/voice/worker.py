@@ -117,6 +117,7 @@ class SimRealtimeSession(RealtimeSession):
         super().__init__(model)
         self._sim = model
         self._generated: dict[str, str] = {}
+        self._connected_once = False
         self.on("metrics_collected", self._on_metrics)
 
     def _fresh_start(self) -> None:
@@ -138,16 +139,21 @@ class SimRealtimeSession(RealtimeSession):
 
     def _emit_error(self, error: Exception, recoverable: bool) -> None:
         if recoverable:
+            self._sim.stats.transition("drop", self._sim.call_ms())
             self._fresh_start()
         super()._emit_error(error, recoverable)
 
     def _handle_go_away(self, go_away: types.LiveServerGoAway) -> None:
         self._sim.stats.go_aways += 1
+        self._sim.stats.transition("go_away", self._sim.call_ms())
         self._fresh_start()
         super()._handle_go_away(go_away)
 
     def _report_connection_acquired(self, acquire_time: float) -> None:
         self._sim.stats.connects += 1
+        if self._connected_once:
+            self._sim.stats.transition("reconnect", self._sim.call_ms())
+        self._connected_once = True
         super()._report_connection_acquired(acquire_time)
 
     def _mark_current_generation_done(self) -> None:
@@ -186,11 +192,17 @@ class SimRealtimeSession(RealtimeSession):
 
 class SimRealtimeModel(RealtimeModel):
     def __init__(
-        self, *, heard_history: Callable[[], llm.ChatContext], stats: VoiceStats, **kwargs: Any
+        self,
+        *,
+        heard_history: Callable[[], llm.ChatContext],
+        stats: VoiceStats,
+        call_ms: Callable[[], int],
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.heard_history = heard_history
         self.stats = stats
+        self.call_ms = call_ms
         self.current: SimRealtimeSession | None = None
 
     def session(self, *, turn_detection_disabled: bool = False) -> SimRealtimeSession:
@@ -205,11 +217,13 @@ def live_model(
     voice: str,
     heard_history: Callable[[], llm.ChatContext],
     stats: VoiceStats,
+    call_ms: Callable[[], int],
 ) -> SimRealtimeModel:
     """Settings from the spike (spike/voice/live_settings.py), with the M4 silence window."""
     return SimRealtimeModel(
         heard_history=heard_history,
         stats=stats,
+        call_ms=call_ms,
         model=config.model,
         api_key=config.api_key,
         # google-genai 3.x defaults to API v1, where the Live endpoint returns HTTP 404.
@@ -331,6 +345,7 @@ class VoiceCall:
         prior = await self.db(self.store.get_voice_stats, self.session_id)
         if prior:
             self.stats.carry(prior)
+            self.stats.transition("rejoin", self._call_ms())
 
         await self.ctx.connect()
         room = self.ctx.room
@@ -359,7 +374,9 @@ class VoiceCall:
         log.info("voice call %s: customer on %s (%s)", self.session_id, self.voice, row.voice)
 
     async def _start_session(self, seed: llm.ChatContext) -> None:
-        self.model = live_model(self.config, self.voice, self._heard_history, self.stats)
+        self.model = live_model(
+            self.config, self.voice, self._heard_history, self.stats, self._call_ms
+        )
         session: AgentSession[None] = AgentSession(llm=self.model)
         session.on("conversation_item_added", self._on_item)
         session.on("user_input_transcribed", self._on_transcribed)
@@ -412,6 +429,10 @@ class VoiceCall:
 
     def _heard_history(self) -> llm.ChatContext:
         return self.session.history if self.session else llm.ChatContext.empty()
+
+    def _call_ms(self) -> int:
+        """Milliseconds since the call started, the clock utterances use."""
+        return max(0, int((time.time() - self.call_started_at) * 1000))
 
     def _speech_start(self, first_seen: float) -> float:
         return self.tracker.speech_start(first_seen, MAX_TURN_S)
@@ -467,10 +488,20 @@ class VoiceCall:
         now = time.time()
         text = item.text_content or ""
         if item.role == "user":
-            started = self._speech_start(self.ledger.first_seen(item.id) or item.created_at)
+            first_seen = self.ledger.first_seen(item.id) or item.created_at
+            started = self._speech_start(first_seen)
+            ended = self.tracker.speech_end(first_seen)
             self.nudge_level = 0
             self.last_activity = now
-            self._queue(self.ledger.learner_final(item.id, text, started, now))
+            self._queue(
+                self.ledger.learner_final(
+                    item.id,
+                    text,
+                    started,
+                    now,
+                    ended_at=ended if ended is not None and ended > started else None,
+                )
+            )
         elif item.role == "assistant":
             started = item.metrics.get("started_speaking_at") or item.created_at
             ended = item.metrics.get("stopped_speaking_at")
@@ -524,6 +555,7 @@ class VoiceCall:
         old = self.session
         seed = old.history.copy() if old else llm.ChatContext.empty()
         self.stats.restarts += 1
+        self.stats.transition("restart", self._call_ms())
         if self.stats.restarts > MAX_RESTARTS:
             await self.finish("the customer's session kept failing")
             return

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from google.genai import types
 from livekit import api, rtc
 from livekit.agents import llm
 from livekit.plugins.google.realtime import realtime_api
@@ -78,11 +79,62 @@ def test_a_fresh_start_replays_the_call_as_heard() -> None:
     assert len(history.items) == 4  # the session's own history is untouched
 
 
+def test_the_session_logs_each_transition_on_the_call_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("_emit_error", "_handle_go_away", "_report_connection_acquired"):
+        monkeypatch.setattr(realtime_api.RealtimeSession, name, lambda self, *args: None)
+    stats = VoiceStats(model="m", silence_ms=700, price_in_per_min=0, price_out_per_min=0)
+    clock = iter([1000, 2000, 3000])
+    session = SimRealtimeSession.__new__(SimRealtimeSession)
+    monkeypatch.setattr(
+        session, "_sim", SimpleNamespace(stats=stats, call_ms=lambda: next(clock)), raising=False
+    )
+    monkeypatch.setattr(session, "_connected_once", False, raising=False)
+    monkeypatch.setattr(session, "_fresh_start", lambda: None)
+    session._report_connection_acquired(0.1)  # the first connection isn't a reconnect
+    session._handle_go_away(types.LiveServerGoAway())
+    session._report_connection_acquired(0.1)
+    session._emit_error(RuntimeError("gone"), recoverable=False)  # the restart logs this one
+    session._emit_error(RuntimeError("dropped"), recoverable=True)
+    assert stats.transitions == [
+        {"kind": "go_away", "t_ms": 1000},
+        {"kind": "reconnect", "t_ms": 2000},
+        {"kind": "drop", "t_ms": 3000},
+    ]
+    assert (stats.connects, stats.go_aways) == (2, 1)
+
+
+def test_a_restart_is_logged_on_the_call_clock(
+    call: VoiceCall, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def no_session(seed: llm.ChatContext) -> None:
+        return None
+
+    monkeypatch.setattr(call, "_start_session", no_session)
+    monkeypatch.setattr(call, "_call_ms", lambda: 5000)
+    asyncio.run(call._restart())
+    assert call.stats.transitions == [{"kind": "restart", "t_ms": 5000}]
+
+
+def test_an_agent_line_is_timed_from_the_mic(call: VoiceCall) -> None:
+    t0 = call.ledger.call_started_at
+    said(call, "user", "Hello?", "agent-0", t0 + 0.5)  # nothing on the mic yet: no length
+    for i in range(30):  # talking from 1.0 s to 4.0 s
+        call.tracker.frame(t0 + 1.1 + i * 0.1, 0.1, -20)
+    call.ledger.learner_heard("agent-1", "Do you", at=t0 + 1.5)
+    said(call, "user", "Do you still see Dr. Patel?", "agent-1", t0 + 4.8)
+    first, second = saved(call)
+    assert (first.t_ms, first.duration_ms) == (500, None)
+    assert (second.t_ms, second.duration_ms) == (1000, 3000)
+
+
 def test_live_model_settings() -> None:
     config = voice_from_env(VOICE_ENV | {"SIM_VOICE_SILENCE_MS": "900"})
     assert config is not None
     stats = VoiceStats(model="m", silence_ms=900, price_in_per_min=0, price_out_per_min=0)
-    model = live_model(config, "Aoede", llm.ChatContext.empty, stats)
+    model = live_model(config, "Aoede", llm.ChatContext.empty, stats, lambda: 1234)
+    assert model.call_ms() == 1234
     opts = model._opts
     assert (opts.model, opts.voice, opts.api_version) == ("test-live-model", "Aoede", "v1beta")
     detection = opts.realtime_input_config.automatic_activity_detection  # type: ignore[union-attr]
