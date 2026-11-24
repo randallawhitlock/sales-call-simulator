@@ -28,6 +28,8 @@ HOLD_FOR_TRANSCRIPT_S = 4.0
 """Longest a customer line waits for the agent line before it to be transcribed."""
 AUDIO_TOKENS_PER_MIN = 1500
 """Gemini counts 25 audio tokens per second."""
+MAX_TRANSITIONS = 200
+"""Most transition entries kept for a call; a longer log keeps its first ones."""
 MAX_LATENCY_GAP_S = 10.0
 """A customer line that starts later than this after the agent stopped talking isn't timed as
 an answer to them (a nudge after a long silence, say)."""
@@ -334,6 +336,13 @@ class VoiceStats:
     recording: str | None = None
     carried_reconnects: int = 0
     carried_restarts: int = 0
+    transitions: list[dict[str, JsonValue]] = field(default_factory=list)
+    """Each go-away, drop, reconnect, restart and rejoin, as ``{"kind", "t_ms"}`` in order, on
+    the call's clock (the same as utterances)."""
+
+    def transition(self, kind: str, t_ms: int) -> None:
+        if len(self.transitions) < MAX_TRANSITIONS:
+            self.transitions.append({"kind": kind, "t_ms": t_ms})
 
     def carry(self, prior: dict[str, JsonValue]) -> None:
         """Picks up the figures an earlier worker saved for the same call, so a worker sent
@@ -352,6 +361,12 @@ class VoiceStats:
         self.carried_reconnects += count("reconnects")
         self.carried_restarts += count("session_restarts") + 1
         self.errors += [e for e in _list(prior, "errors") if isinstance(e, str)][:20]
+        for item in _list(prior, "transitions"):
+            if not isinstance(item, dict):
+                continue
+            kind, t_ms = item.get("kind"), item.get("t_ms")
+            if isinstance(kind, str) and isinstance(t_ms, int) and not isinstance(t_ms, bool):
+                self.transition(kind, t_ms)
         tokens = prior.get("tokens")
         if isinstance(tokens, dict):
             for key in self.tokens:
@@ -410,6 +425,7 @@ class VoiceStats:
             "reconnects": max(0, self.connects - 1 - self.restarts) + self.carried_reconnects,
             "go_aways": self.go_aways,
             "session_restarts": self.restarts + self.carried_restarts,
+            "transitions": [dict(t) for t in self.transitions],
             "errors": list(self.errors),
             "tokens": dict(self.tokens),
             "audio_minutes": {

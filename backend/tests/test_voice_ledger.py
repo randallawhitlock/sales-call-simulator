@@ -283,3 +283,48 @@ def test_a_worker_sent_back_adds_to_the_figures_before_it() -> None:
     assert data["errors"] == ["e1"]
     assert data["cost_usd_estimate"] == pytest.approx(2 * 0.005 + 1 * 0.018)
     assert data["final"] is False
+
+
+def test_transitions_are_listed_in_order_in_the_stats_json() -> None:
+    s = stats()
+    s.transition("go_away", 1200)
+    s.transition("reconnect", 2500)
+    assert s.to_json(3)["transitions"] == [
+        {"kind": "go_away", "t_ms": 1200},
+        {"kind": "reconnect", "t_ms": 2500},
+    ]
+    assert stats().to_json(0)["transitions"] == []
+
+
+def test_a_worker_sent_back_keeps_the_transitions_before_it_and_skips_bad_ones() -> None:
+    saved = stats().to_json(1)
+    saved["transitions"] = [
+        {"kind": "drop", "t_ms": 900},
+        {"kind": 7, "t_ms": 1000},
+        {"kind": "restart", "t_ms": "soon"},
+        {"kind": "restart", "t_ms": True},
+        {"kind": "restart"},
+        "restart",
+        {"kind": "go_away", "t_ms": 1500},
+    ]
+    second = stats()
+    second.carry(saved)
+    second.transition("rejoin", 4000)
+    assert second.to_json(5)["transitions"] == [
+        {"kind": "drop", "t_ms": 900},
+        {"kind": "go_away", "t_ms": 1500},
+        {"kind": "rejoin", "t_ms": 4000},
+    ]
+    stats().carry({"transitions": "none"})
+
+
+def test_the_transition_log_keeps_its_first_200() -> None:
+    first = stats()
+    for i in range(250):
+        first.transition("drop", i)
+    assert len(first.transitions) == 200
+    second = stats()
+    second.carry(first.to_json(1))
+    second.transition("rejoin", 999)
+    assert len(second.transitions) == 200
+    assert second.transitions[-1] == {"kind": "drop", "t_ms": 199}
