@@ -9,6 +9,7 @@ ignore a participant that is neither the learner nor the customer.
 """
 
 import asyncio
+import json
 import sys
 from datetime import timedelta
 
@@ -47,10 +48,23 @@ def ops_token(config: VoiceConfig, session_id: str) -> str:
     )
 
 
+def dropped(reply: str) -> bool:
+    """Whether the worker's reply says it cut the connection. It can't while the customer is
+    between connections, during a reconnect, say."""
+    try:
+        data = json.loads(reply)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and data.get("dropped") is True
+
+
 async def drop(config: VoiceConfig, session_id: str) -> str:
     """The worker's reply. Raises ``RuntimeError`` with what to tell the person running it."""
     room = rtc.Room()
-    await room.connect(config.livekit_url, ops_token(config, session_id))
+    try:
+        await room.connect(config.livekit_url, ops_token(config, session_id))
+    except rtc.ConnectError as e:
+        raise RuntimeError(f"couldn't reach LiveKit at {config.livekit_url}: {e}") from e
     try:
         customer = next(
             (
@@ -63,7 +77,7 @@ async def drop(config: VoiceConfig, session_id: str) -> str:
         if customer is None:
             raise RuntimeError(f"no customer in room {config.room_for(session_id)}")
         try:
-            return await room.local_participant.perform_rpc(
+            reply = await room.local_participant.perform_rpc(
                 destination_identity=customer.identity,
                 method=DROP_MODEL_RPC,
                 payload="",
@@ -75,11 +89,18 @@ async def drop(config: VoiceConfig, session_id: str) -> str:
                     f"the worker doesn't take drops; start it with {DEBUG_DROPS_ENV}=1"
                 ) from e
             raise RuntimeError(f"the drop failed: {e.message} (code {e.code})") from e
+        if not dropped(reply):
+            raise RuntimeError(
+                f"nothing was dropped: the customer had no open model connection ({reply}). "
+                "Try again in a few seconds."
+            )
+        return reply
     finally:
         await room.disconnect()
 
 
 def main(argv: list[str]) -> int:
+    """Runs one drop. Exits 0 when it happened, 1 when it didn't, and 2 on bad usage."""
     if len(argv) != 1:
         print("usage: python -m app.voice.drop <session_id>", file=sys.stderr)
         return 2

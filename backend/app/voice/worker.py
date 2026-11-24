@@ -217,7 +217,7 @@ def live_model(
     voice: str,
     heard_history: Callable[[], llm.ChatContext],
     stats: VoiceStats,
-    call_ms: Callable[[], int] = lambda: 0,
+    call_ms: Callable[[], int],
 ) -> SimRealtimeModel:
     """Settings from the spike (spike/voice/live_settings.py), with the M4 silence window."""
     return SimRealtimeModel(
@@ -488,10 +488,20 @@ class VoiceCall:
         now = time.time()
         text = item.text_content or ""
         if item.role == "user":
-            started = self._speech_start(self.ledger.first_seen(item.id) or item.created_at)
+            first_seen = self.ledger.first_seen(item.id) or item.created_at
+            started = self._speech_start(first_seen)
+            ended = self.tracker.speech_end(first_seen)
             self.nudge_level = 0
             self.last_activity = now
-            self._queue(self.ledger.learner_final(item.id, text, started, now))
+            self._queue(
+                self.ledger.learner_final(
+                    item.id,
+                    text,
+                    started,
+                    now,
+                    ended_at=ended if ended is not None and ended > started else None,
+                )
+            )
         elif item.role == "assistant":
             started = item.metrics.get("started_speaking_at") or item.created_at
             ended = item.metrics.get("stopped_speaking_at")

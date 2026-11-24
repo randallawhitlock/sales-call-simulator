@@ -56,6 +56,8 @@ Work the case the way you would on a real call, and stretch it to an hour. Along
 cd backend && uv run python -m app.voice.drop <session id>
 ```
 
+  If it says nothing was dropped, she was between connections. Run it again a few seconds later.
+
 - **GoAways** happen on their own, about every 10 minutes. You won't notice them; the report
   finds them.
 - **After each drop, and every 10 minutes or so**, ask her something that only works if she
@@ -88,7 +90,9 @@ Each part of the gate gets a status:
 | NOT_COVERED | One call can't show it (concurrency, the direct control, the fixture) |
 
 Times are from the start of the call. The recording is at `backend/recordings/<session id>.ogg`
-and starts when the customer joins, so it can run a second or two behind the report.
+and starts when the customer joins, so it can run a second or two behind the report. If her
+session was rebuilt (a restart or rejoin in the Transitions section), the audio carries on in
+`<session id>-2.ogg` and so on, and each part's clock starts at that restart or rejoin.
 
 For each REVIEW item:
 

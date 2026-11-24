@@ -111,19 +111,23 @@ def fmt_time(ms: int) -> str:
 
 
 def excerpt(text: str) -> str:
+    """``text`` on one line, cut to ``EXCERPT_CHARS``."""
     flat = " ".join(text.split())
     return flat if len(flat) <= EXCERPT_CHARS else flat[: EXCERPT_CHARS - 3] + "..."
 
 
 def spoken(u: Utterance) -> Spoken:
+    """A line as the other side heard it, for the report."""
     return Spoken(u.speaker.value, fmt_time(u.t_ms), excerpt(u.heard_text))
 
 
 def by_time(utterances: list[Utterance]) -> list[Utterance]:
+    """Lines in the order they were said."""
     return sorted(utterances, key=lambda u: u.t_ms)
 
 
 def end_ms(u: Utterance) -> int:
+    """When a line finished, or when it started if its length wasn't recorded."""
     return u.t_ms + (u.duration_ms or 0)
 
 
@@ -157,31 +161,51 @@ def parse_transitions(stats: dict[str, JsonValue] | None) -> list[Transition]:
 
 
 def call_ms(utterances: list[Utterance], stats: dict[str, JsonValue] | None) -> int:
+    """The call's length: the worker's figure, or else when the last line ended."""
     seconds = _number(stats.get("call_seconds")) if stats else None
     if seconds is not None and seconds > 0:
         return int(seconds * 1000)
     return max((end_ms(u) for u in utterances), default=0)
 
 
-def _recovery(transition: Transition, all_transitions: list[Transition]) -> int | None:
-    if transition.kind not in ("go_away", "drop"):
+def recovery_ms(index: int, transitions: list[Transition]) -> int | None:
+    """How long the go-away or drop at ``index`` took to reconnect. A reconnect only counts
+    when it comes next: a session rebuilt by a restart connects without one, and a later
+    reconnect belongs to whatever came after."""
+    transition = transitions[index]
+    if transition.kind not in ("go_away", "drop") or index + 1 >= len(transitions):
         return None
-    for later in all_transitions:
-        if later.kind == "reconnect" and later.t_ms >= transition.t_ms:
-            return later.t_ms - transition.t_ms
-    return None
+    later = transitions[index + 1]
+    return later.t_ms - transition.t_ms if later.kind == "reconnect" else None
+
+
+def owed_line(transition: Transition, ordered: list[Utterance]) -> Utterance | None:
+    """The agent line the customer has to answer after a transition. That's one she still owed
+    an answer to when it hit (the agent was mid-line or had just finished), else the agent's
+    next line."""
+    owed: Utterance | None = None
+    for u in ordered:
+        if u.t_ms >= transition.t_ms:
+            break
+        if u.speaker is Speaker.LEARNER:
+            owed = u
+        elif owed is not None:
+            owed = None  # she answered it
+    if owed is not None and transition.t_ms - end_ms(owed) <= ANSWER_GAP_MS:
+        return owed
+    return next(
+        (u for u in ordered if u.speaker is Speaker.LEARNER and u.t_ms >= transition.t_ms), None
+    )
 
 
 def check_transition(
-    transition: Transition, ordered: list[Utterance], all_transitions: list[Transition]
+    transition: Transition, ordered: list[Utterance], recovery: int | None
 ) -> TransitionResult:
-    """Did the customer answer the agent's next line in time? Character and recall are left
-    to a person, who gets the lines around the transition."""
-    before = [spoken(u) for u in [u for u in ordered if u.t_ms < transition.t_ms][-2:]]
-    recovery = _recovery(transition, all_transitions)
-    learner = next(
-        (u for u in ordered if u.speaker is Speaker.LEARNER and u.t_ms >= transition.t_ms), None
-    )
+    """Did the customer answer the agent's line in time? Character and recall are left to a
+    person, who gets the lines around the transition."""
+    learner = owed_line(transition, ordered)
+    earlier = [u for u in ordered if u.t_ms < transition.t_ms and u is not learner]
+    before = [spoken(u) for u in earlier[-2:]]
     if learner is None:
         return TransitionResult(
             transition.kind,
@@ -202,35 +226,37 @@ def check_transition(
             transition.kind,
             transition.t_ms,
             Status.FAIL,
-            "the customer never answered the agent's next line",
+            "the customer never answered the agent's line",
             None,
             recovery,
             before,
             after,
         )
     gap = max(customer.t_ms - end_ms(learner), 0)
-    ok = gap <= ANSWER_GAP_MS
-    note = f"answered {gap} ms after the agent finished (limit {ANSWER_GAP_MS} ms)"
+    if gap <= ANSWER_GAP_MS:
+        status = Status.PASS
+        note = f"answered {gap} ms after the agent finished (limit {ANSWER_GAP_MS} ms)"
+    elif learner.duration_ms is None:
+        # Lines saved before agent lines had a length: the gap includes the agent talking.
+        status = Status.REVIEW
+        note = f"answered {gap} ms after the agent started; the line has no end time"
+    else:
+        status = Status.FAIL
+        note = f"answered {gap} ms after the agent finished (limit {ANSWER_GAP_MS} ms)"
     return TransitionResult(
-        transition.kind,
-        transition.t_ms,
-        Status.PASS if ok else Status.FAIL,
-        note,
-        gap,
-        recovery,
-        before,
-        after,
+        transition.kind, transition.t_ms, status, note, gap, recovery, before, after
     )
 
 
 def _kind_counts(transitions: list[Transition]) -> str:
     counts = {k: sum(1 for t in transitions if t.kind == k) for k in sorted(TRANSITION_KINDS)}
-    return ", ".join(f"{k} {n}" for k, n in counts.items())
+    return ", ".join(f"{k} {n}" for k, n in counts.items() if n)
 
 
 def call_section(
     utterances: list[Utterance], stats: dict[str, JsonValue] | None, transitions: list[Transition]
 ) -> Section:
+    """The call's length, model, counts and errors, from the worker's stats."""
     gate = "A 60-minute call on a real microphone, through every GoAway and two forced drops."
     checks: list[Check] = []
     if stats is None:
@@ -265,6 +291,7 @@ def call_section(
 def transitions_section(
     results: list[TransitionResult], transitions: list[Transition], minutes: float
 ) -> Section:
+    """Each go-away, drop, restart and rejoin, and whether the call had enough drops."""
     gate = (
         "After each transition the customer answers the next line within 5 s, stays in "
         "character, and recalls something said before it."
@@ -286,9 +313,9 @@ def transitions_section(
             f"drops: {drops} (gate wants at least {MIN_DROPS})",
         )
     )
-    for t in transitions:
+    for i, t in enumerate(transitions):
         if t.kind in ("go_away", "drop"):
-            recovery = _recovery(t, transitions)
+            recovery = recovery_ms(i, transitions)
             if recovery is not None:
                 checks.append(
                     Check(
@@ -320,6 +347,7 @@ def transitions_section(
 def interruptions_section(
     utterances: list[Utterance], stats: dict[str, JsonValue] | None
 ) -> Section:
+    """Every line that was cut off, with what was generated and what was heard."""
     gate = "Each interruption is logged with what was heard and what was generated."
     checks: list[Check] = []
     cut = [u for u in by_time(utterances) if u.interrupted or u.heard_text != u.text]
@@ -362,11 +390,14 @@ def interruptions_section(
 
 
 def normalize(text: str) -> str:
+    """Lowercase words without punctuation, for comparing two lines."""
     words = re.sub(r"[^\w\s]", "", text.lower())
     return " ".join(words.split())
 
 
 def evidence_section(utterances: list[Utterance]) -> Section:
+    """Gaps, repeats and ordering in the log. ``utterances`` must be in the order they were
+    saved, which is how the store returns them."""
     gate = "Complete, ordered by audio time across every transition, no turn missing or duplicated."
     checks: list[Check] = []
     ordered = by_time(utterances)
@@ -385,37 +416,42 @@ def evidence_section(utterances: list[Utterance]) -> Section:
             if b.t_ms - a.t_ms > DUPLICATE_WINDOW_MS:
                 break
             if b.speaker is a.speaker and normalize(b.text) == key:
-                failed = True
-                checks.append(
-                    Check(
-                        Status.FAIL,
-                        f"duplicate {a.speaker.value} line at {fmt_time(a.t_ms)} and "
-                        f"{fmt_time(b.t_ms)}: {excerpt(a.text)!r}",
-                    )
-                )
+                where = f"{a.speaker.value} line at {fmt_time(a.t_ms)} and {fmt_time(b.t_ms)}"
+                if b.t_ms <= end_ms(a):
+                    # One line saved twice: the copy starts before the first one ends.
+                    failed = True
+                    checks.append(Check(Status.FAIL, f"duplicate {where}: {excerpt(a.text)!r}"))
+                else:
+                    # People repeat themselves, most of all after a drop or a barge-in.
+                    checks.append(Check(Status.REVIEW, f"repeated {where}: {excerpt(a.text)!r}"))
 
     for speaker in Speaker:
         mine = [u for u in ordered if u.speaker is speaker]
         for prev, cur in zip(mine, mine[1:], strict=False):
             if cur.t_ms < end_ms(prev) - OVERLAP_SLACK_MS:
-                failed = True
                 over = end_ms(prev) - cur.t_ms
-                checks.append(
-                    Check(
-                        Status.FAIL,
-                        f"{speaker.value} line at {fmt_time(cur.t_ms)} starts {over} ms before "
-                        f"the previous one ends",
-                    )
+                text = (
+                    f"{speaker.value} line at {fmt_time(cur.t_ms)} starts {over} ms before "
+                    "the previous one ends"
                 )
+                if speaker is Speaker.CUSTOMER:
+                    failed = True
+                    checks.append(Check(Status.FAIL, text))
+                else:
+                    # Agent times come from the mic level, so two lines Gemini split out of one
+                    # stretch of speech share it.
+                    checks.append(Check(Status.REVIEW, f"{text} (one stretch of speech)"))
 
-    late = sum(
-        1 for written, heard in zip(utterances, ordered, strict=True) if written is not heard
-    )
+    late, latest = 0, -1
+    for u in utterances:
+        if u.t_ms < latest:
+            late += 1
+        latest = max(latest, u.t_ms)
     checks.append(
         Check(
             Status.PASS,
-            f"late writes: {late} lines were written out of audio order (expected, the grader "
-            "orders voice lines by audio time)",
+            f"late writes: {late} lines were saved after a line said later (expected, the "
+            "grader orders voice lines by audio time)",
         )
     )
 
@@ -443,6 +479,7 @@ def evidence_section(utterances: list[Utterance]) -> Section:
 
 
 def latency_section(stats: dict[str, JsonValue] | None) -> Section:
+    """The worker's reply-delay figures against the gate's targets."""
     gate = f"Median <= {LATENCY_MEDIAN_S} s and p95 <= {LATENCY_P95_S} s."
     checks: list[Check] = []
     median = _number(stats.get("latency_median_s")) if stats else None
@@ -484,6 +521,7 @@ def latency_section(stats: dict[str, JsonValue] | None) -> Section:
 
 
 def not_covered_section() -> Section:
+    """The gate items one call can't show, listed so the report doesn't read as complete."""
     gate = "These need more than one call."
     lines = [
         "concurrency: as many calls at once as a class would run",
@@ -496,6 +534,7 @@ def not_covered_section() -> Section:
 
 
 def overall_status(sections: list[Section]) -> Status:
+    """FAIL if any section failed, else REVIEW if any needs a person, else PASS."""
     statuses = {s.status for s in sections}
     if Status.FAIL in statuses:
         return Status.FAIL
@@ -516,7 +555,9 @@ def build_report(
     ordered = by_time(voice)
     transitions = parse_transitions(stats)
     results = [
-        check_transition(t, ordered, transitions) for t in transitions if t.kind in JUDGED_KINDS
+        check_transition(t, ordered, recovery_ms(i, transitions))
+        for i, t in enumerate(transitions)
+        if t.kind in JUDGED_KINDS
     ]
     minutes = call_ms(voice, stats) / 60000
     sections = [
@@ -535,6 +576,7 @@ def _render_spoken(prefix: str, lines: list[Spoken]) -> list[str]:
 
 
 def render_text(report: Report) -> str:
+    """The report as a person reads it in a terminal."""
     out = [f"M4 acceptance gate report for session {report.session_id}", ""]
     for number, section in enumerate(report.sections, 1):
         out.append(f"{number}. {section.title}: {section.status}")
@@ -557,6 +599,7 @@ def render_text(report: Report) -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Prints the report. Exits 0 when it ran, whatever it found, and 2 on bad input."""
     args = [a for a in argv if a != "--json"]
     as_json = len(args) != len(argv)
     if len(args) != 1:

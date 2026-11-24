@@ -100,6 +100,44 @@ def test_a_customer_line_that_overlaps_the_agent_end_clamps_to_zero() -> None:
     assert report.transitions[0].answer_gap_ms == 0
 
 
+def test_a_line_cut_off_by_the_transition_is_the_one_judged() -> None:
+    """The agent was mid-line when the connection went. Her answer to a later line doesn't
+    count for it."""
+    answered = [utt(1, C, 0), utt(2, L, 8000, duration_ms=3000), utt(3, C, 11_500)]
+    report = build_report("s1", answered, [], stats_with(transition("drop", 9000)))
+    (result,) = report.transitions
+    assert (result.status, result.answer_gap_ms) == (Status.PASS, 500)
+    assert [s.at for s in result.after] == ["00:08", "00:11"]
+    assert [s.at for s in result.before] == ["00:00"]
+
+    lost = [utt(1, L, 8000, duration_ms=3000), utt(2, L, 25_000), utt(3, C, 26_500)]
+    report = build_report("s1", lost, [], stats_with(transition("drop", 9000)))
+    assert report.transitions[0].status is Status.FAIL
+    assert report.transitions[0].answer_gap_ms == 15_500
+
+
+def test_a_line_still_waiting_for_an_answer_is_the_one_judged() -> None:
+    lines = [utt(1, L, 5000, duration_ms=2000), utt(2, C, 9500)]
+    report = build_report("s1", lines, [], stats_with(transition("go_away", 8000)))
+    (result,) = report.transitions
+    assert (result.status, result.answer_gap_ms) == (Status.PASS, 2500)
+    assert result.before == []
+    # Answered before the transition: the agent's next line is judged instead.
+    answered = [utt(1, L, 5000), utt(2, C, 6500), utt(3, L, 9000), utt(4, C, 10_500)]
+    report = build_report("s1", answered, [], stats_with(transition("go_away", 8000)))
+    assert [s.at for s in report.transitions[0].after] == ["00:09", "00:10"]
+
+
+def test_an_agent_line_with_no_end_time_is_review_when_the_gap_looks_long() -> None:
+    slow = [utt(1, L, 10_000, duration_ms=None), utt(2, C, 17_000)]
+    report = build_report("s1", slow, [], stats_with(transition("drop", 9000)))
+    assert report.transitions[0].status is Status.REVIEW
+    assert "no end time" in report.transitions[0].note
+    quick = [utt(1, L, 10_000, duration_ms=None), utt(2, C, 12_000)]
+    report = build_report("s1", quick, [], stats_with(transition("drop", 9000)))
+    assert report.transitions[0].status is Status.PASS
+
+
 def test_go_away_pairs_with_the_next_reconnect() -> None:
     lines = [utt(1, L, 10_000), utt(2, C, 11_500)]
     stats = stats_with(transition("go_away", 8000), transition("reconnect", 8600))
@@ -108,6 +146,22 @@ def test_go_away_pairs_with_the_next_reconnect() -> None:
     assert report.transitions[0].recovery_ms == 600
     texts = [c.text for c in section(report.sections, "Transitions").checks]
     assert any("reconnected after 600 ms" in t for t in texts)
+
+
+def test_a_reconnect_only_counts_for_what_came_just_before_it() -> None:
+    lines = [utt(1, L, 10_000), utt(2, C, 11_500)]
+    stats = stats_with(
+        transition("drop", 8000),
+        transition("restart", 9000),
+        transition("go_away", 600_000),
+        transition("reconnect", 600_500),
+    )
+    report = build_report("s1", lines, [], stats)
+    drop, _, go_away = report.transitions
+    assert (drop.kind, drop.recovery_ms) == ("drop", None)
+    assert (go_away.kind, go_away.recovery_ms) == ("go_away", 500)
+    texts = [c.text for c in section(report.sections, "Transitions").checks]
+    assert "drop at 00:08 has no reconnect after it" in texts
 
 
 def test_malformed_transitions_are_skipped() -> None:
@@ -161,23 +215,45 @@ def test_barge_in_count_mismatch_is_review_not_fail() -> None:
     assert interruptions_section([utt(1, C, 0)], {}).status is Status.NOT_COVERED
 
 
-def test_duplicates_are_caught_inside_the_window_only() -> None:
+def texts_of(result: Section) -> list[str]:
+    return [c.text for c in result.checks]
+
+
+def test_a_line_saved_twice_fails_and_a_repeat_is_review() -> None:
     line, same = "Is that the one on Main Street?", "is that the one on main street"
-    inside = [utt(1, C, 0, line), utt(2, C, DUPLICATE_WINDOW_MS, same)]
-    assert evidence_section(inside).status is Status.FAIL
+    twice = [utt(1, C, 0, line, duration_ms=3000), utt(2, C, 500, same)]
+    result = evidence_section(twice)
+    assert result.status is Status.FAIL
+    assert any(t.startswith("duplicate customer line") for t in texts_of(result))
+
+    repeated = [utt(1, C, 0, line), utt(2, C, DUPLICATE_WINDOW_MS, same)]
+    result = evidence_section(repeated)
+    assert result.status is Status.REVIEW
+    assert any(t.startswith("repeated customer line at 00:00") for t in texts_of(result))
+    hello = "Hello, can you hear me now?"
+    after_a_drop = [utt(1, L, 0, hello, duration_ms=2000), utt(2, L, 6000, hello)]
+    result = evidence_section(after_a_drop)
+    assert result.status is Status.REVIEW
+    assert any(t.startswith("repeated learner line") for t in texts_of(result))
+
     outside = [utt(1, C, 0, line), utt(2, C, DUPLICATE_WINDOW_MS + 1, same)]
-    assert evidence_section(outside).status is Status.REVIEW
+    assert not any("repeated" in t for t in texts_of(evidence_section(outside)))
     short = [utt(1, C, 0, "Okay, sure."), utt(2, C, 4000, "okay sure")]
-    assert evidence_section(short).status is Status.REVIEW
-    other_side = [utt(1, C, 0, "Hello"), utt(2, L, 1000, "Hello")]
-    assert evidence_section(other_side).status is Status.REVIEW
+    assert not any("repeated" in t for t in texts_of(evidence_section(short)))
+    other_side = [utt(1, C, 0, line), utt(2, L, 1000, line)]
+    assert not any("repeated" in t for t in texts_of(evidence_section(other_side)))
 
 
-def test_same_speaker_overlap_beyond_slack_fails() -> None:
+def test_same_speaker_overlap_beyond_slack_fails_for_the_customer_only() -> None:
     ok = [utt(1, C, 0, duration_ms=2000), utt(2, C, 2000 - OVERLAP_SLACK_MS)]
     assert evidence_section(ok).status is Status.REVIEW
     bad = [utt(1, C, 0, duration_ms=2000), utt(2, C, 2000 - OVERLAP_SLACK_MS - 1)]
     assert evidence_section(bad).status is Status.FAIL
+    # Agent times come from the mic level, so two lines in one stretch of speech overlap.
+    agent = [utt(1, L, 0, duration_ms=2000), utt(2, L, 1000)]
+    result = evidence_section(agent)
+    assert result.status is Status.REVIEW
+    assert any("(one stretch of speech)" in t for t in texts_of(result))
 
 
 def test_empty_text_fails_the_log() -> None:
@@ -189,8 +265,19 @@ def test_late_writes_are_counted_but_do_not_fail() -> None:
     written = [utt(1, L, 0), utt(2, C, 5000), utt(3, L, 3000)]
     result = evidence_section(written)
     assert result.status is Status.REVIEW
-    assert any(c.text.startswith("late writes: 2") for c in result.checks)
+    assert any(c.text.startswith("late writes: 1 ") for c in result.checks)
+    # One line saved at the very end is one late line, not one per line it jumped.
+    flushed = [utt(n, C, n * 1000) for n in range(1, 40)] + [utt(99, L, 500)]
+    assert any(t.startswith("late writes: 1 ") for t in texts_of(evidence_section(flushed)))
     assert any(c.text.startswith("late writes: 0") for c in evidence_section([utt(1, L, 0)]).checks)
+
+
+def test_the_call_section_lists_only_the_transitions_that_happened() -> None:
+    lines = [utt(1, L, 0), utt(2, C, 1500)]
+    none = section(build_report("s1", lines, [], stats_with()).sections, "Call")
+    assert "transitions: none" in texts_of(none)
+    one = section(build_report("s1", lines, [], stats_with(transition("drop", 9))).sections, "Call")
+    assert "transitions: drop 1" in texts_of(one)
 
 
 def test_back_to_back_turns_are_listed() -> None:

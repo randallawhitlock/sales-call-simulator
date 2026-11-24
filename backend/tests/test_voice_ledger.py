@@ -207,6 +207,16 @@ def test_speech_runs_merge_short_pauses() -> None:
     assert tracker.speech_start(3.0, max_s=60) == pytest.approx(1.0)
     assert tracker.speech_start(3.0, max_s=1) == 3.0  # that run began too long before
     assert tracker.speech_start(0.5, max_s=60) == 0.5
+    assert tracker.speech_end(3.0) == pytest.approx(2.6)
+    assert tracker.speech_end(0.5) is None
+
+
+def test_an_agent_line_keeps_how_long_they_talked() -> None:
+    ledger = Ledger(T0)
+    (line,) = ledger.learner_final("agent-1", "Hi", T0 + 1.0, T0 + 6, ended_at=T0 + 4.25)
+    assert (line.t_ms, line.duration_ms) == (1000, 3250)
+    (unknown,) = ledger.learner_final("agent-2", "Hello", T0 + 7.0, T0 + 9)
+    assert unknown.duration_ms is None
 
 
 def test_level_db() -> None:

@@ -87,6 +87,10 @@ def level_db(samples: Sequence[int]) -> float:
     return 20 * math.log10(rms / 32768) if rms else -math.inf
 
 
+def _duration_ms(started_at: float, ended_at: float | None) -> int | None:
+    return None if ended_at is None else max(0, round((ended_at - started_at) * 1000))
+
+
 @dataclass
 class Run:
     start: float
@@ -129,6 +133,11 @@ class SpeechTracker:
         of the run they were in by then, unless it began more than ``max_s`` before."""
         run = self.run_started_before(first_seen)
         return run.start if run is not None and first_seen - run.start <= max_s else first_seen
+
+    def speech_end(self, first_seen: float) -> float | None:
+        """When the agent stopped the stretch of speech they were in at ``first_seen``."""
+        run = self.run_started_before(first_seen)
+        return run.end if run is not None else None
 
     def run_ended_before(self, t: float) -> Run | None:
         """The latest run that was over by ``t``."""
@@ -196,16 +205,24 @@ class Ledger:
             entry.text = text
 
     def learner_final(
-        self, item_id: str, text: str, started_at: float, now: float
+        self,
+        item_id: str,
+        text: str,
+        started_at: float,
+        now: float,
+        *,
+        ended_at: float | None = None,
     ) -> list[UtteranceIn]:
         self._open.pop(item_id, None)
         out: list[UtteranceIn] = []
         if item_id not in self._done and text.strip():
             self._done.add(item_id)
-            out.append(self._learner(item_id, text, started_at))
+            out.append(self._learner(item_id, text, started_at, ended_at))
         return self._release(out, item_id, now)
 
-    def _learner(self, item_id: str, text: str, started_at: float) -> UtteranceIn:
+    def _learner(
+        self, item_id: str, text: str, started_at: float, ended_at: float | None = None
+    ) -> UtteranceIn:
         return UtteranceIn(
             client_utt_id=client_utt_id(item_id),
             speaker=Speaker.LEARNER,
@@ -213,6 +230,7 @@ class Ledger:
             text=text.strip(),
             heard_text=text.strip(),
             t_ms=self.t_ms(started_at),
+            duration_ms=_duration_ms(started_at, ended_at),
         )
 
     # Customer lines
@@ -240,7 +258,7 @@ class Ledger:
             text=text,
             heard_text=heard,
             t_ms=self.t_ms(started_at),
-            duration_ms=None if ended_at is None else max(0, round((ended_at - started_at) * 1000)),
+            duration_ms=_duration_ms(started_at, ended_at),
             interrupted=interrupted,
         )
         blockers = {k for k, v in self._open.items() if v.first_seen <= started_at}
