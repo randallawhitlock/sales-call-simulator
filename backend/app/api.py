@@ -5,12 +5,15 @@ truth, customer knowledge, persona rolls and seeded document defects stay server
 the call ends, when the answer key and findings unlock.
 """
 
+import logging
 from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Annotated, Any
 
+import anyio.from_thread
 from fastapi import APIRouter, Body, Depends, Query, Request
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field, JsonValue
 
 from app.content.catalog import Drug
 from app.content.common import Authority, Id, PlanId
@@ -20,7 +23,7 @@ from app.engine import research
 from app.engine.checks import CheckResult, run_checks
 from app.engine.consistency import ConsistencyFlag, check_consistency
 from app.engine.debrief import Debrief, DebriefService
-from app.engine.events import Event, EventType, Utterance, UtteranceIn
+from app.engine.events import Channel, Event, EventType, Utterance, UtteranceIn
 from app.engine.records import (
     Application,
     ApplicationFields,
@@ -32,10 +35,12 @@ from app.engine.records import (
     ScopeIn,
     SubmitIn,
 )
-from app.engine.session import Invalid, NotFound, SessionService, TurnIn, TurnOut
+from app.engine.session import Conflict, Invalid, NotFound, SessionService, TurnIn, TurnOut
 from app.engine.store import SessionRow, SessionStatus
+from app.voice.config import LEARNER_IDENTITY, VoiceConfig, recording_files, recordings_dir
 
 router = APIRouter(prefix="/api")
+log = logging.getLogger("sim.api")
 
 
 def get_service(request: Request) -> SessionService:
@@ -52,6 +57,14 @@ def get_debriefs(request: Request) -> DebriefService:
 
 
 Debriefs = Annotated[DebriefService, Depends(get_debriefs)]
+
+
+def get_voice(request: Request) -> VoiceConfig | None:
+    voice: VoiceConfig | None = request.app.state.voice
+    return voice
+
+
+Voice = Annotated[VoiceConfig | None, Depends(get_voice)]
 
 
 # Views
@@ -84,6 +97,8 @@ class SessionView(BaseModel):
     scenario_id: str
     learner_title: str
     status: SessionStatus
+    channel: Channel
+    """``voice``: the learner talks to the customer through the call's LiveKit room."""
     frame: FrameView
     crm_seed: CrmSeed
     created_at: datetime
@@ -103,6 +118,16 @@ class CreateSession(BaseModel):
     seed: int | None = Field(default=None, ge=0)
     retry_of: str | None = None
     """An ended call of the same case to retry, working on what its debrief missed."""
+    channel: Channel = Channel.TEXT
+
+
+class VoiceJoin(BaseModel):
+    """What the call screen needs to join the call's room. The token admits this room only."""
+
+    url: str
+    room: str
+    identity: str
+    token: str
 
 
 class GradeIn(BaseModel):
@@ -198,6 +223,7 @@ def session_view(service: SessionService, row: SessionRow) -> SessionView:
         scenario_id=row.scenario_id,
         learner_title=scenario.learner_title,
         status=row.status,
+        channel=row.channel,
         frame=FrameView(
             call_date=frame.call_date,
             plan_year=frame.plan_year,
@@ -279,7 +305,9 @@ def create_session(body: CreateSession, service: Service, debriefs: Debriefs) ->
     focus: tuple[str, ...] = ()
     if body.retry_of is not None:
         focus = debriefs.retry_focus(body.scenario_id, body.retry_of)
-    row = service.create(body.scenario_id, body.seed, retry_of=body.retry_of, focus=focus)
+    row = service.create(
+        body.scenario_id, body.seed, retry_of=body.retry_of, focus=focus, channel=body.channel
+    )
     return session_view(service, row)
 
 
@@ -291,6 +319,34 @@ def get_session(session_id: str, service: Service) -> SessionView:
 @router.post("/sessions/{session_id}/start")
 def start_call(session_id: str, service: Service) -> SessionView:
     return session_view(service, service.start(session_id))
+
+
+@router.post("/sessions/{session_id}/voice")
+def join_voice(session_id: str, service: Service, voice: Voice) -> VoiceJoin:
+    """A join token for a live voice call. Joining again after a reload gets a fresh token for
+    the same room, where the customer is still on the line."""
+    row = service.require_active(session_id)
+    if row.channel is not Channel.VOICE:
+        raise Conflict("this is a typed call")
+    if voice is None:
+        raise Conflict("voice calls are off on this server (set SIM_LIVE_MODEL)")
+    from app.voice import rooms
+    from app.voice.tokens import learner_token
+
+    # The stored id, not the path parameter, goes to the logs.
+    sid = row.session_id
+    try:
+        if anyio.from_thread.run(rooms.ensure_customer, voice, sid):
+            log.info("voice call %s: sent the customer back to the call", sid)
+    except Exception:
+        # Joining still works; only a customer who already left stays gone.
+        log.exception("voice call %s: couldn't check the room for the customer", sid)
+    return VoiceJoin(
+        url=voice.livekit_url,
+        room=voice.room_for(session_id),
+        identity=LEARNER_IDENTITY,
+        token=learner_token(voice, session_id),
+    )
 
 
 @router.post("/sessions/{session_id}/end")
@@ -690,6 +746,32 @@ def grade(
     """Runs the judge if this call has no stored grade yet (or on ``regrade``) and returns the
     debrief. A judge failure still returns the debrief, with the error in ``judge.error``."""
     return debriefs.grade(session_id, regrade=body.regrade if body else False)
+
+
+@router.get("/sessions/{session_id}/voice-stats")
+def voice_stats(session_id: str, service: Service) -> dict[str, JsonValue]:
+    """Latency, reconnects, audio minutes and estimated model cost for an ended voice call,
+    as the worker measured them. ``final`` is false until the worker's last write, a few
+    seconds after the call ends. ``recording_parts`` counts the audio files on the server."""
+    sid = service.require_ended(session_id).session_id
+    stats = service.store.get_voice_stats(sid)
+    if stats is None:
+        raise NotFound("no voice stats for this call")
+    return {**stats, "recording_parts": len(recording_files(recordings_dir(), sid))}
+
+
+@router.get("/sessions/{session_id}/recording", response_class=FileResponse)
+def recording(
+    session_id: str, service: Service, part: Annotated[int, Query(ge=1)] = 1
+) -> FileResponse:
+    """The call audio, both sides, once the call has ended. A call whose customer session was
+    rebuilt has more than one part."""
+    # File names come from the stored session id, never straight from the URL.
+    files = recording_files(recordings_dir(), service.require_ended(session_id).session_id)
+    if part > len(files):
+        raise NotFound("no recording for this call")
+    path = files[part - 1]
+    return FileResponse(path, media_type="audio/ogg", filename=path.name)
 
 
 @router.get("/sessions/{session_id}/actor-qa")

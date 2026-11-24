@@ -10,7 +10,7 @@ import {
 } from '../api.ts'
 import { ErrorNote } from '../ui.tsx'
 import { errorText } from '../util.ts'
-import { CallContext, mergeSeen, mergeTranscript, type CallContextValue, type Seen } from './context.tsx'
+import { CallContext, mergeSeen, mergeTranscriptFor, type CallContextValue, type Seen } from './context.tsx'
 import { CallPane } from './CallPane.tsx'
 import { RecordPane } from './RecordPane.tsx'
 import { ReferenceButton } from './ReferenceDrawer.tsx'
@@ -40,6 +40,7 @@ export function CallScreen({
   const [loadError, setLoadError] = useState<string | null>(null)
   const base = `/sessions/${session.session_id}`
   const live = session.status === 'active'
+  const merge = mergeTranscriptFor(session)
 
   // Each resource keeps only its newest response, so the initial load below can't overwrite
   // what a save fetched while it was still in flight.
@@ -60,7 +61,7 @@ export function CallScreen({
     const failed = (err: unknown) => setLoadError(`Couldn't load this call: ${errorText(err)}. Reload the page to try again.`)
     // Merge, don't replace: a turn sent while this load was in flight must survive it.
     void get<Utterance[]>(`${base}/transcript`)
-      .then((t) => setTranscriptState((prev) => mergeTranscript(prev, t)))
+      .then((t) => setTranscriptState((prev) => merge(prev, t)))
       .catch(failed)
     // After a reload, offer again what earlier searches found, so record pickers still work.
     void get<Seen>(`${base}/found`)
@@ -69,7 +70,7 @@ export function CallScreen({
     void Promise.resolve()
       .then(() => Promise.all([refreshRecord(), refreshApplications(), refreshEvidence()]))
       .catch(failed)
-  }, [base, refreshRecord, refreshApplications, refreshEvidence])
+  }, [base, merge, refreshRecord, refreshApplications, refreshEvidence])
 
   useEffect(() => {
     if (!toast) return

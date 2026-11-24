@@ -78,8 +78,10 @@ A_DOCTORS: list[dict[str, Any]] = [
 A_COVERAGE: dict[str, Any] = {"current_plan_id": SUMMIT_CLASSIC, "medicare_parts": ["a", "b"]}
 
 
-def a_call(client: TestClient, *, atorvastatin: str = "atorvastatin-40mg-tab") -> Call:
-    call = Call(client, CASE_A).start().opening()
+def a_call(
+    client: TestClient, *, atorvastatin: str = "atorvastatin-40mg-tab", voice: bool = False
+) -> Call:
+    call = Call(client, CASE_A, voice=voice).start().opening()
     call.hear("My heart doctor's group is leaving my plan next year.")
     call.record(
         zip_code="00041",
@@ -93,6 +95,17 @@ def a_call(client: TestClient, *, atorvastatin: str = "atorvastatin-40mg-tab") -
 
 def test_a_right_plan_ppo(client: TestClient) -> None:
     call = a_call(client)
+    call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
+    call.say("Maple Choice PPO's premium is $39 a month, and you keep paying your Part B premium.")
+    call.decide("enroll", MAPLE_CHOICE)
+    call.enroll(MAPLE_CHOICE, "Loretta Banks", "00041")
+    call.end()
+    assert call.findings() == expected(ENROLLED_CLEAN)
+
+
+def test_a_right_plan_on_a_voice_call(voice_client: TestClient) -> None:
+    """A1 with every line arriving the way the voice worker posts it."""
+    call = a_call(voice_client, voice=True)
     call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
     call.say("Maple Choice PPO's premium is $39 a month, and you keep paying your Part B premium.")
     call.decide("enroll", MAPLE_CHOICE)
@@ -310,8 +323,8 @@ GREETING_WITH_DISCLAIMER = (
 )
 
 
-def enroll_to_consent(client: TestClient) -> tuple[Call, str]:
-    call = a_call(client)
+def enroll_to_consent(client: TestClient, *, voice: bool = False) -> tuple[Call, str]:
+    call = a_call(client, voice=voice)
     call.verify(MAPLE_CHOICE, ["raman-northside"], A_DRUGS, "alder-family-rx")
     call.decide("enroll", MAPLE_CHOICE)
     call.document("sob-maple-choice-2027")
@@ -357,6 +370,49 @@ def test_a_consent_must_be_a_heard_customer_yes(
     result = call.detail("consent_before_submit")
     assert (result["status"], result["critical"]) == (F, True)
     assert reason in result["detail"]
+
+
+@pytest.mark.parametrize("heard", ["", "Well,"])
+def test_a6_voice_consent_cut_off_before_the_yes_is_heard(
+    voice_client: TestClient, heard: str
+) -> None:
+    """A6: on a voice call the agent talks over the customer's yes, so the yes never plays."""
+    call, app_id = enroll_to_consent(voice_client, voice=True)
+    utt = call.hear("Well, yes, go ahead and sign me up.", heard=heard, interrupted=True)
+    if heard:
+        call.consent(app_id, utt)
+    else:
+        # The API refuses a line nobody heard as consent; the grader still catches one that
+        # gets into a log some other way.
+        body = call.post(f"/applications/{app_id}/consent", {"utt_id": utt}, expect=422)
+        assert "cut off before the customer said anything" in body["detail"]
+        call.service.log(
+            call.sid, EventType.CONSENT_MARKED, {"application_id": app_id, "utt_id": utt}
+        )
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert (result["status"], result["critical"]) == (F, True)
+    assert "cut off" in result["detail"]
+
+
+def test_voice_lines_are_placed_by_when_they_were_said(voice_client: TestClient) -> None:
+    """The worker writes a line once its transcript is final, which can be after lines spoken
+    later. Here the customer's objection is written after her yes but was said before it, so
+    it doesn't count as taking the yes back."""
+    call, app_id = enroll_to_consent(voice_client, voice=True)
+    row = call.service.get(call.sid)
+    assert row.started_at is not None
+    now = call.service.clock.now  # type: ignore[attr-defined]
+    t0 = int((now - row.started_at).total_seconds() * 1000)
+    call.say("Your daughter can call us anytime. Shall I go ahead?", t_ms=t0 + 500)
+    yes = call.hear("Yes, sign me up.", t_ms=t0 + 800)
+    call.hear("Wait, I want to ask my daughter first.", t_ms=t0 + 200)
+    call.consent(app_id, yes)
+    call.submit(app_id)
+    call.end()
+    result = call.detail("consent_before_submit")
+    assert result["status"] == P, result["detail"]
 
 
 @pytest.mark.parametrize(

@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { ApiError, clientId, get, post, type LogEvent, type Session, type TurnOut, type Utterance } from '../api.ts'
-import { ErrorNote } from '../ui.tsx'
+import { ErrorNote, UttText } from '../ui.tsx'
 import { clock, errorText, useAction } from '../util.ts'
-import { mergeTranscript, useCall } from './context.tsx'
+import { mergeTranscript, mergeTranscriptFor, useCall } from './context.tsx'
+import { useVoiceCall } from './useVoiceCall.ts'
+import { VoicePanel } from './VoicePanel.tsx'
 
 const REJOIN_POLL_MS = 1000
 const REJOIN_POLL_MAX_MS = 8000
+/** How often a live voice call re-reads the transcript; its lines are saved as they're transcribed. */
+const VOICE_POLL_MS = 1000
 /** Failed checks in a row before the rejoin poll gives up and hands the call back. */
 const REJOIN_POLL_FAILURES = 5
 
@@ -52,6 +56,23 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
   const bottom = useRef<HTMLLIElement>(null)
   const customer = session.crm_seed.customer_name.split(' ')[0] ?? 'Customer'
   const sessionId = session.session_id
+  const isVoice = session.channel === 'voice'
+  const voice = useVoiceCall({ base, sessionId, customer, live, onHold })
+
+  useEffect(() => {
+    if (!isVoice || !live) return
+    let stopped = false
+    const t = setInterval(() => {
+      get<Utterance[]>(`${base}/transcript`).then(
+        (saved) => !stopped && setTranscript((prev) => mergeTranscriptFor(session)(prev, saved)),
+        () => {},
+      )
+    }, VOICE_POLL_MS)
+    return () => {
+      stopped = true
+      clearInterval(t)
+    }
+  }, [isVoice, live, base, session, setTranscript])
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -162,7 +183,11 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
         </span>
       </div>
       <ol className="transcript">
-        {transcript.length === 0 && <li className="muted hint">The caller is on the line. Greet them to begin.</li>}
+        {transcript.length === 0 && (
+          <li className="muted hint">
+            {isVoice ? 'The caller is on the line. Join the call and say hello.' : 'The caller is on the line. Greet them to begin.'}
+          </li>
+        )}
         {transcript.map((u) => {
           const picked = source?.utt_id === u.utt_id
           return (
@@ -173,7 +198,7 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
                   {u.utt_id} · {clock(u.t_ms)}
                 </span>
               </div>
-              <p>{u.heard_text}</p>
+              <UttText u={u} customer={customer} />
               {u.speaker === 'customer' && live && (
                 <button
                   type="button"
@@ -208,21 +233,25 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
           </button>
         </div>
       )}
-      <form className="composer" onSubmit={submit}>
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={onHold ? `${customer} is on hold` : `Say something to ${customer}… (Enter to send)`}
-          disabled={!live || waiting || onHold}
-          rows={3}
-          maxLength={4000}
-          aria-label="Your line"
-        />
-        <button type="submit" className="primary" disabled={!live || waiting || onHold || !draft.trim()}>
-          Send
-        </button>
-      </form>
+      {isVoice ? (
+        <VoicePanel voice={voice} customer={customer} live={live} onHold={onHold} />
+      ) : (
+        <form className="composer" onSubmit={submit}>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onKey}
+            placeholder={onHold ? `${customer} is on hold` : `Say something to ${customer}… (Enter to send)`}
+            disabled={!live || waiting || onHold}
+            rows={3}
+            maxLength={4000}
+            aria-label="Your line"
+          />
+          <button type="submit" className="primary" disabled={!live || waiting || onHold || !draft.trim()}>
+            Send
+          </button>
+        </form>
+      )}
       <div className="row controls">
         <button
           type="button"
@@ -231,6 +260,7 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
             void control.run(async () => {
               await post<LogEvent>(`${base}/hold`, { on: !onHold })
               setOnHold(!onHold)
+              if (isVoice) await voice.setMic(onHold)
             })
           }
         >
@@ -242,7 +272,11 @@ export function CallPane({ onSession }: { onSession: (s: Session) => void }) {
           disabled={!live || control.busy}
           onClick={() => {
             if (!window.confirm('End the call? The debrief opens and the call cannot resume.')) return
-            void control.run(async () => onSession(await post<Session>(`${base}/end`)))
+            void control.run(async () => {
+              if (isVoice) await voice.wrapUp()
+              onSession(await post<Session>(`${base}/end`))
+              voice.leave()
+            })
           }}
         >
           End call

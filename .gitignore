@@ -167,6 +167,8 @@ __pycache__/
 # runtime data
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 recordings/
 
 # os / editors
